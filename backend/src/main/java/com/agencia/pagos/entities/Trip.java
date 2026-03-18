@@ -12,8 +12,10 @@ import jakarta.persistence.JoinTable;
 import jakarta.persistence.ManyToMany;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -46,11 +48,15 @@ public class Trip {
 	@Column(name = "is_retroactive_active", nullable = false)
 	private Boolean retroactiveActive = true;
 
+	@Column(name = "first_due_date", nullable = false)
+	private LocalDate firstDueDate;
+
 	@ManyToMany
 	@JoinTable(
 			name = "trip_user",
 			joinColumns = @JoinColumn(name = "trip_id"),
-			inverseJoinColumns = @JoinColumn(name = "user_id")
+			inverseJoinColumns = @JoinColumn(name = "user_id"),
+			uniqueConstraints = @UniqueConstraint(columnNames = {"trip_id", "user_id"})
 	)
 	private List<User> assignedUsers = new ArrayList<>();
 
@@ -118,6 +124,14 @@ public class Trip {
 
 	public void setRetroactiveActive(Boolean retroactiveActive) {
 		this.retroactiveActive = retroactiveActive;
+	}
+
+	public LocalDate getFirstDueDate() {
+		return firstDueDate;
+	}
+
+	public void setFirstDueDate(LocalDate firstDueDate) {
+		this.firstDueDate = firstDueDate;
 	}
 
 	public List<User> getAssignedUsers() {

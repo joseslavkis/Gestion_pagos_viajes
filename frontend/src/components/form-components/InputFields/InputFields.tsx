@@ -5,19 +5,39 @@ import { useFieldContext } from "@/config/form-context";
 
 import styles from "./InputFields.module.css";
 
-export const TextField = ({ label }: { label: string }) => {
-  return <FieldWithType type="text" label={label} />;
+type FieldProps = {
+  label: string;
+  placeholder?: string;
+  autoComplete?: string;
 };
 
-export const PasswordField = ({ label }: { label: string }) => {
-  return <FieldWithType type="password" label={label} />;
+export const TextField = ({ label, placeholder, autoComplete }: FieldProps) => {
+  return <FieldWithType type="text" label={label} placeholder={placeholder} autoComplete={autoComplete} />;
 };
 
-const FieldWithType = ({ label, type }: { label: string; type: string }) => {
+export const PasswordField = ({ label, placeholder, autoComplete }: FieldProps) => {
+  return <FieldWithType type="password" label={label} placeholder={placeholder} autoComplete={autoComplete} />;
+};
+
+const FieldWithType = ({
+  label,
+  type,
+  placeholder,
+  autoComplete,
+}: {
+  label: string;
+  type: string;
+  placeholder?: string;
+  autoComplete?: string;
+}) => {
   const id = useId();
+  const errorId = id + "-errors";
   const field = useFieldContext<string>();
+  const hasErrors = field.state.meta.errors.length > 0;
+  const shouldShowErrors = hasErrors && field.state.meta.isDirty;
+
   return (
-    <>
+    <div className={styles.fieldWrapper}>
       <label htmlFor={id} className={styles.label}>
         {label}
       </label>
@@ -28,11 +48,17 @@ const FieldWithType = ({ label, type }: { label: string; type: string }) => {
           value={field.state.value}
           className={styles.input}
           type={type}
+          placeholder={placeholder}
+          autoComplete={autoComplete}
+          aria-invalid={shouldShowErrors}
+          aria-describedby={shouldShowErrors ? errorId : undefined}
           onBlur={field.handleBlur}
           onChange={(e) => field.handleChange(e.target.value)}
         />
-        <ErrorContainer errors={field.state.meta.errors} />
+        <div id={errorId}>
+          {shouldShowErrors ? <ErrorContainer errors={field.state.meta.errors} /> : null}
+        </div>
       </div>
-    </>
+    </div>
   );
 };

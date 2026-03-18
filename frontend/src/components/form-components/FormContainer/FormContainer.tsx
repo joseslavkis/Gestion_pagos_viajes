@@ -6,7 +6,22 @@ import { useFormContext } from "@/config/form-context";
 
 import styles from "./FormContainer.module.css";
 
-export const FormContainer = ({ extraError, children }: React.PropsWithChildren<{ extraError: Error | null }>) => {
+type FormContainerProps = React.PropsWithChildren<{
+  extraError: Error | null;
+  submitLabel?: string;
+  pendingLabel?: string;
+  isPending?: boolean;
+  footer?: React.ReactNode;
+}>;
+
+export const FormContainer = ({
+  extraError,
+  submitLabel,
+  pendingLabel,
+  isPending,
+  footer,
+  children,
+}: FormContainerProps) => {
   const form = useFormContext();
 
   return (
@@ -18,9 +33,10 @@ export const FormContainer = ({ extraError, children }: React.PropsWithChildren<
         form.handleSubmit();
       }}
     >
-      {children}
+      <div className={styles.fields}>{children}</div>
       {extraError && <ErrorContainer errors={[extraError]} />}
-      <SubmitButton />
+      <SubmitButton label={submitLabel} pendingLabel={pendingLabel} isPending={isPending} />
+      {footer ? <div className={styles.footer}>{footer}</div> : null}
     </form>
   );
 };

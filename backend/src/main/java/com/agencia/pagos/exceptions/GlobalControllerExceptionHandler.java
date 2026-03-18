@@ -57,6 +57,11 @@ public class GlobalControllerExceptionHandler {
         return new ResponseEntity<>(message, ex.getStatusCode());
     }
 
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<String> handleIllegalState(IllegalStateException ex) {
+        return new ResponseEntity<>(ex.getMessage(), HttpStatus.CONFLICT);
+    }
+
     @ExceptionHandler(Throwable.class)
     public ResponseEntity<String> handleFallback(Throwable ex) {
         logger.error("Unhandled server error", ex);

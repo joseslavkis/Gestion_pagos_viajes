@@ -4,7 +4,7 @@ WORKDIR /app
 # Copiamos solo los manifests primero para cachear node_modules
 # Si no cambian package.json ni package-lock.json, Docker reutiliza esta capa
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN npm ci
 
 # Ahora copiamos el resto del código
 COPY . .

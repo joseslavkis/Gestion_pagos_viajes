@@ -1,11 +1,49 @@
+.fieldWrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  width: 100%;
+}
+
 .input {
-  margin-left: 1rem;
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  padding: 0.82rem 0.95rem;
+  border-radius: 12px;
+  border: 1px solid #bfcde1;
+  background-color: #ffffff;
+  color: #0f2647;
+  font-size: 0.98rem;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.15s ease;
+}
+
+.input::placeholder {
+  color: #8ca0ba;
+}
+
+.input:hover {
+  border-color: #7c96b8;
+}
+
+.input:focus {
+  outline: none;
+  border-color: #0b5bcf;
+  box-shadow: 0 0 0 4px rgba(11, 91, 207, 0.15);
+  transform: translateY(-1px);
 }
 
 .label {
+  color: #16335d;
+  font-size: 0.92rem;
+  font-weight: 600;
 }
 
 .dataContainer {
   display: flex;
   flex-direction: column;
+  gap: 0.35rem;
 }

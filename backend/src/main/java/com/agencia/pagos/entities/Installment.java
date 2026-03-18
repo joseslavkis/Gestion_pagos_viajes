@@ -15,12 +15,6 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
-
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
@@ -33,11 +27,7 @@ import java.time.LocalDate;
         @Index(name = "idx_installments_due_date", columnList = "due_date")
     }
 )
-@Getter
-@Setter
-@NoArgsConstructor
-@AllArgsConstructor
-@Builder
+
 public class Installment {
 
     @Id
@@ -62,29 +52,61 @@ public class Installment {
     private BigDecimal capitalAmount; // Monto base de la cuota según el plan de pagos original
 
     @Column(nullable = false, precision = 10, scale = 2)
-    @Builder.Default
-    private BigDecimal retroactiveAmount = BigDecimal.ZERO; // Monto de cuotas anteriores si el usuario se sumó tarde al viaje
+    private BigDecimal retroactiveAmount = BigDecimal.ZERO;
 
     @Column(nullable = false, precision = 10, scale = 2)
-    @Builder.Default
-    private BigDecimal fineAmount = BigDecimal.ZERO; // Monto fijo de multa aplicado automáticamente si hay más de una cuota vencida
+    private BigDecimal fineAmount = BigDecimal.ZERO;
 
     @Column(nullable = false, precision = 10, scale = 2)
-    @Builder.Default
-    private BigDecimal totalDue = BigDecimal.ZERO; // Total exigible recalculado automáticamente para evitar inconsistencias
+    private BigDecimal totalDue = BigDecimal.ZERO;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    @Builder.Default
-    private InstallmentStatus status = InstallmentStatus.YELLOW; // Estado del semáforo: GREEN (pago), YELLOW (pendiente), RED (vencido)
+    private InstallmentStatus status = InstallmentStatus.YELLOW;
 
     @PrePersist
     @PreUpdate
-    private void recalculateTotalDue() {
+    private void onPersist() {
+        recalculateTotalDue();
+    }
+
+    public void recalculateTotalDue() {
         BigDecimal capital = capitalAmount == null ? BigDecimal.ZERO : capitalAmount;
         BigDecimal retroactive = retroactiveAmount == null ? BigDecimal.ZERO : retroactiveAmount;
         BigDecimal fine = fineAmount == null ? BigDecimal.ZERO : fineAmount;
         totalDue = capital.add(retroactive).add(fine);
     }
+
+    public Installment() {}
+
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
+
+    public Trip getTrip() { return trip; }
+    public void setTrip(Trip trip) { this.trip = trip; }
+
+    public User getUser() { return user; }
+    public void setUser(User user) { this.user = user; }
+
+    public Integer getInstallmentNumber() { return installmentNumber; }
+    public void setInstallmentNumber(Integer installmentNumber) { this.installmentNumber = installmentNumber; }
+
+    public LocalDate getDueDate() { return dueDate; }
+    public void setDueDate(LocalDate dueDate) { this.dueDate = dueDate; }
+
+    public BigDecimal getCapitalAmount() { return capitalAmount; }
+    public void setCapitalAmount(BigDecimal capitalAmount) { this.capitalAmount = capitalAmount; }
+
+    public BigDecimal getRetroactiveAmount() { return retroactiveAmount; }
+    public void setRetroactiveAmount(BigDecimal retroactiveAmount) { this.retroactiveAmount = retroactiveAmount; }
+
+    public BigDecimal getFineAmount() { return fineAmount; }
+    public void setFineAmount(BigDecimal fineAmount) { this.fineAmount = fineAmount; }
+
+    public BigDecimal getTotalDue() { return totalDue; }
+    public void setTotalDue(BigDecimal totalDue) { this.totalDue = totalDue; }
+
+    public InstallmentStatus getStatus() { return status; }
+    public void setStatus(InstallmentStatus status) { this.status = status; }
 
 }
