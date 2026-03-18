@@ -1,0 +1,238 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[spanish]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\geometry{margin=2.5cm}
+
+\title{Propuesta Funcional de la App \\ Gestión de Pagos y Validación de Comprobantes \\ para Viajes Grupales}
+\author{}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Alcance del sistema}
+La app está orientada a la gestión de pagos y validación de comprobantes de viajes grupales administrados por una agencia.  
+Los administradores son el dueño de la agencia y/o empleados autorizados.  
+Los usuarios son padres/tutores que pagan el viaje de sus hijos.
+
+\section{¿Qué es la app?}
+Es una plataforma web para administrar pagos de viajes grupales.  
+La app no cobra dinero directamente: funciona como un registro digital donde los padres/tutores informan pagos y suben comprobantes, y la administración de la agencia valida esos comprobantes.
+
+\subsection*{Incluye}
+\begin{itemize}[leftmargin=*]
+    \item Panel de usuarios (padres/tutores).
+    \item Panel de administración (dueño/empleados de la agencia).
+    \item \textbf{Plantilla interna tipo Excel integrada en la app} (sin depender de Excel externo para operar).
+    \item Descarga de plantilla en archivo Excel (\texttt{.xlsx}).
+    \item Gestión segura de comprobantes (JPG/PDF).
+    \item Gestión de multas fijas por mora condicional y ajuste automático por vencimiento.
+\end{itemize}
+
+\section{Aclaración clave sobre la plantilla interna}
+La plantilla interna es una implementación propia de la app con comportamiento tipo Excel (grilla tabular editable, filtros y ordenamiento), integrada directamente en el sistema.  
+\textbf{No es un archivo Excel externo embebido ni una dependencia de Google Sheets/Microsoft Excel para trabajar día a día.}  
+La operación diaria se realiza dentro de la app y, adicionalmente, se puede exportar la información a \texttt{.xlsx} cuando se necesite compartir o archivar. Esto se hace para evitar errores de sincronización.
+
+\section{¿Qué resuelve?}
+\begin{itemize}[leftmargin=*]
+    \item Centraliza la información de cuotas de cada viaje.
+    \item Permite saber qué está pago, pendiente o vencido.
+    \item Ordena la validación de comprobantes.
+    \item Facilita el seguimiento administrativo con una plantilla clara y exportable.
+    \item Aplica multas por atrasos prolongados de forma automática y auditable.
+\end{itemize}
+
+\section{Roles del sistema}
+
+\subsection{Administrador (Agencia)}
+\begin{itemize}[leftmargin=*]
+    \item Crear, editar y gestionar viajes.
+    \item Definir por viaje:
+    \begin{itemize}
+        \item monto total,
+        \item cantidad de cuotas,
+        \item día de vencimiento,
+        \item días previos para estado ``amarillo'',
+        \item ajuste por inflación (si aplica),
+        \item monto fijo de multa por mora (valor monetario),
+        \item \textbf{aplicar retroactividad a nuevos inscriptos (sí/no)}.
+    \end{itemize}
+    \item Asignar/desasignar familias (usuarios) a viajes (individual y masivo opcional).
+    \item Ver cuentas de cada usuario.
+    \item Revisar comprobantes y aceptar/rechazar con observación.
+    \item Usar la plantilla interna tipo Excel del viaje.
+    \item Descargar la plantilla en Excel (\texttt{.xlsx}).
+    \item Ver y descargar comprobantes con permisos de administrador.
+    \item Ajustar manualmente excepciones de multas con trazabilidad (quién, cuándo y motivo).
+\end{itemize}
+
+\subsection{Usuario (Padre/Tutor)}
+\begin{itemize}[leftmargin=*]
+    \item Ver su estado de cuenta:
+    \begin{itemize}
+        \item deuda actual,
+        \item cuotas pagadas y pendientes,
+        \item próximos vencimientos,
+        \item estado de semáforo,
+        \item multa aplicada por mora (si corresponde por atraso mayor a una cuota),
+        \item \textbf{total actualizado a pagar} por cuota.
+    \end{itemize}
+    \item Cargar comprobantes (JPG/PDF) informando:
+    \begin{itemize}
+        \item importe,
+        \item fecha de pago,
+        \item método de pago.
+    \end{itemize}
+    \item Ver estado del comprobante (pendiente, aceptado o rechazado).
+\end{itemize}
+
+\section{Semáforo de pagos}
+Cada cuota se muestra en un estado:
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Verde:} pago validado por administración.
+    \item \textbf{Amarillo:} pago pendiente, dentro de los días previos al vencimiento.
+    \item \textbf{Rojo:} cuota vencida sin regularizar.
+\end{itemize}
+
+\section{Multa por mora (Atraso mayor a una cuota)}
+La app contempla la aplicación de una multa de valor fijo para aquellos casos donde el atraso sea significativo.  
+\textbf{La configuración del monto de la multa es obligatoria al crear cada viaje} (pudiendo ser cero si la agencia así lo define).
+
+\subsection*{Parámetros obligatorios al crear viaje}
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Monto fijo de multa} (valor monetario a aplicar como penalidad).
+\end{itemize}
+
+\subsection*{Regla de cálculo de la multa}
+La multa se aplica como un recargo fijo a la cuota adeudada, exclusivamente cuando el usuario acumula más de una cuota en estado de mora (vencida e impaga).  
+Sea:
+\begin{itemize}[leftmargin=*]
+    \item \( C \): capital de la cuota,
+    \item \( M_f \): monto fijo de la multa definida para el viaje,
+    \item \( c_v \): cantidad total de cuotas vencidas e impagas del usuario.
+\end{itemize}
+
+Multa aplicable a la cuota (\( M \)):
+\[
+M = \begin{cases} 
+M_f & \text{si } c_v > 1 \\
+0 & \text{si } c_v \le 1 
+\end{cases}
+\]
+
+Total exigible:
+\[
+\text{Total exigible} = C + M + \text{Retroactivo (si aplica)}
+\]
+
+\subsection*{Ajuste por vencimiento}
+\begin{itemize}[leftmargin=*]
+    \item Si un usuario acumula más de una cuota vencida, el sistema suma automáticamente el monto de la multa a la deuda.
+    \item El ajuste es visible para administración y usuario en tiempo real.
+    \item Al validar un pago, el sistema recalcula el saldo (si faltara cubrir el total actualizado con la multa incluida).
+\end{itemize}
+
+\section{Actualización de multas por decisión administrativa}
+La administración puede modificar el valor fijo de la multa de un viaje cuando lo considere necesario.  
+Ese cambio se aplica a todas las cuotas \textbf{pendientes o vencidas que aún no estén pagadas}.  
+Las cuotas \textbf{ya pagadas} no se modifican y se mantienen como fueron abonadas.
+
+\section{Notificaciones automáticas}
+Cuando una cuota pasa a estado amarillo, la app envía un email recordatorio al usuario con:
+\begin{itemize}[leftmargin=*]
+    \item viaje,
+    \item cuota/período,
+    \item monto,
+    \item fecha límite de pago,
+    \item aviso de posible multa en caso de acumular atrasos.
+\end{itemize}
+
+\section{Plantilla interna tipo Excel (una sola por viaje)}
+Cada viaje tiene una única plantilla administrativa integrada en la app.  
+La plantilla consolida todos los usuarios del viaje en una sola vista y agrega tantas columnas de cuota como corresponda al plan de pagos definido.
+
+\subsection*{Estructura}
+\begin{itemize}[leftmargin=*]
+    \item Columnas de datos del usuario: Nombre, Apellido, Teléfono, Email, Alumno, Colegio, Curso.
+    \item Columnas dinámicas de cuotas: \texttt{Cuota 1, Cuota 2, ..., Cuota N}.
+    \item Cada columna de cuota refleja:
+    \begin{itemize}
+        \item estado (verde/amarillo/rojo),
+        \item capital de cuota,
+        \item multa por mora aplicada (si corresponde),
+        \item retroactivo (si aplica),
+        \item total exigible.
+    \end{itemize}
+\end{itemize}
+
+\subsection*{Funciones de la plantilla}
+\begin{itemize}[leftmargin=*]
+    \item filtros,
+    \item ordenamiento,
+    \item búsqueda,
+    \item navegación por páginas.
+\end{itemize}
+
+\section{Regla de retroactividad (Opcional)}
+Al momento de crear un viaje, la administración puede definir si el cobro retroactivo aplica o no para ese grupo.  
+Si la retroactividad \textbf{está activa} y una familia/usuario se incorpora al viaje después del inicio, el sistema calcula automáticamente la deuda acumulada de cuotas anteriores y la incorpora en la primera cuota exigible del usuario.
+
+\subsection*{Criterio operativo}
+\begin{itemize}[leftmargin=*]
+    \item Al crear el viaje, la condición de retroactividad se configura como activa o inactiva.
+    \item El usuario puede ser agregado al viaje en cualquier momento.
+    \item \textbf{Si está inactiva:} El usuario que ingresa tarde solo es responsable de las cuotas con fecha de vencimiento posterior a su alta.
+    \item \textbf{Si está activa:} Las cuotas anteriores al momento del alta se consideran deuda retroactiva y se suman al importe de la primera cuota pendiente. A partir de ahí, continúa con el cronograma normal.
+\end{itemize}
+
+\subsection*{Visualización en plantilla}
+\begin{itemize}[leftmargin=*]
+    \item La plantilla muestra una vista resumida por cuota (estado y total exigible).
+    \item Cada cuota funciona como entidad navegable.
+    \item Al hacer clic sobre una cuota, se abre un detalle con:
+    \begin{itemize}
+        \item capital base,
+        \item retroactivo acumulado (si aplica),
+        \item multa por mora (si corresponde),
+        \item total exigible,
+        \item comprobantes asociados.
+    \end{itemize}
+    \item El semáforo se calcula sobre el total exigible de cada cuota.
+\end{itemize}
+
+\section{Estructura de cuotas por usuario}
+Para cada viaje, el sistema genera una cuota por cada período para cada usuario asignado.  
+En otras palabras, cada usuario tiene su propio conjunto de cuotas dentro de cada viaje.
+
+\section{Exportación a Excel (\texttt{.xlsx})}
+Desde administración se puede descargar la plantilla del viaje en formato \texttt{.xlsx}, con los datos actualizados y formato de lectura claro para compartir o archivar.
+
+\section{Seguridad de archivos}
+\begin{itemize}[leftmargin=*]
+    \item Los comprobantes no quedan públicos en internet.
+    \item Solo usuarios autorizados (administradores de la agencia) pueden acceder.
+    \item El acceso a archivos se controla desde la app con autenticación.
+\end{itemize}
+
+\section{Reglas operativas importantes}
+\begin{itemize}[leftmargin=*]
+    \item No se puede marcar un pago como aceptado sin comprobante asociado.
+    \item Si se rechaza un comprobante, se registra motivo/observación.
+    \item El estado del semáforo se actualiza automáticamente según fecha y validación.
+    \item Cada usuario ve solo sus datos; administración ve el conjunto completo.
+    \item Se puede agregar usuarios al viaje en cualquier momento, aplicando la regla de retroactividad según la configuración del viaje.
+    \item La multa por mora se aplica automáticamente si el sistema detecta que el usuario tiene más de una cuota en estado vencido.
+\end{itemize}
+
+\section{Resultado esperado}
+Una app completa para la agencia que permita operar viajes con control de cuotas por usuario, validación de comprobantes, alertas automáticas, seguimiento en plantilla interna tipo Excel integrada y exportación a Excel, con reglas claras de morosidad y trazabilidad administrativa.
+
+\end{document}

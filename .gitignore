@@ -1,0 +1,30 @@
+data
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Secrets and local credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.crt
+*.cer
+*.kdbx
+*.asc
+*.gpg
+
+# Local config and secret exports
+secrets/
+*.secret
+*.secrets
+*.credentials
+
+# Database dumps/backups
+*.sql
+*.dump
+*.bak

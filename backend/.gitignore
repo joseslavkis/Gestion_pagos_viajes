@@ -1,0 +1,56 @@
+HELP.md
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### VS Code ###
+.vscode/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Sensitive files
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.crt
+*.cer
+
+# Local secrets and backups
+secrets/
+*.secret
+*.credentials
+*.sql
+*.dump
+*.bak

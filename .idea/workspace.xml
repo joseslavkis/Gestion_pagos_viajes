@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="baa2eb7e-54a6-4d35-a07b-e5feb0e57cae" name="Changes" comment="" />
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="EmbeddingIndexingInfo">
+    <option name="cachedIndexableFilesCount" value="90" />
+    <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
+  </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Class" />
+      </list>
+    </option>
+  </component>
+  <component name="MavenImportPreferences">
+    <option name="generalSettings">
+      <MavenGeneralSettings>
+        <option name="mavenHomeTypeForPersistence" value="WRAPPER" />
+      </MavenGeneralSettings>
+    </option>
+  </component>
+  <component name="McpProjectServerCommands">
+    <commands />
+    <urls />
+  </component>
+  <component name="ProjectColorInfo"><![CDATA[{
+  "associatedIndex": 1,
+  "fromUser": false
+}]]></component>
+  <component name="ProjectId" id="3B5pJg9HpMiHWqdEH6HQscz0Ucn" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RunOnceActivity.MCP Project settings loaded": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "kotlin-language-version-configured": "true",
+    "last_opened_file_path": "/home/jos-slavkis/AntigravityProjects/gestion_pagos_viajes",
+    "settings.editor.selected.configurable": "com.github.copilot.settings.customization.CustomizationConfigurable"
+  }
+}]]></component>
+  <component name="RecapSpentCounter">
+    <option name="endsOfQuotaMs" value="1775304046606" />
+    <option name="spentUsd" value="0.011327799" />
+  </component>
+  <component name="RecapUselessUpdatesCounter">
+    <option name="suspendCountdown" value="8" />
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-jdk-30f59d01ecdd-2fc7cc6b9a17-intellij.indexing.shared.core-IU-253.32098.37" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="baa2eb7e-54a6-4d35-a07b-e5feb0e57cae" name="Changes" comment="" />
+      <created>1773788714837</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1773788714837</updated>
+    </task>
+    <servers />
+  </component>
+  <component name="XSLT-Support.FileAssociations.UIState">
+    <expand />
+    <select />
+  </component>
+  <component name="github-copilot-workspace">
+    <instructionFileLocations>
+      <option value=".github/instructions" />
+    </instructionFileLocations>
+    <promptFileLocations>
+      <option value=".github/prompts" />
+    </promptFileLocations>
+  </component>
+</project>
