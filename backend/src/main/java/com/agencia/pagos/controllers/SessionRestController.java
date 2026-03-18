@@ -9,7 +9,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.lang.NonNull;
-import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -36,7 +35,6 @@ class SessionRestController {
         this.userService = userService;
     }
 
-    @PreAuthorize("permitAll()")
     @PostMapping(value = "/signup", produces = "application/json")
     @Operation(summary = "Create a new user")
     @ResponseStatus(HttpStatus.CREATED)
@@ -49,7 +47,6 @@ class SessionRestController {
                 .orElse(ResponseEntity.status(HttpStatus.CONFLICT).build());
     }
 
-    @PreAuthorize("permitAll()")
     @PostMapping(value = "/token", produces = "application/json")
     @Operation(summary = "Log in, creating a new session")
     @ResponseStatus(HttpStatus.OK)
@@ -62,7 +59,6 @@ class SessionRestController {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials"));
     }
 
-    @PreAuthorize("permitAll()")
     @PostMapping(value = "/refresh", produces = "application/json")
     @Operation(summary = "Refresh a session")
     @ResponseStatus(HttpStatus.OK)

@@ -58,7 +58,7 @@ public class User implements UserDetails, UserCredentials {
     @ManyToMany(mappedBy = "assignedUsers")
     private List<Trip> trips = new ArrayList<>();
 
-    @OneToMany(mappedBy = "user", cascade = CascadeType.ALL)
+    @OneToMany(mappedBy = "user")
     private List<Installment> installments = new ArrayList<>();
 
     public User(String name, String password, String email, String lastname, Role role) {

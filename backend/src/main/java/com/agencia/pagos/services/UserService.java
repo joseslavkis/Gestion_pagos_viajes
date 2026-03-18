@@ -103,11 +103,12 @@ public class UserService implements UserDetailsService {
                 ));
     }
 
-    public Optional<User> deleteUser(Long id) {
+    public Optional<User> deactivateUser(Long id) {
         Optional<User> user = userRepository.findById(id);
         if (user.isPresent()) {
+            user.get().setActive(false);
+            userRepository.save(user.get());
             refreshTokenService.deleteByUser(user.get());
-            userRepository.delete(user.get());
         }
         return user;
     }
@@ -126,43 +127,42 @@ public class UserService implements UserDetailsService {
     }
 
     public ResponseEntity<StatusResponseDTO> updateAdmin(Long id, UserUpdateDTO userDTO) {
-        User findedUser = userRepository.findById(id)
+        User foundUser = userRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Admin not found"));
 
-        if (Role.ADMIN != findedUser.getRole()) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                    .body(new StatusResponseDTO("error", "Target user is not admin"));
+        if (Role.ADMIN != foundUser.getRole()) {
+            throw new EntityNotFoundException("Admin not found");
         }
 
         if (userDTO.name() != null) {
-            findedUser.setName(userDTO.name());
+            foundUser.setName(userDTO.name());
         }
         if (userDTO.lastname() != null) {
-            findedUser.setLastname(userDTO.lastname());
+            foundUser.setLastname(userDTO.lastname());
         }
         if (userDTO.password() != null) {
-            findedUser.setPassword(passwordEncoder.encode(userDTO.password()));
+            foundUser.setPassword(passwordEncoder.encode(userDTO.password()));
         }
 
-        userRepository.save(findedUser);
+        userRepository.save(foundUser);
         return ResponseEntity.status(HttpStatus.OK).body(new StatusResponseDTO("success", "Admin updated"));
     }
 
     public ResponseEntity<StatusResponseDTO> updateUser(UserUpdateDTO userDTO, Long id) {
-        User findedUser = userRepository.findById(id)
+        User foundUser = userRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("User not found"));
 
         if (userDTO.name() != null) {
-            findedUser.setName(userDTO.name());
+            foundUser.setName(userDTO.name());
         }
         if (userDTO.lastname() != null) {
-            findedUser.setLastname(userDTO.lastname());
+            foundUser.setLastname(userDTO.lastname());
         }
         if (userDTO.password() != null) {
-            findedUser.setPassword(passwordEncoder.encode(userDTO.password()));
+            foundUser.setPassword(passwordEncoder.encode(userDTO.password()));
         }
 
-        userRepository.save(findedUser);
+        userRepository.save(foundUser);
         return ResponseEntity.status(HttpStatus.OK).body(new StatusResponseDTO("success", "User updated"));
     }
 }

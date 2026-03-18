@@ -1,7 +1,6 @@
 package com.agencia.pagos.entities;
 
 import com.agencia.pagos.entities.user.User;
-import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -54,7 +53,7 @@ public class Trip {
 	)
 	private List<User> assignedUsers = new ArrayList<>();
 
-	@OneToMany(mappedBy = "trip", cascade = CascadeType.ALL, orphanRemoval = true)
+	@OneToMany(mappedBy = "trip")
 	private List<Installment> installments = new ArrayList<>();
 
 	public Trip() {

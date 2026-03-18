@@ -53,9 +53,9 @@ public class SecurityConfig {
                                 "/v3/api-docs/**",
                                 "/swagger-resources/**",
                                 "/swagger-resources",
-                                "/api-docs/**",
-                                "/error"
-                        ).permitAll()
+                        "/api-docs/**"
+                    ).hasRole("ADMIN")
+                    .requestMatchers("/error").permitAll()
                         .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
                         .requestMatchers(ADMIN_ENDPOINTS).hasRole("ADMIN")
                         .anyRequest().authenticated()

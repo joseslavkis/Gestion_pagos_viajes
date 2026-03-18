@@ -37,8 +37,17 @@ class UserRestController {
     @ApiResponse(responseCode = "404", description = "User not found", content = @Content)
     @ApiResponse(responseCode = "401", description = "Unauthorized", content = @Content)
     ResponseEntity<UserProfileDTO> viewProfile(
-            @PathVariable Long id
+                        @PathVariable Long id,
+                        @AuthenticationPrincipal(expression = "username") String email
     ) {
+                var currentUser = userService.getUserByEmail(email);
+                boolean isAdmin = currentUser.getRole() == Role.ADMIN;
+                boolean isOwner = currentUser.getId().equals(id);
+
+                if (!isAdmin && !isOwner) {
+                        return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+                }
+
         return userService.getUserProfileById(id)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.status(HttpStatus.NOT_FOUND).build());
@@ -54,8 +63,8 @@ class UserRestController {
             @AuthenticationPrincipal(expression = "username") String email
     ) {
         var currentUser = userService.getUserByEmail(email);
-        return userService.deleteUser(currentUser.getId())
-                .map(user -> ResponseEntity.ok(new StatusResponseDTO("success", "User deleted")))
+        return userService.deactivateUser(currentUser.getId())
+                .map(user -> ResponseEntity.ok(new StatusResponseDTO("success", "User deactivated")))
                 .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(new StatusResponseDTO("error", "User not found")));
     }
@@ -110,8 +119,8 @@ class UserRestController {
     ResponseEntity<StatusResponseDTO> deleteUser(
             @PathVariable Long id
     ) {
-        return userService.deleteUser(id)
-                .map(user -> ResponseEntity.ok(new StatusResponseDTO("success", "User deleted")))
+        return userService.deactivateUser(id)
+                .map(user -> ResponseEntity.ok(new StatusResponseDTO("success", "User deactivated")))
                 .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND)
                         .body(new StatusResponseDTO("error", "User not found")));
     }

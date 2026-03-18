@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.lang.NonNull;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.agencia.pagos.entities.user.User;
 import com.agencia.pagos.entities.refresh_token.RefreshToken;
@@ -16,6 +17,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 
 @Service
+@Transactional
 public class RefreshTokenService {
 
     private final Long expiration;
@@ -41,9 +43,12 @@ public class RefreshTokenService {
     }
 
     public Optional<RefreshToken> findByValue(@NonNull String value) {
-        Optional<RefreshToken> result = refreshTokenRepository.findById(value);
-        result.ifPresent(refreshTokenRepository::delete);
-        return result.filter(RefreshToken::isValid);
+        return refreshTokenRepository.findById(value)
+                .filter(RefreshToken::isValid)
+                .map(token -> {
+                    refreshTokenRepository.delete(token);
+                    return token;
+                });
     }
 
     public void deleteByUser(User user) {
