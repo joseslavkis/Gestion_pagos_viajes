@@ -1,3 +1,2 @@
-// This file should be overwritten with env vars in prod builds
-// For dev builds, use .env and .env.local
-window._env_ = {};
+// URL del backend en Railway (producción)
+window._env_ = { baseApiUrl: 'https://gestionpagosviajes-production.up.railway.app' };
