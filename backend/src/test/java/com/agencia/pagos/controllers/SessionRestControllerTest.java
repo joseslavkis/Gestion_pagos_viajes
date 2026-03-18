@@ -5,18 +5,11 @@ import com.agencia.pagos.dtos.request.RefreshDTO;
 import com.agencia.pagos.dtos.request.UserCreateDTO;
 import com.agencia.pagos.dtos.request.UserLoginDTO;
 import com.agencia.pagos.dtos.response.TokenDTO;
-import com.agencia.pagos.repositories.RefreshTokenRepository;
-import com.agencia.pagos.repositories.UserRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
-import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.MvcResult;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -25,18 +18,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 @Import(TestcontainersConfiguration.class)
-class SessionRestControllerTest {
-
-    @Autowired private MockMvc mockMvc;
-    @Autowired private ObjectMapper objectMapper;
-    @Autowired private RefreshTokenRepository refreshTokenRepository;
-    @Autowired private UserRepository userRepository;
-
-    @BeforeEach
-    void setUp() {
-        refreshTokenRepository.deleteAll();
-        userRepository.deleteAll();
-    }
+class SessionRestControllerTest extends ControllerIntegrationTestSupport {
 
     @Test
     void signUp_conDatosValidos_devuelve201ConTokens() throws Exception {
@@ -144,30 +126,4 @@ class SessionRestControllerTest {
                 .andExpect(status().isUnauthorized());
     }
 
-    // ── Helpers ─────────────────────────────────────────────────────────────
-
-    TokenDTO signUp(UserCreateDTO dto) throws Exception {
-        MvcResult result = mockMvc.perform(post("/api/v1/auth/signup")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(dto)))
-                .andExpect(status().isCreated())
-                .andReturn();
-        return objectMapper.readValue(result.getResponse().getContentAsString(), TokenDTO.class);
-    }
-
-    UserCreateDTO buildValidUser(String prefix) {
-        return new UserCreateDTO(
-                uniqueEmail(prefix), "Password123!",
-                "Test", "User", uniqueDni(),
-                "123456789", "Alumno", "Colegio", "3ro"
-        );
-    }
-
-    String uniqueEmail(String prefix) {
-        return prefix + "-" + System.nanoTime() + "@agencia.com";
-    }
-
-    String uniqueDni() {
-        return String.valueOf(System.nanoTime()).substring(0, 8);
-    }
 }

@@ -2,24 +2,13 @@ package com.agencia.pagos.controllers;
 
 import com.agencia.pagos.TestcontainersConfiguration;
 import com.agencia.pagos.dtos.request.UserCreateDTO;
-import com.agencia.pagos.dtos.request.UserLoginDTO;
 import com.agencia.pagos.dtos.request.UserUpdateDTO;
 import com.agencia.pagos.dtos.response.TokenDTO;
-import com.agencia.pagos.dtos.response.UserProfileDTO;
-import com.agencia.pagos.repositories.RefreshTokenRepository;
-import com.agencia.pagos.repositories.UserRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
-import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.MvcResult;
-
-import java.util.concurrent.atomic.AtomicLong;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -28,20 +17,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest
 @AutoConfigureMockMvc
 @Import(TestcontainersConfiguration.class)
-class UserRestControllerTest {
-
-    private static final AtomicLong DNI_SEQUENCE = new AtomicLong(10_000_000L);
-
-    @Autowired private MockMvc mockMvc;
-    @Autowired private ObjectMapper objectMapper;
-    @Autowired private RefreshTokenRepository refreshTokenRepository;
-    @Autowired private UserRepository userRepository;
-
-    @BeforeEach
-    void setUp() {
-        refreshTokenRepository.deleteAll();
-        userRepository.deleteAll();
-    }
+class UserRestControllerTest extends ControllerIntegrationTestSupport {
 
     // ── GET /profile/{id} ───────────────────────────────────────────────────
 
@@ -247,67 +223,4 @@ class UserRestControllerTest {
                 .andExpect(status().isUnauthorized());
     }
 
-    // ── Helpers ─────────────────────────────────────────────────────────────
-
-    TokenDTO signUp(UserCreateDTO dto) throws Exception {
-        MvcResult result = mockMvc.perform(post("/api/v1/auth/signup")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(dto)))
-                .andExpect(status().isCreated())
-                .andReturn();
-        return objectMapper.readValue(result.getResponse().getContentAsString(), TokenDTO.class);
-    }
-
-    TokenDTO signUpAdmin(UserCreateDTO dto) throws Exception {
-        // Primero creamos un admin existente para poder crear el nuevo via endpoint
-        // Si no hay ninguno, usamos el seeder — pero en tests la DB está limpia,
-        // así que necesitamos insertar el primer admin directamente via signup de admin
-        // La única forma sin admin previo es crear via /admin/create con otro admin.
-        // Para el primer admin usamos el UserService directamente con @Autowired o
-        // lo creamos via un admin ya existente. Solución: hacemos signup normal y
-        // manipulamos el rol via repository.
-        TokenDTO tokens = signUp(dto);
-        userRepository.findAll().stream()
-                .filter(u -> u.getEmail().equals(dto.email()))
-                .findFirst()
-                .ifPresent(u -> {
-                    u.setRole(com.agencia.pagos.entities.Role.ADMIN);
-                    userRepository.save(u);
-                });
-        // Re-login para obtener token con rol ADMIN
-        MvcResult loginResult = mockMvc.perform(post("/api/v1/auth/token")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(new UserLoginDTO(dto.email(), dto.password()))))
-                .andExpect(status().isOk())
-                .andReturn();
-        return objectMapper.readValue(loginResult.getResponse().getContentAsString(), TokenDTO.class);
-    }
-
-    Long extractId(String accessToken) throws Exception {
-        // Decodificamos el JWT para extraer el subject (email) y luego buscamos el user
-        String[] parts = accessToken.split("\\.");
-        String payload = new String(java.util.Base64.getUrlDecoder().decode(parts[1]));
-        String email = objectMapper.readTree(payload).get("sub").asText();
-        return userRepository.findAll().stream()
-                .filter(u -> u.getEmail().equals(email))
-                .findFirst()
-                .orElseThrow()
-                .getId();
-    }
-
-    UserCreateDTO buildValidUser(String prefix) {
-        return new UserCreateDTO(
-                uniqueEmail(prefix), "Password123!",
-                "Test", "User", uniqueDni(),
-                "123456789", "Alumno", "Colegio", "3ro"
-        );
-    }
-
-    String uniqueEmail(String prefix) {
-        return prefix + "-" + System.nanoTime() + "@agencia.com";
-    }
-
-    String uniqueDni() {
-        return String.valueOf(DNI_SEQUENCE.getAndIncrement());
-    }
 }
