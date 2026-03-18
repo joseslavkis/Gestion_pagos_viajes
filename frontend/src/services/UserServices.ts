@@ -9,7 +9,9 @@ export function useLogin() {
 
   return useMutation({
     mutationFn: async (req: LoginRequest) => {
-      const tokenData = await auth("/sessions", req);
+      // El backend espera 'email', pero el front usa 'username'
+      const payload = { email: req.username, password: req.password };
+      const tokenData = await auth("/api/v1/auth/token", payload);
       setToken({ state: "LOGGED_IN", ...tokenData });
     },
   });
@@ -20,13 +22,21 @@ export function useSignup() {
 
   return useMutation({
     mutationFn: async (req: LoginRequest) => {
-      const tokenData = await auth("/users", req);
+      // El backend requiere name, lastname, dni y email obligatoriamente
+      const payload = { 
+        email: req.username, 
+        password: req.password,
+        name: "NombrePrueba",
+        lastname: "ApellidoPrueba",
+        dni: "12345678"
+      };
+      const tokenData = await auth("/api/v1/auth/signup", payload);
       setToken({ state: "LOGGED_IN", ...tokenData });
     },
   });
 }
 
-async function auth(endpoint: string, data: LoginRequest) {
+async function auth(endpoint: string, data: any) {
   const response = await fetch(BASE_API_URL + endpoint, {
     method: "POST",
     headers: {
