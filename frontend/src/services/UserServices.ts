@@ -9,7 +9,7 @@ export function useLogin() {
 
   return useMutation({
     mutationFn: async (req: LoginRequest) => {
-      // El backend espera 'email', pero el front usa 'username'
+      // UserLoginDTO.java: public record UserLoginDTO(String email, String password)
       const payload = { email: req.username, password: req.password };
       const tokenData = await auth("/api/v1/auth/token", payload);
       setToken({ state: "LOGGED_IN", ...tokenData });
@@ -22,10 +22,10 @@ export function useSignup() {
 
   return useMutation({
     mutationFn: async (req: LoginRequest) => {
-      // Generar un DNI aleatorio para no romper la restricción unique = true del backend
+      // UserCreateDTO.java: public record UserCreateDTO(String email, String password, String name, String lastname, String dni, ...)
       const randomDni = String(Math.floor(Math.random() * 100000000));
       const payload = { 
-        email: req.username, 
+        email: req.username.includes('@') ? req.username : `${req.username}@agencia.com`,
         password: req.password,
         name: "NombrePrueba",
         lastname: "ApellidoPrueba",
