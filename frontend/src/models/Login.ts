@@ -1,8 +1,8 @@
 import { z } from "zod";
 
 export const LoginRequestSchema = z.object({
-  username: z.string().min(1, "Username must not be empty"),
-  password: z.string().min(1, "Password must not be empty"),
+  username: z.string().email("Debe ser un email válido (ej: nombre@gmail.com)"),
+  password: z.string().min(8, "La contraseña debe tener al menos 8 caracteres"),
 });
 
 export type LoginRequest = z.infer<typeof LoginRequestSchema>;
