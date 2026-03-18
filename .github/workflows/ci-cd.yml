@@ -1,0 +1,42 @@
+name: CI (Tests & Build)
+
+on:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [main, dev]
+
+jobs:
+  # Verifica que el backend funcione
+  backend-tests:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: "temurin"
+          cache: maven
+      - name: Run Tests
+        working-directory: backend
+        run: ./mvnw test
+
+  # Verifica que el frontend compile
+  frontend-build:
+    name: Frontend Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install & Build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
