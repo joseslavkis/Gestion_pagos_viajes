@@ -5,7 +5,6 @@ import com.agencia.pagos.config.security.JwtUserDetails;
 import com.agencia.pagos.dtos.request.RefreshDTO;
 import com.agencia.pagos.dtos.request.UserCreateDTO;
 import com.agencia.pagos.dtos.request.UserUpdateDTO;
-import com.agencia.pagos.dtos.response.StatusResponseDTO;
 import com.agencia.pagos.dtos.response.TokenDTO;
 import com.agencia.pagos.dtos.response.UserProfileDTO;
 import com.agencia.pagos.entities.Role;
@@ -16,8 +15,7 @@ import com.agencia.pagos.repositories.UserRepository;
 
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
@@ -126,43 +124,34 @@ public class UserService implements UserDetailsService {
         return userRepository.findByEmail(email).orElseThrow(() -> new EntityNotFoundException("User not found"));
     }
 
-    public ResponseEntity<StatusResponseDTO> updateAdmin(Long id, UserUpdateDTO userDTO) {
+    public User updateAdmin(Long id, UserUpdateDTO userDTO) {
         User foundUser = userRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Admin not found"));
 
         if (Role.ADMIN != foundUser.getRole()) {
-            throw new EntityNotFoundException("Admin not found");
+            throw new AccessDeniedException("Target user is not an admin");
         }
 
-        if (userDTO.name() != null) {
-            foundUser.setName(userDTO.name());
-        }
-        if (userDTO.lastname() != null) {
-            foundUser.setLastname(userDTO.lastname());
-        }
-        if (userDTO.password() != null) {
-            foundUser.setPassword(passwordEncoder.encode(userDTO.password()));
-        }
-
-        userRepository.save(foundUser);
-        return ResponseEntity.status(HttpStatus.OK).body(new StatusResponseDTO("success", "Admin updated"));
+        return applyUpdates(foundUser, userDTO);
     }
 
-    public ResponseEntity<StatusResponseDTO> updateUser(UserUpdateDTO userDTO, Long id) {
+    public User updateUser(UserUpdateDTO userDTO, Long id) {
         User foundUser = userRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("User not found"));
 
-        if (userDTO.name() != null) {
-            foundUser.setName(userDTO.name());
-        }
-        if (userDTO.lastname() != null) {
-            foundUser.setLastname(userDTO.lastname());
-        }
-        if (userDTO.password() != null) {
-            foundUser.setPassword(passwordEncoder.encode(userDTO.password()));
-        }
+        return applyUpdates(foundUser, userDTO);
+    }
 
-        userRepository.save(foundUser);
-        return ResponseEntity.status(HttpStatus.OK).body(new StatusResponseDTO("success", "User updated"));
+    private User applyUpdates(User user, UserUpdateDTO dto) {
+        if (dto.name() != null) {
+            user.setName(dto.name());
+        }
+        if (dto.lastname() != null) {
+            user.setLastname(dto.lastname());
+        }
+        if (dto.password() != null) {
+            user.setPassword(passwordEncoder.encode(dto.password()));
+        }
+        return userRepository.save(user);
     }
 }

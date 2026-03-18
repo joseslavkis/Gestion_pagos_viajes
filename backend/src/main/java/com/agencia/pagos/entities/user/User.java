@@ -61,6 +61,9 @@ public class User implements UserDetails, UserCredentials {
     @OneToMany(mappedBy = "user")
     private List<Installment> installments = new ArrayList<>();
 
+    public User() {
+    }
+
     public User(String name, String password, String email, String lastname, Role role) {
         this.name = name;
         this.lastname = lastname;
@@ -70,8 +73,7 @@ public class User implements UserDetails, UserCredentials {
         this.active = true;
     }
 
-    public User() {
-    }
+    // ── UserCredentials interface ──────────────────────────────────────────
 
     @Override
     public String email() {
@@ -83,17 +85,7 @@ public class User implements UserDetails, UserCredentials {
         return password;
     }
 
-    public String getLastname() {
-        return lastname;
-    }
-
-    public void setLastname(String lastname) {
-        this.lastname = lastname;
-    }
-
-    public String getEmail() {
-        return email;
-    }
+    // ── UserDetails interface ──────────────────────────────────────────────
 
     @Override
     public String getUsername() {
@@ -105,6 +97,41 @@ public class User implements UserDetails, UserCredentials {
         return password;
     }
 
+    @Override
+    public Collection<? extends GrantedAuthority> getAuthorities() {
+        return List.of(new SimpleGrantedAuthority("ROLE_" + role.name()));
+    }
+
+    @Override
+    public boolean isAccountNonExpired() {
+        return true;
+    }
+
+    @Override
+    public boolean isAccountNonLocked() {
+        return true;
+    }
+
+    @Override
+    public boolean isCredentialsNonExpired() {
+        return true;
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return Boolean.TRUE.equals(active);
+    }
+
+    // ── Getters & Setters ─────────────────────────────────────────────────
+
+    public Long getId() {
+        return id;
+    }
+
+    public String getEmail() {
+        return email;
+    }
+
     public String getName() {
         return name;
     }
@@ -113,16 +140,12 @@ public class User implements UserDetails, UserCredentials {
         this.name = name;
     }
 
-    public Long getId() {
-        return id;
+    public String getLastname() {
+        return lastname;
     }
 
-    public Role getRole() {
-        return role;
-    }
-
-    public void setRole(Role role) {
-        this.role = role;
+    public void setLastname(String lastname) {
+        this.lastname = lastname;
     }
 
     public String getDni() {
@@ -165,6 +188,18 @@ public class User implements UserDetails, UserCredentials {
         this.courseName = courseName;
     }
 
+    public void setPassword(String password) {
+        this.password = password;
+    }
+
+    public Role getRole() {
+        return role;
+    }
+
+    public void setRole(Role role) {
+        this.role = role;
+    }
+
     public Boolean getActive() {
         return active;
     }
@@ -187,34 +222,5 @@ public class User implements UserDetails, UserCredentials {
 
     public void setInstallments(List<Installment> installments) {
         this.installments = installments;
-    }
-
-    @Override
-    public Collection<? extends GrantedAuthority> getAuthorities() {
-        return List.of(new SimpleGrantedAuthority("ROLE_" + role.name()));
-    }
-
-    @Override
-    public boolean isAccountNonExpired() {
-        return true;
-    }
-
-    @Override
-    public boolean isAccountNonLocked() {
-        return true;
-    }
-
-    @Override
-    public boolean isCredentialsNonExpired() {
-        return true;
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return Boolean.TRUE.equals(active);
-    }
-
-    public void setPassword(String password) {
-        this.password = password;
     }
 }

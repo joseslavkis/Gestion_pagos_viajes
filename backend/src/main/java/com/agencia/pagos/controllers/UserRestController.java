@@ -80,7 +80,8 @@ class UserRestController {
             @PathVariable Long id,
                         @Valid @RequestBody UserUpdateDTO userDTO
     ) {
-        return userService.updateAdmin(id, userDTO);
+        userService.updateAdmin(id, userDTO);
+        return ResponseEntity.ok(new StatusResponseDTO("success", "Admin updated"));
     }
 
     @PreAuthorize("hasRole('ADMIN')")
@@ -108,7 +109,8 @@ class UserRestController {
             @AuthenticationPrincipal(expression = "username") String email
     ) {
         var currentUser = userService.getUserByEmail(email);
-        return userService.updateUser(userDTO, currentUser.getId());
+        userService.updateUser(userDTO, currentUser.getId());
+        return ResponseEntity.ok(new StatusResponseDTO("success", "User updated"));
     }
 
     @PreAuthorize("hasRole('ADMIN')")
