@@ -20,8 +20,11 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import java.util.Arrays;
 import java.util.List;
 
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+
 @Configuration
 @EnableWebSecurity(debug = false)
+@EnableMethodSecurity
 public class SecurityConfig {
 
     public static final String[] PUBLIC_ENDPOINTS = {

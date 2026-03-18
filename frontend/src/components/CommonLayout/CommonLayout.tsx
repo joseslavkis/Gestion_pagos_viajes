@@ -10,8 +10,13 @@ export const CommonLayout = ({ children }: React.PropsWithChildren) => {
 
   return (
     <div className={styles.mainLayout}>
-      <ul className={styles.topBar}>{tokenState.state === "LOGGED_OUT" ? <LoggedOutLinks /> : <LoggedInLinks />}</ul>
-      <div className={styles.body}>{children}</div>
+      <header className={styles.topBar}>
+        <Link href="/" className={styles.brand}>
+          TravelPay
+        </Link>
+        <ul className={styles.links}>{tokenState.state === "LOGGED_OUT" ? <LoggedOutLinks /> : <LoggedInLinks />}</ul>
+      </header>
+      <main className={styles.body}>{children}</main>
     </div>
   );
 };
@@ -20,10 +25,14 @@ const LoggedOutLinks = () => {
   return (
     <>
       <li>
-        <Link href="/login">Log in</Link>
+        <Link href="/login" className={styles.navLink}>
+          Ingresar
+        </Link>
       </li>
       <li>
-        <Link href="/signup">Sign Up</Link>
+        <Link href="/signup" className={styles.navLink}>
+          Crear cuenta
+        </Link>
       </li>
     </>
   );
@@ -39,12 +48,14 @@ const LoggedInLinks = () => {
   return (
     <>
       <li>
-        <Link href="/under-construction">Main Page</Link>
+        <Link href="/under-construction" className={styles.navLink}>
+          Inicio
+        </Link>
       </li>
-      <li>Projects</li>
-      <li>Tasks</li>
       <li>
-        <button onClick={logOut}>Log out</button>
+        <button className={styles.logoutButton} onClick={logOut}>
+          Cerrar sesión
+        </button>
       </li>
     </>
   );
