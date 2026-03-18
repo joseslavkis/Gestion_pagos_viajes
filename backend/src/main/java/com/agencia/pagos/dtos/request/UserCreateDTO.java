@@ -10,7 +10,10 @@ import com.agencia.pagos.entities.user.UserCredentials;
 
 public record UserCreateDTO(
         @NotNull @Email String email,
-        @NotNull @Size(min = 8) String password,
+        @NotNull @Size(min = 8) @Pattern(
+            regexp = "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[@$!%*?&]).{8,}$",
+            message = "Password must have at least one uppercase, one lowercase, one digit, and one special character"
+        ) String password,
         @NotNull String name,
         @NotNull String lastname,
         @NotNull String dni,

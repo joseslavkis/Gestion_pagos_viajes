@@ -36,6 +36,7 @@ public class RefreshTokenService {
     }
 
     public RefreshToken createFor(User user) {
+        refreshTokenRepository.deleteByUser(user);
         String value = getRandomString();
         RefreshToken result = new RefreshToken(value, user, getExpirationFor(Instant.now()));
         refreshTokenRepository.save(result);

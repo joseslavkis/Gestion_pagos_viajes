@@ -1,6 +1,7 @@
 package com.agencia.pagos.entities;
 
 import com.agencia.pagos.entities.user.User;
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -42,8 +43,8 @@ public class Trip {
 	@Column(nullable = false, precision = 10, scale = 2)
 	private BigDecimal fixedFineAmount;
 
-	@Column(nullable = false)
-	private Boolean isRetroactiveActive = true;
+	@Column(name = "is_retroactive_active", nullable = false)
+	private Boolean retroactiveActive = true;
 
 	@ManyToMany
 	@JoinTable(
@@ -53,7 +54,7 @@ public class Trip {
 	)
 	private List<User> assignedUsers = new ArrayList<>();
 
-	@OneToMany(mappedBy = "trip")
+	@OneToMany(mappedBy = "trip", cascade = CascadeType.ALL, orphanRemoval = true)
 	private List<Installment> installments = new ArrayList<>();
 
 	public Trip() {
@@ -112,11 +113,11 @@ public class Trip {
 	}
 
 	public Boolean getRetroactiveActive() {
-		return isRetroactiveActive;
+		return retroactiveActive;
 	}
 
 	public void setRetroactiveActive(Boolean retroactiveActive) {
-		isRetroactiveActive = retroactiveActive;
+		this.retroactiveActive = retroactiveActive;
 	}
 
 	public List<User> getAssignedUsers() {
