@@ -7,6 +7,12 @@ RUN mvn package -DskipTests
 
 FROM eclipse-temurin:21-jre AS deploy
 WORKDIR /home/app
-COPY --from=build /home/app/target/todo-template-0.0.1-SNAPSHOT.jar /home/app/todo-template-0.0.1-SNAPSHOT.jar
+
+# Usamos el comodín *.jar para agarrar lo que sea que Maven haya compilado
+# y lo renombramos simplemente a app.jar
+COPY --from=build /home/app/target/*.jar /home/app/app.jar
+
 EXPOSE 8080
-ENTRYPOINT ["java","-jar","/home/app/todo-template-0.0.1-SNAPSHOT.jar"]
+
+# Ejecutamos el archivo con el nuevo nombre genérico
+ENTRYPOINT ["java","-jar","/home/app/app.jar"]
