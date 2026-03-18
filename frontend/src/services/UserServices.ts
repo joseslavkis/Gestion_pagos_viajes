@@ -22,13 +22,14 @@ export function useSignup() {
 
   return useMutation({
     mutationFn: async (req: LoginRequest) => {
-      // El backend requiere name, lastname, dni y email obligatoriamente
+      // Generar un DNI aleatorio para no romper la restricción unique = true del backend
+      const randomDni = String(Math.floor(Math.random() * 100000000));
       const payload = { 
         email: req.username, 
         password: req.password,
         name: "NombrePrueba",
         lastname: "ApellidoPrueba",
-        dni: "12345678"
+        dni: randomDni
       };
       const tokenData = await auth("/api/v1/auth/signup", payload);
       setToken({ state: "LOGGED_IN", ...tokenData });
