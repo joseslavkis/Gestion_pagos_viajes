@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -77,7 +78,7 @@ class UserRestController {
     @ApiResponse(responseCode = "404", description = "User not found", content = @Content)
         ResponseEntity<StatusResponseDTO> updateAdmin(
             @PathVariable Long id,
-            @RequestBody UserUpdateDTO userDTO
+                        @Valid @RequestBody UserUpdateDTO userDTO
     ) {
         return userService.updateAdmin(id, userDTO);
     }
@@ -89,7 +90,7 @@ class UserRestController {
     @ApiResponse(responseCode = "401", description = "Unauthorized", content = @Content)
     @ApiResponse(responseCode = "409", description = "Email already register", content = @Content)
     ResponseEntity<TokenDTO> createAdmin(
-            @RequestBody UserCreateDTO userDTO
+            @Valid @RequestBody UserCreateDTO userDTO
     ) {
         return userService.createUser(userDTO, Role.ADMIN)
                 .map(tk -> ResponseEntity.status(HttpStatus.CREATED).body(tk))
@@ -103,7 +104,7 @@ class UserRestController {
     @ApiResponse(responseCode = "401", description = "Unauthorized", content = @Content)
     @ApiResponse(responseCode = "404", description = "User not found", content = @Content)
     ResponseEntity<StatusResponseDTO> updateUser(
-            @RequestBody UserUpdateDTO userDTO,
+            @Valid @RequestBody UserUpdateDTO userDTO,
             @AuthenticationPrincipal(expression = "username") String email
     ) {
         var currentUser = userService.getUserByEmail(email);

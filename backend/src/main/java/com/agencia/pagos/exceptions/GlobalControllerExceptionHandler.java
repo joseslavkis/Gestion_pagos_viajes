@@ -12,6 +12,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestControllerAdvice
 public class GlobalControllerExceptionHandler {
@@ -48,6 +49,12 @@ public class GlobalControllerExceptionHandler {
     @ApiResponse(responseCode = "403", description = "Invalid jwt access token supplied", content = @Content)
     public ResponseEntity<String> handleAccessDenied(AccessDeniedException ex) {
         return new ResponseEntity<>(ex.getMessage(), HttpStatus.FORBIDDEN);
+    }
+
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<String> handleResponseStatusException(ResponseStatusException ex) {
+        String message = ex.getReason() != null ? ex.getReason() : ex.getMessage();
+        return new ResponseEntity<>(message, ex.getStatusCode());
     }
 
     @ExceptionHandler(Throwable.class)
