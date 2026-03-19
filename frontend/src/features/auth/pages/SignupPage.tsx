@@ -17,6 +17,8 @@ export function SignupPage() {
       name: "",
       lastname: "",
       dni: "",
+      studentName: "",
+      studentDni: "",
       password: "",
     },
     validators: {
@@ -93,6 +95,22 @@ export function SignupPage() {
                 name="dni"
                 children={(field) => (
                   <field.TextField label="DNI" placeholder="Ej: 12345678" autoComplete="off" />
+                )}
+              />
+              <formData.AppField
+                name="studentName"
+                children={(field) => (
+                  <field.TextField
+                    label="Nombre del hijo/a"
+                    placeholder="Ej: Martina Pérez"
+                    autoComplete="off"
+                  />
+                )}
+              />
+              <formData.AppField
+                name="studentDni"
+                children={(field) => (
+                  <field.TextField label="DNI del hijo/a" placeholder="Ej: 45678901" autoComplete="off" />
                 )}
               />
             </formData.FormContainer>

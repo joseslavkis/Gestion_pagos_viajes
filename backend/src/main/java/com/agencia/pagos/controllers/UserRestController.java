@@ -36,22 +36,13 @@ class UserRestController {
     @Operation(summary = "View a user's profile by ID")
     @ResponseStatus(HttpStatus.OK)
     @ApiResponse(responseCode = "404", description = "User not found", content = @Content)
+    @ApiResponse(responseCode = "403", description = "Access denied", content = @Content)
     @ApiResponse(responseCode = "401", description = "Unauthorized", content = @Content)
     ResponseEntity<UserProfileDTO> viewProfile(
                         @PathVariable Long id,
                         @AuthenticationPrincipal(expression = "username") String email
     ) {
-                var currentUser = userService.getUserByEmail(email);
-                boolean isAdmin = currentUser.getRole() == Role.ADMIN;
-                boolean isOwner = currentUser.getId().equals(id);
-
-                if (!isAdmin && !isOwner) {
-                        return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
-                }
-
-        return userService.getUserProfileById(id)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.status(HttpStatus.NOT_FOUND).build());
+        return ResponseEntity.ok(userService.getProfileWithAuthorization(id, email));
     }
 
     @PreAuthorize("isAuthenticated()")

@@ -20,9 +20,10 @@ export const UserCreateDTOSchema = z.object({
   name: z.string().min(2, "El nombre debe tener al menos 2 caracteres"),
   lastname: z.string().min(2, "El apellido debe tener al menos 2 caracteres"),
   dni: z.string().regex(/^\d{7,8}$/, "El DNI debe tener 7 u 8 números"),
+  studentName: z.string().min(2, "El nombre del hijo/a debe tener al menos 2 caracteres"),
+  studentDni: z.string().regex(/^\d{7,8}$/, "El DNI del hijo/a debe tener 7 u 8 números"),
   // Optional fields from backend UserCreateDTO
   phone: z.string().optional(),
-  studentName: z.string().optional(),
   schoolName: z.string().optional(),
   courseName: z.string().optional(),
 });

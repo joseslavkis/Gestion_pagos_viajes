@@ -9,27 +9,39 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
+
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @RestControllerAdvice
 public class GlobalControllerExceptionHandler {
 
     private static final Logger logger = LoggerFactory.getLogger(GlobalControllerExceptionHandler.class);
 
-    @ExceptionHandler(value = MethodArgumentNotValidException.class, produces = "text/plain")
+    @ExceptionHandler(MethodArgumentNotValidException.class)
     @ApiResponse(
             responseCode = "400",
             description = "Invalid arguments supplied",
             content = @Content(
-                    mediaType = "text/plain",
-                    schema = @Schema(implementation = String.class, example = "Validation failed because x, y, z")
+                    mediaType = "application/json",
+                    schema = @Schema(example = "{\"errors\": [\"name: size must be between 2 and 100\"]}")
             )
     )
-    public ResponseEntity<String> handleMethodArgumentInvalid(MethodArgumentNotValidException ex) {
-        return new ResponseEntity<>(ex.getMessage(), HttpStatus.BAD_REQUEST);
+    public ResponseEntity<Map<String, List<String>>> handleMethodArgumentInvalid(MethodArgumentNotValidException ex) {
+        List<String> errors = ex.getBindingResult().getFieldErrors().stream()
+                .map(FieldError::getField)
+                .collect(Collectors.toSet())
+                .stream()
+                .flatMap(field -> ex.getBindingResult().getFieldErrors(field).stream()
+                        .map(fe -> fe.getField() + ": " + fe.getDefaultMessage()))
+                .collect(Collectors.toList());
+        return ResponseEntity.badRequest().body(Map.of("errors", errors));
     }
 
     @ExceptionHandler(value = EntityNotFoundException.class, produces = "text/plain")

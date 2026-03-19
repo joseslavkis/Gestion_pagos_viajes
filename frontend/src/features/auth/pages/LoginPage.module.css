@@ -1,9 +1,16 @@
 .wrapper {
-  width: min(100%, 560px);
+  width: 92%;
+  max-width: 25rem;
+  box-sizing: border-box;
+  margin-inline: auto;
+  display: grid;
+  place-items: center;
+  gap: 1rem;
   animation: reveal 0.45s ease;
 }
 
 .header {
+  width: 100%;
   margin-bottom: 1.15rem;
 }
 
@@ -30,6 +37,27 @@
 
 .link:hover {
   border-bottom-color: rgba(11, 91, 207, 1);
+}
+
+/* Ensure auth controls are finger-friendly and avoid iOS zoom on focus. */
+.wrapper :global(input),
+.wrapper :global(textarea) {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 44px;
+  font-size: 1rem;
+}
+
+.wrapper :global(button),
+.wrapper :global(a) {
+  min-height: 44px;
+}
+
+@media (min-width: 768px) {
+  .wrapper {
+    width: 100%;
+    max-width: 28.125rem;
+  }
 }
 
 @keyframes reveal {

@@ -101,6 +101,25 @@ public class UserService implements UserDetailsService {
                 ));
     }
 
+    /**
+     * Verifica autorización (admin o propietario del perfil) y devuelve el perfil.
+     * Lanza {@link AccessDeniedException} si el solicitante no tiene permiso
+     * y {@link EntityNotFoundException} si el usuario destino no existe.
+     */
+    @Transactional(readOnly = true)
+    public UserProfileDTO getProfileWithAuthorization(Long id, String requesterEmail) {
+        User requester = getUserByEmail(requesterEmail);
+        boolean isAdmin = requester.getRole() == Role.ADMIN;
+        boolean isOwner = requester.getId().equals(id);
+
+        if (!isAdmin && !isOwner) {
+            throw new AccessDeniedException("Access denied: you can only view your own profile");
+        }
+
+        return getUserProfileById(id)
+                .orElseThrow(() -> new EntityNotFoundException("User not found with id " + id));
+    }
+
     public Optional<User> deactivateUser(Long id) {
         Optional<User> user = userRepository.findById(id);
         if (user.isPresent()) {

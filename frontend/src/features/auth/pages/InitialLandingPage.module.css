@@ -4,15 +4,31 @@
   --text-main: #0d3657;
   --text-muted: rgba(13, 54, 87, 0.74);
   min-height: 100vh;
-  height: 100vh;
   position: relative;
+  overflow: hidden;
+  isolation: isolate;
   overflow-y: auto;
-  overflow-x: hidden;
   scroll-behavior: smooth;
-  scroll-snap-type: y mandatory;
+  scroll-snap-type: y proximity;
   background: linear-gradient(155deg, var(--bg-start) 0%, var(--bg-end) 100%);
   color: var(--text-main);
   font-family: Inter, Poppins, "Segoe UI", "Avenir Next", "Helvetica Neue", sans-serif;
+}
+
+.page::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(155deg, rgba(240, 249, 255, 0.52) 0%, rgba(224, 242, 254, 0.44) 100%),
+    url("../../../assets/pexels-gasparzaldo-6745063.jpg");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: 0.86;
+  filter: saturate(1.03) contrast(1.06);
+  z-index: 0;
+  pointer-events: none;
 }
 
 .orbA,
@@ -21,74 +37,79 @@
   position: absolute;
   border-radius: 999px;
   pointer-events: none;
-  z-index: 0;
+  z-index: 1;
   filter: blur(56px);
   will-change: transform;
+  max-width: 100vw;
 }
 
 .orbA {
-  width: min(42vw, 520px);
-  height: min(42vw, 520px);
-  top: -16%;
-  left: -8%;
+  width: min(52vw, 240px);
+  height: min(52vw, 240px);
+  top: -10%;
+  left: -12%;
   background: radial-gradient(circle, rgba(14, 165, 233, 0.24) 0%, rgba(14, 165, 233, 0) 72%);
   animation: driftA 22s ease-in-out infinite alternate;
 }
 
 .orbB {
-  width: min(36vw, 460px);
-  height: min(36vw, 460px);
-  top: 8%;
-  right: -6%;
+  width: min(46vw, 210px);
+  height: min(46vw, 210px);
+  top: 12%;
+  right: -12%;
   background: radial-gradient(circle, rgba(59, 130, 246, 0.2) 0%, rgba(59, 130, 246, 0) 72%);
   animation: driftB 24s ease-in-out infinite alternate;
 }
 
 .orbC {
-  width: min(34vw, 420px);
-  height: min(34vw, 420px);
-  bottom: 14%;
-  left: 20%;
+  width: min(44vw, 200px);
+  height: min(44vw, 200px);
+  bottom: 18%;
+  left: 10%;
   background: radial-gradient(circle, rgba(125, 211, 252, 0.26) 0%, rgba(125, 211, 252, 0) 74%);
   animation: driftC 26s ease-in-out infinite alternate;
 }
 
 .main {
   position: relative;
-  z-index: 1;
+  z-index: 2;
 }
 
 .hero,
 .contactSection {
-  min-height: 100vh;
+  min-height: max(100vh, 100svh);
   scroll-snap-align: start;
 }
 
 .hero {
-  width: min(1200px, calc(100% - 3rem));
+  width: 90%;
+  max-width: 26rem;
   margin: 0 auto;
   display: grid;
-  grid-template-columns: minmax(360px, 1.1fr) minmax(360px, 1fr);
-  gap: clamp(1.8rem, 5vw, 4.8rem);
+  grid-template-columns: 1fr;
+  justify-items: center;
+  gap: 2rem;
+  text-align: center;
   align-items: center;
-  padding: clamp(2rem, 5vh, 4rem) 0;
+  padding: 2rem 0;
 }
 
 .visualColumn {
   display: flex;
   justify-content: center;
+  width: 100%;
 }
 
 .videoShell {
   position: relative;
-  width: clamp(290px, 35vw, 420px);
-  border-radius: 34px;
-  padding: clamp(10px, 1.1vw, 14px);
+  width: min(80vw, 23rem);
+  border-radius: 2rem;
+  padding: clamp(0.55rem, 2vw, 0.8rem);
   background: linear-gradient(145deg, rgba(255, 255, 255, 0.5) 0%, rgba(224, 242, 254, 0.22) 100%);
   border: 1px solid rgba(255, 255, 255, 0.55);
   backdrop-filter: blur(10px);
   box-shadow:
-    0 28px 70px rgba(56, 189, 248, 0.18),
+    0 1.75rem 4.4rem rgba(56, 189, 248, 0.18),
     inset 0 1px 0 rgba(255, 255, 255, 0.7);
   isolation: isolate;
 }
@@ -109,18 +130,18 @@
   width: 100%;
   height: auto;
   display: block;
-  border-radius: 26px;
-  box-shadow: 0 14px 30px rgba(8, 47, 73, 0.12);
+  border-radius: 1.6rem;
+  box-shadow: 0 0.875rem 1.875rem rgba(8, 47, 73, 0.12);
   filter:
-    drop-shadow(0 22px 46px rgba(14, 165, 233, 0.32))
-    drop-shadow(0 8px 18px rgba(30, 64, 175, 0.2));
+    drop-shadow(0 1.375rem 2.875rem rgba(14, 165, 233, 0.32))
+    drop-shadow(0 0.5rem 1.125rem rgba(30, 64, 175, 0.2));
 }
 
 .lightTrail {
   position: absolute;
   left: 72%;
   top: 46%;
-  width: clamp(120px, 16vw, 240px);
+  width: clamp(6rem, 16vw, 15rem);
   height: 1px;
   background: linear-gradient(90deg, rgba(56, 189, 248, 0.42) 0%, rgba(56, 189, 248, 0.02) 100%);
   transform-origin: left center;
@@ -132,8 +153,8 @@
   position: absolute;
   left: 82%;
   top: 32%;
-  width: 132px;
-  height: 132px;
+  width: 8.25rem;
+  height: 8.25rem;
   background:
     radial-gradient(circle at 12% 38%, rgba(14, 165, 233, 0.28) 0 1.3px, transparent 2.4px),
     radial-gradient(circle at 46% 22%, rgba(56, 189, 248, 0.32) 0 1.3px, transparent 2.4px),
@@ -144,12 +165,13 @@
 }
 
 .copyColumn {
-  max-width: 560px;
+  width: 100%;
+  max-width: 36rem;
 }
 
 .title {
-  font-size: clamp(2.2rem, 4.6vw, 3.9rem);
-  line-height: 1.04;
+  font-size: clamp(2rem, 8vw, 2.8rem);
+  line-height: 1.08;
   letter-spacing: -0.03em;
   margin: 0 0 1rem;
   font-weight: 800;
@@ -159,7 +181,7 @@
 .description {
   margin: 0 0 2rem;
   max-width: 48ch;
-  font-size: 1.08rem;
+  font-size: clamp(0.98rem, 3.5vw, 1.08rem);
   line-height: 1.7;
   color: var(--text-muted);
 }
@@ -167,7 +189,7 @@
 .ctas {
   display: flex;
   gap: 0.85rem;
-  justify-content: flex-start;
+  justify-content: center;
   flex-wrap: wrap;
 }
 
@@ -177,7 +199,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 164px;
+  min-height: 44px;
+  min-width: 10.25rem;
   padding: 0.85rem 1.25rem;
   border-radius: 999px;
   text-decoration: none;
@@ -212,21 +235,21 @@
 
 .primary {
   color: #ffffff;
-  background: linear-gradient(180deg, #0b77d5 0%, #035fbc 100%);
-  border-color: rgba(3, 95, 188, 0.58);
-  box-shadow: 0 15px 34px rgba(3, 95, 188, 0.28);
+  background: linear-gradient(180deg, #075bb4 0%, #034a98 100%);
+  border-color: rgba(2, 60, 128, 0.88);
+  box-shadow: 0 1rem 2.2rem rgba(2, 58, 123, 0.4);
 }
 
 .primary:hover {
   transform: translateY(-2px);
-  box-shadow: 0 20px 40px rgba(3, 95, 188, 0.32);
+  box-shadow: 0 1.25rem 2.5rem rgba(3, 95, 188, 0.32);
 }
 
 .secondary {
-  color: #0b4f9d;
-  background: rgba(255, 255, 255, 0.86);
-  border-color: rgba(14, 165, 233, 0.35);
-  box-shadow: 0 8px 20px rgba(56, 189, 248, 0.18);
+  color: #083f7a;
+  background: rgba(255, 255, 255, 0.96);
+  border-color: rgba(8, 63, 122, 0.45);
+  box-shadow: 0 0.65rem 1.35rem rgba(8, 47, 73, 0.22);
 }
 
 .secondary:hover {
@@ -237,9 +260,9 @@
 }
 
 .ghost {
-  color: #0e4f7f;
-  background: transparent;
-  border-color: rgba(14, 79, 127, 0.28);
+  color: #0a3e65;
+  background: rgba(255, 255, 255, 0.78);
+  border-color: rgba(10, 62, 101, 0.42);
 }
 
 .ghost:hover {
@@ -254,20 +277,23 @@
     radial-gradient(circle at 16% 0%, rgba(125, 211, 252, 0.26) 0%, rgba(125, 211, 252, 0) 40%),
     linear-gradient(180deg, #d9ecff 0%, #c5e2ff 100%);
   display: grid;
-  align-items: center;
+  align-items: start;
+  padding: 1rem 0 2rem;
 }
 
 .contactGrid {
-  width: min(1180px, calc(100% - 3rem));
+  width: 90%;
+  max-width: 28rem;
   margin: 0 auto;
   display: grid;
-  grid-template-columns: minmax(300px, 1fr) minmax(320px, 1fr);
-  gap: clamp(1.4rem, 3.5vw, 3rem);
-  padding: clamp(2rem, 4.5vh, 4rem) 0;
+  grid-template-columns: 1fr;
+  gap: 2rem;
+  padding: 1.5rem 0 2.25rem;
 }
 
 .contactIntro {
   align-self: center;
+  text-align: center;
 }
 
 .kicker {
@@ -281,7 +307,7 @@
 
 .contactTitle {
   margin: 0;
-  font-size: clamp(1.75rem, 3vw, 2.65rem);
+  font-size: clamp(1.6rem, 6vw, 2.65rem);
   line-height: 1.12;
   letter-spacing: -0.02em;
   color: #0b3658;
@@ -300,6 +326,7 @@
   padding: 0;
   display: grid;
   gap: 0.7rem;
+  justify-items: center;
 }
 
 .contactItem {
@@ -323,41 +350,83 @@
   font-size: 0.72rem;
 }
 
-.mapCard {
-  position: relative;
-  width: min(100%, 420px);
-  height: 180px;
-  border-radius: 18px;
-  background:
-    linear-gradient(rgba(8, 61, 99, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(8, 61, 99, 0.08) 1px, transparent 1px),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.72), rgba(239, 246, 255, 0.46));
-  background-size: 26px 26px, 26px 26px, auto;
+.mapLinkCard {
+  width: min(100%, 26rem);
+  margin: 0 auto;
+  border-radius: 1.125rem;
   border: 1px solid rgba(14, 165, 233, 0.3);
-  box-shadow: 0 14px 34px rgba(8, 47, 73, 0.13);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(239, 246, 255, 0.66));
+  box-shadow: 0 0.875rem 2.125rem rgba(8, 47, 73, 0.13);
+  text-decoration: none;
+  padding: 0.95rem 1rem;
+  display: grid;
+  gap: 0.45rem;
+  color: #0b3658;
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease;
 }
 
-.mapPin {
-  position: absolute;
-  left: 58%;
-  top: 44%;
-  width: 18px;
-  height: 18px;
-  border-radius: 999px;
-  background: #0284c7;
-  box-shadow: 0 0 0 10px rgba(2, 132, 199, 0.16);
+.mapLinkCard:hover {
+  transform: translateY(-2px);
+  border-color: rgba(2, 132, 199, 0.52);
+  box-shadow: 0 1rem 2.25rem rgba(8, 47, 73, 0.16);
+}
+
+.mapLinkCard:focus-visible {
+  outline: 3px solid rgba(2, 132, 199, 0.3);
+  outline-offset: 3px;
+}
+
+.mapLinkTop {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.mapLogo {
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #1a73e8, #34a853);
+  color: #ffffff;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.mapProvider {
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: rgba(11, 54, 88, 0.72);
+}
+
+.mapLinkText {
+  margin: 0;
+  font-weight: 700;
+  color: #0b3658;
+}
+
+.mapLinkHint {
+  font-size: 0.82rem;
+  color: rgba(8, 47, 73, 0.66);
 }
 
 .contactForm {
+  width: 100%;
+  box-sizing: border-box;
   display: grid;
   gap: 1rem;
   align-self: center;
-  padding: clamp(1.1rem, 1.8vw, 1.6rem);
-  border-radius: 22px;
+  padding: 1.1rem;
+  border-radius: 1.375rem;
   background: rgba(255, 255, 255, 0.68);
   border: 1px solid rgba(255, 255, 255, 0.8);
   backdrop-filter: blur(10px);
-  box-shadow: 0 20px 54px rgba(8, 47, 73, 0.13);
+  box-shadow: 0 1.25rem 3.375rem rgba(8, 47, 73, 0.13);
 }
 
 .field {
@@ -373,13 +442,25 @@
 
 .field input,
 .field textarea {
+  width: 100%;
+  box-sizing: border-box;
   border-radius: 12px;
   border: 1px solid rgba(14, 165, 233, 0.24);
   background: rgba(255, 255, 255, 0.86);
   color: #0a3252;
   font: inherit;
+  font-size: 1rem;
   padding: 0.78rem 0.86rem;
   transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.field input {
+  min-height: 44px;
+}
+
+.field textarea {
+  resize: vertical;
+  min-height: 120px;
 }
 
 .field input:focus,
@@ -389,32 +470,143 @@
   box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.16);
 }
 
-.field textarea {
-  resize: vertical;
-  min-height: 120px;
-}
-
 .submitButton {
   border: 0;
   border-radius: 999px;
+  min-height: 44px;
+  width: 100%;
   padding: 0.86rem 1.26rem;
   font: inherit;
   font-weight: 700;
   color: #ffffff;
   background: linear-gradient(180deg, #0b77d5 0%, #035fbc 100%);
-  box-shadow: 0 14px 30px rgba(3, 95, 188, 0.3);
+  box-shadow: 0 0.875rem 1.875rem rgba(3, 95, 188, 0.3);
   cursor: pointer;
   transition: transform 200ms ease, box-shadow 200ms ease;
 }
 
 .submitButton:hover {
   transform: translateY(-1px);
-  box-shadow: 0 18px 38px rgba(3, 95, 188, 0.32);
+  box-shadow: 0 1.125rem 2.375rem rgba(3, 95, 188, 0.32);
 }
 
 .submitButton:focus-visible {
   outline: 3px solid rgba(2, 132, 199, 0.36);
   outline-offset: 3px;
+}
+
+.successMessage {
+  margin: 0.25rem 0 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 12px;
+  background: rgba(16, 185, 129, 0.14);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  color: rgba(6, 95, 70, 0.95);
+  font-weight: 700;
+}
+
+@media (min-width: 768px) {
+  .page {
+    scroll-snap-type: y mandatory;
+  }
+
+  .page::before {
+    background-position: center 42%;
+    opacity: 0.82;
+  }
+  .orbA {
+    width: min(42vw, 520px);
+    height: min(42vw, 520px);
+    left: -8%;
+  }
+
+  .orbB {
+    width: min(36vw, 460px);
+    height: min(36vw, 460px);
+    right: -6%;
+  }
+
+  .orbC {
+    width: min(34vw, 420px);
+    height: min(34vw, 420px);
+    left: 20%;
+  }
+
+  .hero {
+    width: 90%;
+    max-width: 72rem;
+    grid-template-columns: 1fr 1fr;
+    text-align: left;
+    justify-items: stretch;
+    gap: clamp(2rem, 5vw, 4.8rem);
+    padding: clamp(2rem, 5vh, 4rem) 0;
+  }
+
+  .videoShell {
+    width: min(100%, 26rem);
+    margin-inline: auto;
+  }
+
+  .copyColumn {
+    max-width: 35rem;
+  }
+
+  .description {
+    margin-left: 0;
+    margin-right: 0;
+  }
+
+  .ctas {
+    justify-content: flex-start;
+  }
+
+  .page::before {
+    background-position: center 38%;
+    opacity: 0.78;
+  }
+  .contactGrid {
+    width: 90%;
+    max-width: 72rem;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;
+    padding: clamp(2rem, 4.5vh, 4rem) 0;
+  }
+
+  .contactSection {
+    align-items: center;
+    padding: 0;
+  }
+
+  .contactIntro {
+    text-align: left;
+  }
+
+  .contactList {
+    justify-items: start;
+  }
+
+  .mapLinkCard {
+    margin: 0;
+  }
+
+  .contactForm {
+    padding: 1.35rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .contactGrid {
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 2rem;
+  }
+
+  .contactIntro {
+    grid-column: span 1;
+  }
+
+  .contactForm {
+    grid-column: span 2;
+  }
 }
 
 @keyframes driftA {
@@ -468,64 +660,6 @@
   }
 }
 
-@media (max-width: 940px) {
-  .hero {
-    grid-template-columns: 1fr;
-    justify-items: center;
-    text-align: center;
-  }
-
-  .copyColumn {
-    max-width: 700px;
-  }
-
-  .description {
-    margin-left: auto;
-    margin-right: auto;
-  }
-
-  .ctas {
-    justify-content: center;
-  }
-
-  .lightTrail,
-  .particles {
-    display: none;
-  }
-
-  .contactGrid {
-    grid-template-columns: 1fr;
-  }
-
-  .contactIntro {
-    text-align: center;
-  }
-
-  .contactList {
-    justify-items: center;
-  }
-
-  .mapCard {
-    margin: 0 auto;
-  }
-}
-
-@media (max-width: 560px) {
-  .hero,
-  .contactGrid {
-    width: calc(100% - 1.6rem);
-  }
-
-  .videoShell {
-    width: min(100%, 360px);
-  }
-
-  .button {
-    min-width: 0;
-    width: 100%;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .page {
     scroll-behavior: auto;
@@ -541,7 +675,8 @@
 
   .button,
   .button::before,
-  .submitButton {
+  .submitButton,
+  .mapLinkCard {
     transition: none;
   }
 
@@ -553,4 +688,3 @@
     transform: none;
   }
 }
-

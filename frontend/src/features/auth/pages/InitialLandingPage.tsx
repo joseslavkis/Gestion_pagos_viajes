@@ -1,13 +1,43 @@
-import type { MouseEvent } from "react";
+import type { FormEvent, MouseEvent } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "wouter";
+
+import { ErrorContainer } from "@/components/form-components/ErrorContainer/ErrorContainer";
+import { useSendContactMessage } from "@/features/contact/services/contact-service";
 
 import styles from "./InitialLandingPage.module.css";
 import logoAnimado from "@/assets/logo-animado.mov";
 
 export function InitialLandingPage() {
+  const { mutateAsync, error, isPending, reset } = useSendContactMessage();
+  const [sent, setSent] = useState(false);
+
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [message, setMessage] = useState("");
+
+  const errors = useMemo(() => (error ? [error] : []), [error]);
+
   const handleContactClick = (event: MouseEvent<HTMLAnchorElement>) => {
     event.preventDefault();
     document.getElementById("contacto")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const handleContactSubmit = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setSent(false);
+    reset();
+
+    await mutateAsync({
+      name: name.trim(),
+      email: email.trim(),
+      message: message.trim(),
+    });
+
+    setSent(true);
+    setName("");
+    setEmail("");
+    setMessage("");
   };
 
   return (
@@ -25,7 +55,6 @@ export function InitialLandingPage() {
               <video
                 className={styles.logo}
                 autoPlay
-                loop
                 muted
                 playsInline
                 preload="metadata"
@@ -71,45 +100,92 @@ export function InitialLandingPage() {
                   <span className={styles.iconBadge} aria-hidden="true">
                     T
                   </span>
-                  <span>+54 11 4321-8765</span>
+                  <span>Tel. (54) (9) (11) 5664 2755</span>
                 </li>
                 <li className={styles.contactItem}>
                   <span className={styles.iconBadge} aria-hidden="true">
                     @
                   </span>
-                  <span>soporte@travelpay.com.ar</span>
+                  <span>consultas@proyectova.com.ar</span>
                 </li>
                 <li className={styles.contactItem}>
                   <span className={styles.iconBadge} aria-hidden="true">
                     U
                   </span>
-                  <span>Buenos Aires, Argentina</span>
+                  <span>Av. Sto. My. C. Beliera 3025 (RN8), Pilar, Buenos Aires</span>
+                </li>
+                <li className={styles.contactItem}>
+                  <span className={styles.iconBadge} aria-hidden="true">
+                    I
+                  </span>
+                  <span>Parque Empresarial Austral - Edificio Insignia M3 - Espacio VA EVT Leg. 14325</span>
                 </li>
               </ul>
 
-              <div className={styles.mapCard} aria-hidden="true">
-                <div className={styles.mapPin} />
-              </div>
+              <a
+                href="https://maps.google.com/?q=Av.+Sto.+My.+C.+Beliera+3025+Pilar+Buenos+Aires"
+                target="_blank"
+                rel="noreferrer"
+                className={styles.mapLinkCard}
+              >
+                <div className={styles.mapLinkTop}>
+                  <span className={styles.mapLogo} aria-hidden="true">
+                    G
+                  </span>
+                  <span className={styles.mapProvider}>Google Maps</span>
+                </div>
+                <p className={styles.mapLinkText}>Ver ubicacion de Espacio VA</p>
+                <span className={styles.mapLinkHint}>Se abre en una nueva pestana</span>
+              </a>
             </div>
 
-            <form className={styles.contactForm} onSubmit={(e) => e.preventDefault()}>
+            <form className={styles.contactForm} onSubmit={handleContactSubmit}>
               <label className={styles.field}>
                 <span>Nombre</span>
-                <input type="text" name="name" placeholder="Tu nombre" autoComplete="name" />
+                <input
+                  type="text"
+                  name="name"
+                  placeholder="Tu nombre"
+                  autoComplete="name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  disabled={isPending}
+                  required
+                />
               </label>
 
               <label className={styles.field}>
                 <span>Email</span>
-                <input type="email" name="email" placeholder="tu-email@colegio.edu" autoComplete="email" />
+                <input
+                  type="email"
+                  name="email"
+                  placeholder="tu-email@colegio.edu"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  disabled={isPending}
+                  required
+                />
               </label>
 
               <label className={styles.field}>
                 <span>Mensaje</span>
-                <textarea name="message" rows={5} placeholder="Contanos que necesitan resolver..." />
+                <textarea
+                  name="message"
+                  rows={5}
+                  placeholder="Contanos que necesitan resolver..."
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  disabled={isPending}
+                  required
+                />
               </label>
 
+              {errors.length > 0 ? <ErrorContainer errors={errors} /> : null}
+              {sent ? <p className={styles.successMessage}>¡Mensaje enviado!</p> : null}
+
               <button type="submit" className={styles.submitButton}>
-                Enviar consulta
+                {isPending ? "Loading..." : "Enviar consulta"}
               </button>
             </form>
           </div>

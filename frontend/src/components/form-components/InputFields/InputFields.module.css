@@ -9,6 +9,7 @@
   box-sizing: border-box;
   display: block;
   width: 100%;
+  min-height: 44px;
   padding: 0.82rem 0.95rem;
   border-radius: 12px;
   border: 1px solid #bfcde1;
@@ -46,4 +47,19 @@
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+}
+
+@media (max-width: 768px) {
+  .input {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 44px;
+    font-size: 1rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .input {
+    font-size: 1rem;
+  }
 }

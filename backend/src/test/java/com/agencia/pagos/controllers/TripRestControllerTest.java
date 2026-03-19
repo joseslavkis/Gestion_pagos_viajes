@@ -18,22 +18,33 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.mail.javamail.JavaMailSender;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Comparator;
 import java.util.List;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 import static org.hamcrest.Matchers.hasSize;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+    "app.mail.to=test@agencia.com",
+    "app.mail.from=no-reply@agencia.com"
+})
 @AutoConfigureMockMvc
 @Import(TestcontainersConfiguration.class)
 class TripRestControllerTest extends ControllerIntegrationTestSupport {
+
+    @MockBean
+    private JavaMailSender javaMailSender;
 
     @Autowired
     private TripRepository tripRepository;
@@ -61,6 +72,27 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 true,
                 LocalDate.now().plusMonths(1)
         );
+    }
+
+    private Trip buildTripForBulk(
+            String name,
+            BigDecimal totalAmount,
+            int installmentsCount,
+            int dueDay,
+            BigDecimal fixedFineAmount,
+            boolean retroactiveActive,
+            LocalDate firstDueDate
+    ) {
+        Trip trip = new Trip();
+        trip.setName(name);
+        trip.setTotalAmount(totalAmount);
+        trip.setInstallmentsCount(installmentsCount);
+        trip.setDueDay(dueDay);
+        trip.setYellowWarningDays(5);
+        trip.setFixedFineAmount(fixedFineAmount);
+        trip.setRetroactiveActive(retroactiveActive);
+        trip.setFirstDueDate(firstDueDate);
+        return tripRepository.save(trip);
     }
 
     @Test
@@ -227,16 +259,33 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
         int expectedFuture = 12 - expectedPast;
 
         List<Installment> installments = installmentRepository.findAll();
-        assertEquals(expectedFuture, installments.size());
-        
+
+        // [Eje-1] All 12 installments are now persisted: past ones with RETROACTIVE, future ones with YELLOW
+        assertEquals(12, installments.size());
+
+        // Validate past installments have RETROACTIVE status and correct capital
+        if (expectedPast > 0) {
+            Installment firstPast = installments.stream()
+                    .filter(i -> i.getInstallmentNumber() == 1)
+                    .findFirst().orElseThrow();
+            assertEquals(BigDecimal.valueOf(10000).setScale(2), firstPast.getCapitalAmount());
+            assertEquals(BigDecimal.ZERO.setScale(2), firstPast.getRetroactiveAmount());
+            assertEquals(BigDecimal.ZERO.setScale(2), firstPast.getFineAmount());
+            assertEquals(InstallmentStatus.RETROACTIVE, firstPast.getStatus());
+        }
+
+        // Validate the first future installment carries the accumulated retroactive amount
         if (expectedFuture > 0) {
             final int targetInstallmentNum = expectedPast + 1;
-            Installment firstSaved = installments.stream().filter(i -> i.getInstallmentNumber() == targetInstallmentNum).findFirst().orElseThrow();
-            assertEquals(BigDecimal.valueOf(10000).setScale(2), firstSaved.getCapitalAmount());
-            assertEquals(BigDecimal.valueOf(10000 * expectedPast).setScale(2), firstSaved.getRetroactiveAmount());
-            assertEquals(InstallmentStatus.YELLOW, firstSaved.getStatus());
+            Installment firstFuture = installments.stream()
+                    .filter(i -> i.getInstallmentNumber() == targetInstallmentNum)
+                    .findFirst().orElseThrow();
+            assertEquals(BigDecimal.valueOf(10000).setScale(2), firstFuture.getCapitalAmount());
+            assertEquals(BigDecimal.valueOf(10000 * expectedPast).setScale(2), firstFuture.getRetroactiveAmount());
+            assertEquals(InstallmentStatus.YELLOW, firstFuture.getStatus());
         }
     }
+
 
     @Test
     void assignUsersInBulk_retroactiveInactive_calculatesCorrectly() throws Exception {
@@ -294,4 +343,317 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             assertEquals(InstallmentStatus.YELLOW, firstFuture.getStatus());
         }
     }
+
+            @Test
+            void assignUsersInBulk_siendoUserNormal_devuelve403() throws Exception {
+            TokenDTO userTokens = signUp(buildValidUser("user-bulk-forbidden"));
+            UserCreateDTO userDto = buildValidUser("candidate-bulk-forbidden");
+            signUp(userDto);
+            User candidate = userRepository.findByEmail(userDto.email()).orElseThrow();
+
+            Trip trip = buildTripForBulk(
+                "Trip Forbidden",
+                BigDecimal.valueOf(1000),
+                2,
+                10,
+                BigDecimal.valueOf(100),
+                false,
+                LocalDate.now().plusMonths(2)
+            );
+
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(candidate.getId()));
+
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                .header("Authorization", "Bearer " + userTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isForbidden());
+            }
+
+            @Test
+            void assignUsersInBulk_tripNoExiste_devuelve404() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-bulk-trip-not-found"));
+            UserCreateDTO userDto = buildValidUser("user-bulk-trip-not-found");
+            signUp(userDto);
+            User u = userRepository.findByEmail(userDto.email()).orElseThrow();
+
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(u.getId()));
+
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", 999999L)
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isNotFound());
+            }
+
+            @Test
+            void assignUsersInBulk_usuarioNoExiste_devuelve404() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-bulk-user-not-found"));
+
+            Trip trip = buildTripForBulk(
+                "Trip Missing User",
+                BigDecimal.valueOf(3000),
+                3,
+                10,
+                BigDecimal.valueOf(100),
+                false,
+                LocalDate.now().plusMonths(3)
+            );
+
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(999999L));
+
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isNotFound());
+            }
+
+            @Test
+            void assignUsersInBulk_userIdsDuplicados_devuelve400() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-bulk-duplicates"));
+            UserCreateDTO userDto = buildValidUser("user-bulk-duplicates");
+            signUp(userDto);
+            User u = userRepository.findByEmail(userDto.email()).orElseThrow();
+
+            Trip trip = buildTripForBulk(
+                "Trip Duplicate IDs",
+                BigDecimal.valueOf(2000),
+                2,
+                10,
+                BigDecimal.valueOf(100),
+                false,
+                LocalDate.now().plusMonths(2)
+            );
+
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(u.getId(), u.getId()));
+
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors").isArray());
+            }
+
+            @Test
+            void assignUsersInBulk_reasignacion_noDuplicaAsignacionesNiCuotas() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-bulk-idempotent"));
+            UserCreateDTO userDto = buildValidUser("user-bulk-idempotent");
+            signUp(userDto);
+            User u = userRepository.findByEmail(userDto.email()).orElseThrow();
+
+            Trip trip = buildTripForBulk(
+                "Trip Idempotent",
+                BigDecimal.valueOf(1200),
+                3,
+                10,
+                BigDecimal.valueOf(100),
+                false,
+                LocalDate.now().plusMonths(2)
+            );
+
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(u.getId()));
+
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assignedCount").value(1));
+
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assignedCount").value(0));
+
+            List<Installment> installments = installmentRepository.findByTripIdWithUsers(trip.getId());
+            assertEquals(3, installments.size());
+
+            Trip persistedTrip = tripRepository.findByIdWithUsers(trip.getId()).orElseThrow();
+            assertEquals(1, persistedTrip.getAssignedUsers().size());
+            }
+
+            @Test
+            void assignUsersInBulk_totalNoDivisible_ultimaCuotaAbsorbeResto() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-bulk-remainder"));
+            UserCreateDTO userDto = buildValidUser("user-bulk-remainder");
+            signUp(userDto);
+            User u = userRepository.findByEmail(userDto.email()).orElseThrow();
+
+            Trip trip = buildTripForBulk(
+                "Trip Remainder",
+                new BigDecimal("100.00"),
+                3,
+                10,
+                BigDecimal.ZERO,
+                false,
+                LocalDate.now().plusMonths(2)
+            );
+
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(u.getId()));
+
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isOk());
+
+            List<Installment> userInstallments = installmentRepository.findByTripIdWithUsers(trip.getId()).stream()
+                .filter(i -> i.getUser().getId().equals(u.getId()))
+                .sorted(Comparator.comparing(Installment::getInstallmentNumber))
+                .toList();
+
+            assertEquals(3, userInstallments.size());
+            assertEquals(new BigDecimal("33.33"), userInstallments.get(0).getCapitalAmount());
+            assertEquals(new BigDecimal("33.33"), userInstallments.get(1).getCapitalAmount());
+            assertEquals(new BigDecimal("33.34"), userInstallments.get(2).getCapitalAmount());
+
+            BigDecimal total = userInstallments.stream()
+                .map(Installment::getCapitalAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+            assertEquals(0, total.compareTo(new BigDecimal("100.00")));
+            }
+
+            @Test
+            void assignUsersInBulk_dueDay31_ajustaFechaAlUltimoDiaDelMes() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-bulk-due-day"));
+            UserCreateDTO userDto = buildValidUser("user-bulk-due-day");
+            signUp(userDto);
+            User u = userRepository.findByEmail(userDto.email()).orElseThrow();
+
+            Trip trip = buildTripForBulk(
+                "Trip Due Day 31",
+                BigDecimal.valueOf(3100),
+                3,
+                31,
+                BigDecimal.ZERO,
+                false,
+                LocalDate.of(2027, 1, 1)
+            );
+
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(u.getId()));
+
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isOk());
+
+            Installment secondInstallment = installmentRepository.findByTripIdWithUsers(trip.getId()).stream()
+                .filter(i -> i.getUser().getId().equals(u.getId()))
+                .filter(i -> i.getInstallmentNumber() == 2)
+                .findFirst()
+                .orElseThrow();
+
+            assertEquals(LocalDate.of(2027, 2, 28), secondInstallment.getDueDate());
+            }
+
+            @Test
+            void deleteTrip_conUsuariosAsignados_devuelve409() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-delete-conflict"));
+            UserCreateDTO userDto = buildValidUser("user-trip-delete-conflict");
+            signUp(userDto);
+            User u = userRepository.findByEmail(userDto.email()).orElseThrow();
+
+            Trip trip = buildTripForBulk(
+                "Trip Delete Conflict",
+                BigDecimal.valueOf(1000),
+                2,
+                10,
+                BigDecimal.valueOf(100),
+                false,
+                LocalDate.now().plusMonths(2)
+            );
+            trip.getAssignedUsers().add(u);
+            tripRepository.save(trip);
+
+            mockMvc.perform(delete("/api/v1/trips/{id}", trip.getId())
+                .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isConflict());
+
+            assertTrue(tripRepository.findById(trip.getId()).isPresent());
+            }
+
+            @Test
+            void updateTrip_cambiarFirstDueDate_conUsuariosAsignados_devuelve409() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-update-conflict"));
+            UserCreateDTO userDto = buildValidUser("user-trip-update-conflict");
+            signUp(userDto);
+            User u = userRepository.findByEmail(userDto.email()).orElseThrow();
+
+            LocalDate originalFirstDueDate = LocalDate.now().plusMonths(2);
+            Trip trip = buildTripForBulk(
+                "Trip Update Conflict",
+                BigDecimal.valueOf(1000),
+                2,
+                10,
+                BigDecimal.valueOf(100),
+                false,
+                originalFirstDueDate
+            );
+            trip.getAssignedUsers().add(u);
+            tripRepository.save(trip);
+
+            TripUpdateDTO patchDto = new TripUpdateDTO(
+                null,
+                null,
+                null,
+                null,
+                null,
+                LocalDate.now().plusMonths(6)
+            );
+
+            mockMvc.perform(patch("/api/v1/trips/{id}", trip.getId())
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(patchDto)))
+                .andExpect(status().isConflict());
+
+            Trip persistedTrip = tripRepository.findByIdWithUsers(trip.getId()).orElseThrow();
+            assertEquals(originalFirstDueDate, persistedTrip.getFirstDueDate());
+            }
+
+            @Test
+            void assignUsersInBulk_dosUsuarios_generaCuotasParaCadaUno() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-bulk-two-users"));
+
+            UserCreateDTO user1Dto = buildValidUser("user-bulk-two-1");
+            UserCreateDTO user2Dto = buildValidUser("user-bulk-two-2");
+            signUp(user1Dto);
+            signUp(user2Dto);
+            User user1 = userRepository.findByEmail(user1Dto.email()).orElseThrow();
+            User user2 = userRepository.findByEmail(user2Dto.email()).orElseThrow();
+
+            Trip trip = buildTripForBulk(
+                "Trip Two Users",
+                BigDecimal.valueOf(8000),
+                4,
+                10,
+                BigDecimal.valueOf(100),
+                false,
+                LocalDate.now().plusMonths(2)
+            );
+
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(user1.getId(), user2.getId()));
+
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assignedCount").value(2));
+
+            List<Installment> installments = installmentRepository.findByTripIdWithUsers(trip.getId());
+            assertNotNull(installments);
+            assertEquals(8, installments.size());
+
+            long user1Installments = installments.stream().filter(i -> i.getUser().getId().equals(user1.getId())).count();
+            long user2Installments = installments.stream().filter(i -> i.getUser().getId().equals(user2.getId())).count();
+            assertEquals(4, user1Installments);
+            assertEquals(4, user2Installments);
+            assertTrue(installments.stream().allMatch(i -> i.getStatus() == InstallmentStatus.YELLOW));
+            }
 }

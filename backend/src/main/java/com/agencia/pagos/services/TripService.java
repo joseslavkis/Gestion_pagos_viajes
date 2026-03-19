@@ -25,6 +25,9 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @Transactional
@@ -113,20 +116,34 @@ public class TripService {
         // [C-2] Pessimistic lock to avoid race conditions on concurrent bulk assignments
         Trip trip = tripRepository.findByIdForUpdate(tripId)
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found"));
-        
+
         // [A-3] Force initialization of lazy collection natively within the transaction
         trip.getAssignedUsers().size();
 
-        List<User> newUsers = new ArrayList<>();
-        for (Long userId : dto.userIds()) {
-            boolean alreadyAssigned = trip.getAssignedUsers().stream()
-                    .anyMatch(u -> u.getId().equals(userId));
-            if (!alreadyAssigned) {
-                User user = userRepository.findById(userId)
-                        .orElseThrow(() -> new EntityNotFoundException("User not found: " + userId));
-                newUsers.add(user);
+        // [Eje-3] Batch load: recover all users in a single WHERE id IN (...) query
+        Set<Long> alreadyAssignedIds = trip.getAssignedUsers().stream()
+                .map(User::getId)
+                .collect(Collectors.toSet());
+
+        List<Long> candidateIds = dto.userIds().stream()
+                .filter(id -> !alreadyAssignedIds.contains(id))
+                .collect(Collectors.toList());
+
+        if (candidateIds.isEmpty()) {
+            return new BulkAssignResultDTO("success", "All users were already assigned", 0);
+        }
+
+        Map<Long, User> foundUsersById = userRepository.findAllByIdIn(candidateIds).stream()
+                .collect(Collectors.toMap(User::getId, u -> u));
+
+        // Validate that every requested user exists
+        for (Long requestedId : candidateIds) {
+            if (!foundUsersById.containsKey(requestedId)) {
+                throw new EntityNotFoundException("User not found: " + requestedId);
             }
         }
+
+        List<User> newUsers = new ArrayList<>(foundUsersById.values());
 
         // [C-1] Distribute total amount to avoid losing cents (last installment absorbs remainder)
         List<BigDecimal> amounts = splitAmount(trip.getTotalAmount(), trip.getInstallmentsCount());
@@ -148,6 +165,7 @@ public class TripService {
                 BigDecimal installmentCapital = amounts.get(i - 1);
 
                 if (!currentDueDate.isBefore(now)) {
+                    // ── Cuota presente o futura ────────────────────────────────────────────
                     Installment installment = new Installment();
                     installment.setTrip(trip);
                     installment.setUser(user);
@@ -160,26 +178,38 @@ public class TripService {
                     // [A-2] Explicit call so totalDue is correct before batch save
                     installment.recalculateTotalDue();
                     installmentsToSave.add(installment);
+                    // Reset accumulator — only the first future quota receives the retroactive amount
                     acumuladoRetroactivo = BigDecimal.ZERO;
+                } else if (trip.getRetroactiveActive()) {
+                    // ── [Eje-1] Retroactividad activa: persistir la cuota pasada con status RETROACTIVE
+                    // para trazabilidad completa del historial, y acumular su capital en la primera futura.
+                    Installment retroInstallment = new Installment();
+                    retroInstallment.setTrip(trip);
+                    retroInstallment.setUser(user);
+                    retroInstallment.setInstallmentNumber(i);
+                    retroInstallment.setDueDate(currentDueDate);
+                    retroInstallment.setCapitalAmount(installmentCapital);
+                    retroInstallment.setRetroactiveAmount(BigDecimal.ZERO);
+                    retroInstallment.setFineAmount(BigDecimal.ZERO);
+                    retroInstallment.setStatus(InstallmentStatus.RETROACTIVE);
+                    retroInstallment.recalculateTotalDue();
+                    installmentsToSave.add(retroInstallment);
+                    // Accumulate for the first upcoming installment
+                    acumuladoRetroactivo = acumuladoRetroactivo.add(installmentCapital);
                 } else {
-                    if (trip.getRetroactiveActive()) {
-                        // Escenario B: accumulate without persisting past quota
-                        acumuladoRetroactivo = acumuladoRetroactivo.add(installmentCapital);
-                    } else {
-                        // Escenario C: persist past quota in RED with fine
-                        Installment installment = new Installment();
-                        installment.setTrip(trip);
-                        installment.setUser(user);
-                        installment.setInstallmentNumber(i);
-                        installment.setDueDate(currentDueDate);
-                        installment.setCapitalAmount(installmentCapital);
-                        installment.setRetroactiveAmount(BigDecimal.ZERO);
-                        installment.setFineAmount(trip.getFixedFineAmount());
-                        installment.setStatus(InstallmentStatus.RED);
-                        // [A-2] Explicit call so totalDue is correct before batch save
-                        installment.recalculateTotalDue();
-                        installmentsToSave.add(installment);
-                    }
+                    // ── Retroactividad inactiva: persistir la cuota pasada en RED con multa ──
+                    Installment installment = new Installment();
+                    installment.setTrip(trip);
+                    installment.setUser(user);
+                    installment.setInstallmentNumber(i);
+                    installment.setDueDate(currentDueDate);
+                    installment.setCapitalAmount(installmentCapital);
+                    installment.setRetroactiveAmount(BigDecimal.ZERO);
+                    installment.setFineAmount(trip.getFixedFineAmount());
+                    installment.setStatus(InstallmentStatus.RED);
+                    // [A-2] Explicit call so totalDue is correct before batch save
+                    installment.recalculateTotalDue();
+                    installmentsToSave.add(installment);
                 }
             }
         }
@@ -198,7 +228,8 @@ public class TripService {
      * cent is lost. All installments receive the truncated base value; the
      * last one absorbs the remaining cents.
      */
-    private List<BigDecimal> splitAmount(BigDecimal total, int count) {
+    /* package-private for testing */
+    List<BigDecimal> splitAmount(BigDecimal total, int count) {
         BigDecimal base = total.divide(BigDecimal.valueOf(count), 2, RoundingMode.DOWN);
         BigDecimal distributed = base.multiply(BigDecimal.valueOf(count));
         BigDecimal remainder = total.subtract(distributed);

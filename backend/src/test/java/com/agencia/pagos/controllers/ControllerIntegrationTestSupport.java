@@ -81,6 +81,7 @@ abstract class ControllerIntegrationTestSupport {
                 uniqueDni(),
                 "123456789",
                 "Alumno",
+            uniqueDni(),
                 "Colegio",
                 "3ro"
         );
