@@ -1,8 +1,17 @@
-import React, { Dispatch, useContext, useEffect, useMemo, useReducer } from "react";
+import React, { Dispatch, useContext, useEffect, useReducer } from "react";
 
 function isJwtExpired(token: string): boolean {
   try {
-    const payload = JSON.parse(atob(token.split(".")[1]));
+    const payloadPart = token.split(".")[1];
+    if (!payloadPart) {
+      return true;
+    }
+
+    // JWT payload is base64url, not standard base64.
+    const base64 = payloadPart.replace(/-/g, "+").replace(/_/g, "/");
+    const paddedBase64 = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+    const payload = JSON.parse(atob(paddedBase64)) as { exp?: unknown };
+
     // exp es en segundos, Date.now() en ms
     return typeof payload.exp === "number" && payload.exp * 1000 < Date.now();
   } catch {
@@ -50,9 +59,7 @@ export const TokenProvider = ({ children }: React.PropsWithChildren) => {
     window.localStorage.removeItem(TOKEN_STORAGE_KEY);
   }, [state]);
 
-  const value = useMemo(() => [state, setState] as TokenContextValue, [state]);
-
-  return <TokenContext.Provider value={value}>{children}</TokenContext.Provider>;
+  return <TokenContext.Provider value={[state, setState] as TokenContextValue}>{children}</TokenContext.Provider>;
 };
 
 function getInitialTokenState(): TokenContextData {

@@ -1,9 +1,15 @@
+import type { MouseEvent } from "react";
 import { Link } from "wouter";
 
 import styles from "./InitialLandingPage.module.css";
 import logoAnimado from "@/assets/logo-animado.mov";
 
 export function InitialLandingPage() {
+  const handleContactClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    document.getElementById("contacto")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   return (
     <div className={styles.page}>
       <div className={styles.orbA} aria-hidden="true" />
@@ -19,9 +25,10 @@ export function InitialLandingPage() {
               <video
                 className={styles.logo}
                 autoPlay
+                loop
                 muted
                 playsInline
-                preload="auto"
+                preload="metadata"
               >
                 <source src="/logo-animado.webm" type="video/webm" />
                 <source src={logoAnimado} type="video/quicktime" />
@@ -42,7 +49,7 @@ export function InitialLandingPage() {
               <Link href="/signup" className={`${styles.button} ${styles.secondary}`}>
                 Crear cuenta
               </Link>
-              <a href="#contacto" className={`${styles.button} ${styles.ghost}`}>
+              <a href="#contacto" className={`${styles.button} ${styles.ghost}`} onClick={handleContactClick}>
                 Contacto
               </a>
             </div>
@@ -85,7 +92,7 @@ export function InitialLandingPage() {
               </div>
             </div>
 
-            <form className={styles.contactForm}>
+            <form className={styles.contactForm} onSubmit={(e) => e.preventDefault()}>
               <label className={styles.field}>
                 <span>Nombre</span>
                 <input type="text" name="name" placeholder="Tu nombre" autoComplete="name" />

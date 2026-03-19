@@ -23,6 +23,7 @@
   pointer-events: none;
   z-index: 0;
   filter: blur(56px);
+  will-change: transform;
 }
 
 .orbA {
