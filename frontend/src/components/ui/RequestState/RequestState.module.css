@@ -1,0 +1,10 @@
+.container {
+  width: 100%;
+}
+
+.loading {
+  margin: 0 0 1rem;
+  color: rgba(11, 91, 207, 0.95);
+  font-weight: 600;
+}
+

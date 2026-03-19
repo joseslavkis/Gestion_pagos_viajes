@@ -7,7 +7,7 @@ import { useFormContext } from "@/config/form-context";
 import styles from "./FormContainer.module.css";
 
 type FormContainerProps = React.PropsWithChildren<{
-  extraError: Error | null;
+  extraError?: Error | null;
   submitLabel?: string;
   pendingLabel?: string;
   isPending?: boolean;
@@ -34,7 +34,7 @@ export const FormContainer = ({
       }}
     >
       <div className={styles.fields}>{children}</div>
-      {extraError && <ErrorContainer errors={[extraError]} />}
+      {extraError ? <ErrorContainer errors={[extraError]} /> : null}
       <SubmitButton label={submitLabel} pendingLabel={pendingLabel} isPending={isPending} />
       {footer ? <div className={styles.footer}>{footer}</div> : null}
     </form>

@@ -7,13 +7,11 @@ import { ApiError } from "../api-error";
 import { ReactNode } from "react";
 
 // Mock del contexto del token y variable global de entorno
-vi.mock("@/services/TokenContext", () => ({
-  useToken: () => [null, vi.fn()],
+vi.mock("@/lib/session", () => ({
+  useToken: () => [{ state: "LOGGED_OUT" }, vi.fn()],
 }));
 
-vi.mock("@/config/app-query-client", () => ({
-  BASE_API_URL: "http://localhost:8080",
-}));
+// api-client ahora centraliza BASE_API_URL; no hace falta mockearlo aquí.
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -51,11 +49,10 @@ describe("UserServices Hook Error Handling", () => {
       const { result } = renderHook(() => useSignup(), { wrapper });
 
       result.current.mutate({
-        username: "test",
         email: "test@example.com",
         password: "password123",
-        firstName: "Test",
-        lastName: "User",
+        name: "Test",
+        lastname: "User",
         dni: "12345678"
       });
 
@@ -80,7 +77,7 @@ describe("UserServices Hook Error Handling", () => {
       const { result } = renderHook(() => useLogin(), { wrapper });
 
       result.current.mutate({
-        username: "test",
+        email: "test@example.com",
         password: "wrong-password",
       });
 

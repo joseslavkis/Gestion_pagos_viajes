@@ -12,18 +12,32 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 1rem 2rem;
+  padding: 0.5rem 2rem; /* Reduce padding para acercarlo a la esquina */
   border-bottom: 1px solid var(--auth-border);
   background-color: rgba(255, 255, 255, 0.78);
   backdrop-filter: blur(10px);
 }
 
 .brand {
-  color: #0f2f57;
-  font-size: 1.16rem;
-  font-weight: 800;
-  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  margin-left: -1rem; /* Lo pega más a la izquierda */
   text-decoration: none;
+}
+
+.logo {
+  max-width: 190px;
+  cursor: pointer;
+  height: auto;
+  border-radius: 12px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+  background-color: transparent;
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.logo:hover {
+  transform: translateY(-2px) scale(1.03);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
 }
 
 .links {
