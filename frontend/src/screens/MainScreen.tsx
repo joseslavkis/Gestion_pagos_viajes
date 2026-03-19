@@ -1,10 +1,1 @@
-import { CommonLayout } from "@/components/CommonLayout/CommonLayout";
-import { UnderConstruction } from "@/components/UnderConstruction/UnderConstruction";
-
-export const MainScreen = () => {
-  return (
-    <CommonLayout>
-      <UnderConstruction />
-    </CommonLayout>
-  );
-};
+export { MainScreen } from "@/features/trips/pages/MainScreen";

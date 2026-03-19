@@ -19,6 +19,6 @@ public interface TripRepository extends JpaRepository<Trip, Long> {
     List<Trip> findAllWithUsers();
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("SELECT t FROM Trip t LEFT JOIN FETCH t.assignedUsers WHERE t.id = :id")
-    Optional<Trip> findByIdWithUsersForUpdate(@Param("id") Long id);
+    @Query("SELECT t FROM Trip t WHERE t.id = :id")
+    Optional<Trip> findByIdForUpdate(@Param("id") Long id);
 }

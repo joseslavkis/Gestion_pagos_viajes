@@ -35,8 +35,9 @@ jobs:
           node-version: "22"
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
-      - name: Install & Build
+      - name: Install, Test & Build
         working-directory: frontend
         run: |
           npm ci
+          npx vitest run
           npm run build

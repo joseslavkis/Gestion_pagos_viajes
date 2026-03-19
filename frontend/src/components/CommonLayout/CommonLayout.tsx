@@ -1,7 +1,8 @@
 import React from "react";
 import { Link } from "wouter";
 
-import { useToken } from "@/services/TokenContext";
+import { useToken } from "@/lib/session";
+import logoAnimado from "@/assets/logo-animado.mov";
 
 import styles from "./CommonLayout.module.css";
 
@@ -12,7 +13,13 @@ export const CommonLayout = ({ children }: React.PropsWithChildren) => {
     <div className={styles.mainLayout}>
       <header className={styles.topBar}>
         <Link href="/" className={styles.brand}>
-          TravelPay
+          <video
+            className={styles.logo}
+            src={logoAnimado}
+            autoPlay
+            muted
+            playsInline
+          />
         </Link>
         <ul className={styles.links}>{tokenState.state === "LOGGED_OUT" ? <LoggedOutLinks /> : <LoggedInLinks />}</ul>
       </header>

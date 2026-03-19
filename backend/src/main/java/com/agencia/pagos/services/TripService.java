@@ -111,8 +111,11 @@ public class TripService {
     // [C-2, A-1] Uses pessimistic lock + Argentina timezone
     public BulkAssignResultDTO assignUsersInBulk(Long tripId, UserAssignBulkDTO dto) {
         // [C-2] Pessimistic lock to avoid race conditions on concurrent bulk assignments
-        Trip trip = tripRepository.findByIdWithUsersForUpdate(tripId)
+        Trip trip = tripRepository.findByIdForUpdate(tripId)
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found"));
+        
+        // [A-3] Force initialization of lazy collection natively within the transaction
+        trip.getAssignedUsers().size();
 
         List<User> newUsers = new ArrayList<>();
         for (Long userId : dto.userIds()) {
