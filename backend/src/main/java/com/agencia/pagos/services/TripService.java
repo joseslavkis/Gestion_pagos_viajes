@@ -357,6 +357,14 @@ public class TripService {
     }
 
     private SpreadsheetRowInstallmentDTO toSpreadsheetInstallmentDTO(Installment installment) {
+        Trip trip = installment.getTrip();
+        int yellowWarningDays = trip.getYellowWarningDays() == null ? 0 : trip.getYellowWarningDays();
+        InstallmentStatus effectiveStatus = computeEffectiveStatus(
+                installment.getStatus(),
+                installment.getDueDate(),
+                yellowWarningDays
+        );
+
         return new SpreadsheetRowInstallmentDTO(
                 installment.getId(),
                 installment.getInstallmentNumber(),
@@ -365,8 +373,32 @@ public class TripService {
                 installment.getRetroactiveAmount(),
                 installment.getFineAmount(),
                 installment.getTotalDue(),
-                installment.getStatus()
+                effectiveStatus
         );
+    }
+
+    private InstallmentStatus computeEffectiveStatus(
+            InstallmentStatus storedStatus,
+            LocalDate dueDate,
+            int yellowWarningDays
+    ) {
+        if (storedStatus == InstallmentStatus.RETROACTIVE) {
+            return InstallmentStatus.RETROACTIVE;
+        }
+
+        LocalDate today = LocalDate.now(ZoneId.of("America/Argentina/Buenos_Aires"));
+        if (dueDate.isBefore(today)) {
+            return InstallmentStatus.RED;
+        }
+
+        long daysUntilDue = dueDate.toEpochDay() - today.toEpochDay();
+        int safeYellowWarningDays = Math.max(0, yellowWarningDays);
+        if (daysUntilDue <= safeYellowWarningDays) {
+            return InstallmentStatus.YELLOW;
+        }
+
+        // Future payment states (for example, PAID) should be resolved here before date-based fallback.
+        return InstallmentStatus.GREEN;
     }
 
     private static boolean containsIgnoreCase(String value, String search) {

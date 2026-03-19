@@ -10,6 +10,7 @@ import {
   useDeleteTrip,
   useSpreadsheet,
   useTrips,
+  useUpdateTrip,
 } from "@/features/trips/services/trips-service";
 import type { SpreadsheetParams, TripCreateDTO } from "@/features/trips/types/trips-dtos";
 import { ApiError } from "@/lib/api-error";
@@ -172,6 +173,89 @@ describe("trips-service hooks", () => {
       expect(error).toBeInstanceOf(ApiError);
       expect(error.status).toBe(400);
       expect(error.message).toBe("Petición inválida. Verifique los datos ingresados.");
+    });
+  });
+
+  describe("useUpdateTrip", () => {
+    it("en onSuccess invalida queryKey ['trips'] y ['trips', id]", async () => {
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+      globalThis.fetch = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            id: 3,
+            name: "Nuevo nombre",
+            totalAmount: 500,
+            installmentsCount: 5,
+            dueDay: 10,
+            yellowWarningDays: 3,
+            fixedFineAmount: 100,
+            retroactiveActive: false,
+            firstDueDate: "2027-01-01",
+            assignedUsersCount: 2,
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+
+      const { result } = renderHook(() => useUpdateTrip(), { wrapper });
+
+      result.current.mutate({ id: 3, data: { name: "Nuevo nombre" } });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["trips"] });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["trips", 3] });
+    });
+
+    it("en caso de 409 lanza ApiError con status 409", async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ message: "Conflict" }), {
+          status: 409,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      const { result } = renderHook(() => useUpdateTrip(), { wrapper });
+
+      result.current.mutate({ id: 3, data: { name: "x" } });
+
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(result.current.error).toBeInstanceOf(ApiError);
+      expect((result.current.error as ApiError).status).toBe(409);
+    });
+
+    it("en caso de 200 devuelve el TripDetailDTO actualizado", async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            id: 3,
+            name: "Nombre actualizado",
+            totalAmount: 500,
+            installmentsCount: 5,
+            dueDay: 10,
+            yellowWarningDays: 3,
+            fixedFineAmount: 100,
+            retroactiveActive: false,
+            firstDueDate: "2027-01-01",
+            assignedUsersCount: 2,
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      );
+
+      const { result } = renderHook(() => useUpdateTrip(), { wrapper });
+
+      result.current.mutate({ id: 3, data: { name: "Nombre actualizado" } });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(result.current.data?.name).toBe("Nombre actualizado");
+      expect(result.current.data?.id).toBe(3);
     });
   });
 

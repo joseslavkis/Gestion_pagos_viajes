@@ -30,6 +30,7 @@ import java.util.List;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.hasSize;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -655,5 +656,108 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             assertEquals(4, user1Installments);
             assertEquals(4, user2Installments);
             assertTrue(installments.stream().allMatch(i -> i.getStatus() == InstallmentStatus.YELLOW));
+            }
+
+            @Test
+            void getSpreadsheet_cuotasFuturas_devuelveStatusGreenEnLaRespuesta() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-spreadsheet-green"));
+
+            UserCreateDTO userDto = buildValidUser("user-spreadsheet-green");
+            signUp(userDto);
+            User user = userRepository.findByEmail(userDto.email()).orElseThrow();
+
+            Trip trip = buildTripForBulk(
+                "Trip Spreadsheet Green",
+                BigDecimal.valueOf(9000),
+                3,
+                10,
+                BigDecimal.valueOf(100),
+                false,
+                LocalDate.now().plusMonths(3)
+            );
+
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(user.getId()));
+
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                    .header("Authorization", "Bearer " + adminTokens.accessToken())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assignedCount").value(1));
+
+            mockMvc.perform(get("/api/v1/trips/{id}/spreadsheet", trip.getId())
+                    .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rows[0].installments[0].status").value("GREEN"))
+                .andExpect(jsonPath("$.rows[0].installments[1].status").value("GREEN"))
+                .andExpect(jsonPath("$.rows[0].installments[2].status").value("GREEN"));
+            }
+
+            @Test
+            void getSpreadsheet_cuotaVencidaSinRetroactivo_devuelveStatusRedEnLaRespuesta() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-spreadsheet-red"));
+
+            UserCreateDTO userDto = buildValidUser("user-spreadsheet-red");
+            signUp(userDto);
+            User user = userRepository.findByEmail(userDto.email()).orElseThrow();
+
+            Trip trip = buildTripForBulk(
+                "Trip Spreadsheet Red",
+                BigDecimal.valueOf(4000),
+                2,
+                10,
+                BigDecimal.valueOf(100),
+                false,
+                LocalDate.now().minusMonths(2)
+            );
+
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(user.getId()));
+
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                    .header("Authorization", "Bearer " + adminTokens.accessToken())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assignedCount").value(1));
+
+            mockMvc.perform(get("/api/v1/trips/{id}/spreadsheet", trip.getId())
+                    .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rows[0].installments[0].status").value("RED"));
+            }
+
+            @Test
+            void getSpreadsheet_filtroPorStatusRed_devuelveSoloFilasConEseStatus() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-spreadsheet-filter-red"));
+
+            UserCreateDTO userDto = buildValidUser("user-spreadsheet-filter-red");
+            signUp(userDto);
+            User user = userRepository.findByEmail(userDto.email()).orElseThrow();
+
+            Trip trip = buildTripForBulk(
+                "Trip Spreadsheet Filter Red",
+                BigDecimal.valueOf(6000),
+                3,
+                10,
+                BigDecimal.valueOf(100),
+                false,
+                LocalDate.now().minusMonths(2)
+            );
+
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(user.getId()));
+
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                    .header("Authorization", "Bearer " + adminTokens.accessToken())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assignedCount").value(1));
+
+            mockMvc.perform(get("/api/v1/trips/{id}/spreadsheet", trip.getId())
+                    .param("status", "RED")
+                    .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rows", hasSize(greaterThan(0))))
+                .andExpect(jsonPath("$.rows[0].installments[?(@.status == 'RED')]", hasSize(greaterThan(0))));
             }
 }
