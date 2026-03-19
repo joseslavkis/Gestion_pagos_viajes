@@ -4,9 +4,11 @@ import com.agencia.pagos.dtos.request.TripCreateDTO;
 import com.agencia.pagos.dtos.request.TripUpdateDTO;
 import com.agencia.pagos.dtos.request.UserAssignBulkDTO;
 import com.agencia.pagos.dtos.response.BulkAssignResultDTO;
+import com.agencia.pagos.dtos.response.SpreadsheetDTO;
 import com.agencia.pagos.dtos.response.StatusResponseDTO;
 import com.agencia.pagos.dtos.response.TripDetailDTO;
 import com.agencia.pagos.dtos.response.TripSummaryDTO;
+import com.agencia.pagos.entities.InstallmentStatus;
 import com.agencia.pagos.services.TripService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -87,5 +89,31 @@ class TripRestController {
             @Valid @RequestBody UserAssignBulkDTO dto
     ) {
         return ResponseEntity.ok(tripService.assignUsersInBulk(id, dto));
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @GetMapping(value = "/{id}/spreadsheet", produces = "application/json")
+    @Operation(summary = "Get paginated trip spreadsheet (admin only)")
+    @ApiResponse(responseCode = "404", description = "Trip not found", content = @Content)
+    ResponseEntity<SpreadsheetDTO> getSpreadsheet(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "0") Integer page,
+            @RequestParam(defaultValue = "20") Integer size,
+            @RequestParam(required = false) String search,
+            @RequestParam(defaultValue = "lastname") String sortBy,
+            @RequestParam(defaultValue = "asc") String order,
+            @RequestParam(required = false) InstallmentStatus status
+    ) {
+        return ResponseEntity.ok(
+                tripService.getSpreadsheet(
+                        id,
+                        page,
+                        size,
+                        search,
+                        sortBy,
+                        order,
+                        status
+                )
+        );
     }
 }

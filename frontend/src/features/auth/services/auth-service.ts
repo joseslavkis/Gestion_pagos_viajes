@@ -29,6 +29,8 @@ export function useSignup() {
         name: req.name,
         lastname: req.lastname,
         dni: req.dni,
+        studentName: req.studentName,
+        studentDni: req.studentDni,
       };
 
       const tokenData = await apiPost("/api/v1/auth/signup", payload, (json) => LoginResponseSchema.parse(json));

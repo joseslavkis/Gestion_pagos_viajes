@@ -1,32 +1,39 @@
+export type ApiErrorBody = { errors: string[] } | { message: string } | string;
+
 export class ApiError extends Error {
   public status: number;
   public rawMessage: string;
+  public fieldErrors: string[];
 
-  constructor(status: number, message: string, rawMessage: string = "") {
+  constructor(status: number, message: string, rawMessage: string = "", fieldErrors: string[] = []) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.rawMessage = rawMessage;
+    this.fieldErrors = fieldErrors;
   }
 }
 
 export async function handleApiResponse(response: Response): Promise<never> {
   const status = response.status;
   let rawMessage = "";
+  let fieldErrors: string[] = [];
 
   try {
     const errorBody = await response.text();
     rawMessage = errorBody;
 
     try {
-      const json = JSON.parse(errorBody) as unknown;
-      if (
-        json &&
-        typeof json === "object" &&
-        "message" in json &&
-        typeof (json as Record<string, unknown>).message === "string"
-      ) {
-        rawMessage = (json as { message: string }).message;
+      const json = JSON.parse(errorBody) as ApiErrorBody;
+      if (json && typeof json === "object") {
+        if ("errors" in json && Array.isArray(json.errors)) {
+          fieldErrors = json.errors.filter((entry): entry is string => typeof entry === "string");
+          if (fieldErrors.length > 0) {
+            rawMessage = fieldErrors.join(", ");
+          }
+        } else if ("message" in json && typeof json.message === "string") {
+          rawMessage = json.message;
+        }
       }
     } catch {
       // no es JSON, rawMessage ya tiene el texto plano
@@ -63,6 +70,6 @@ export async function handleApiResponse(response: Response): Promise<never> {
 
   // Si el backend nos da un mensaje legible, podríamos usarlo si es seguro,
   // pero generalmente para 409 o 401 devolvemos nuestro friendly message.
-  throw new ApiError(status, userFriendlyMessage, rawMessage);
+  throw new ApiError(status, userFriendlyMessage, rawMessage, fieldErrors);
 }
 

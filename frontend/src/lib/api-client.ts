@@ -34,25 +34,64 @@ export async function apiPost<T>(
   endpoint: string,
   body: JsonRecord,
   parse: ApiJsonParse<T>,
+  initOverrides?: Omit<RequestInitJson, "body">,
 ): Promise<T> {
   return requestJson<T>(
     endpoint,
     {
       method: "POST",
       body,
+      ...(initOverrides ?? {}),
     },
     parse,
   );
 }
 
-// If we need GET endpoints later.
-export async function apiGet<T>(endpoint: string, parse: ApiJsonParse<T>): Promise<T> {
+export async function apiGet<T>(
+  endpoint: string,
+  parse: ApiJsonParse<T>,
+  initOverrides?: Omit<RequestInitJson, "body">,
+): Promise<T> {
   return requestJson<T>(
     endpoint,
     {
       method: "GET",
+      ...(initOverrides ?? {}),
     },
     parse,
   );
 }
+
+export async function apiPatch<T>(
+  endpoint: string,
+  body: JsonRecord,
+  parse: ApiJsonParse<T>,
+  initOverrides?: Omit<RequestInitJson, "body">,
+): Promise<T> {
+  return requestJson<T>(
+    endpoint,
+    {
+      method: "PATCH",
+      body,
+      ...(initOverrides ?? {}),
+    },
+    parse,
+  );
+}
+
+export async function apiDelete<T>(
+  endpoint: string,
+  parse: ApiJsonParse<T>,
+  initOverrides?: Omit<RequestInitJson, "body">,
+): Promise<T> {
+  return requestJson<T>(
+    endpoint,
+    {
+      method: "DELETE",
+      ...(initOverrides ?? {}),
+    },
+    parse,
+  );
+}
+
 

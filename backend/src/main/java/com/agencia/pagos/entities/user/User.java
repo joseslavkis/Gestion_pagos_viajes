@@ -40,6 +40,9 @@ public class User implements UserDetails, UserCredentials {
     private String studentName;
 
     @Column
+    private String studentDni;
+
+    @Column
     private String schoolName;
 
     @Column
@@ -170,6 +173,14 @@ public class User implements UserDetails, UserCredentials {
 
     public void setStudentName(String studentName) {
         this.studentName = studentName;
+    }
+
+    public String getStudentDni() {
+        return studentDni;
+    }
+
+    public void setStudentDni(String studentDni) {
+        this.studentDni = studentDni;
     }
 
     public String getSchoolName() {

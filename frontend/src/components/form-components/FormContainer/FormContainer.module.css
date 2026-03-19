@@ -1,6 +1,9 @@
 .form {
-  width: min(100%, 520px);
-  padding: 2rem;
+  width: 92%;
+  max-width: 28.125rem;
+  box-sizing: border-box;
+  margin-inline: auto;
+  padding: 1.1rem;
   border-radius: 20px;
   border: 1px solid var(--auth-border);
   background: var(--auth-surface);
@@ -18,4 +21,12 @@
   text-align: center;
   color: var(--auth-muted);
   font-size: 0.95rem;
+}
+
+@media (min-width: 768px) {
+  .form {
+    width: 100%;
+    max-width: 28.125rem;
+    padding: 1.5rem;
+  }
 }

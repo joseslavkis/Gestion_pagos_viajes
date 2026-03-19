@@ -4,6 +4,9 @@ import com.agencia.pagos.dtos.request.TripCreateDTO;
 import com.agencia.pagos.dtos.request.TripUpdateDTO;
 import com.agencia.pagos.dtos.request.UserAssignBulkDTO;
 import com.agencia.pagos.dtos.response.BulkAssignResultDTO;
+import com.agencia.pagos.dtos.response.SpreadsheetDTO;
+import com.agencia.pagos.dtos.response.SpreadsheetRowDTO;
+import com.agencia.pagos.dtos.response.SpreadsheetRowInstallmentDTO;
 import com.agencia.pagos.dtos.response.TripDetailDTO;
 import com.agencia.pagos.dtos.response.TripSummaryDTO;
 import com.agencia.pagos.entities.Installment;
@@ -24,7 +27,12 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.Locale;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @Transactional
@@ -108,25 +116,125 @@ public class TripService {
         tripRepository.delete(trip);
     }
 
+    @Transactional(readOnly = true)
+    public SpreadsheetDTO getSpreadsheet(
+            Long tripId,
+            int page,
+            int size,
+            String search,
+            String sortBy,
+            String order,
+            InstallmentStatus status
+    ) {
+        if (size > 100) {
+            throw new IllegalArgumentException("Page size cannot exceed 100");
+        }
+
+        Trip trip = tripRepository.findByIdWithUsers(tripId)
+                .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + tripId));
+
+        List<Installment> installments = installmentRepository.findByTripIdWithUsers(tripId);
+
+        Map<Long, List<Installment>> installmentsByUserId = installments.stream()
+                .collect(Collectors.groupingBy(i -> i.getUser().getId()));
+
+        List<SpreadsheetRowDTO> rows = trip.getAssignedUsers().stream()
+                .map(user -> {
+                    List<SpreadsheetRowInstallmentDTO> rowInstallments = installmentsByUserId
+                            .getOrDefault(user.getId(), List.of())
+                            .stream()
+                            .sorted(Comparator.comparing(Installment::getInstallmentNumber))
+                            .map(this::toSpreadsheetInstallmentDTO)
+                            .toList();
+
+                    return new SpreadsheetRowDTO(
+                            user.getId(),
+                            user.getName(),
+                            user.getLastname(),
+                            user.getPhone(),
+                            user.getEmail(),
+                            user.getStudentName(),
+                            user.getSchoolName(),
+                            user.getCourseName(),
+                            rowInstallments
+                    );
+                })
+                .toList();
+
+        String normalizedSearch = search == null ? "" : search.trim().toLowerCase(Locale.ROOT);
+        if (!normalizedSearch.isEmpty()) {
+            rows = rows.stream()
+                    .filter(row -> containsIgnoreCase(row.name(), normalizedSearch)
+                            || containsIgnoreCase(row.lastname(), normalizedSearch)
+                            || containsIgnoreCase(row.email(), normalizedSearch))
+                    .toList();
+        }
+
+        if (status != null) {
+            rows = rows.stream()
+                    .filter(row -> row.installments().stream().anyMatch(i -> i.status() == status))
+                    .toList();
+        }
+
+        Comparator<SpreadsheetRowDTO> comparator;
+        if ("name".equalsIgnoreCase(sortBy)) {
+            comparator = Comparator.comparing(row -> safeLower(row.name()));
+        } else if ("email".equalsIgnoreCase(sortBy)) {
+            comparator = Comparator.comparing(row -> safeLower(row.email()));
+        } else {
+            comparator = Comparator.comparing(row -> safeLower(row.lastname()));
+        }
+
+        if ("desc".equalsIgnoreCase(order)) {
+            comparator = comparator.reversed();
+        }
+        rows = rows.stream().sorted(comparator).toList();
+
+        int safeSize = Math.max(1, size);
+        int safePage = Math.max(0, page);
+        int fromIndex = Math.min(safePage * safeSize, rows.size());
+        int toIndex = Math.min(fromIndex + safeSize, rows.size());
+        List<SpreadsheetRowDTO> paginatedRows = rows.subList(fromIndex, toIndex);
+
+        return new SpreadsheetDTO(
+                trip.getName(),
+                trip.getInstallmentsCount(),
+                safePage,
+                (long) rows.size(),
+                paginatedRows
+        );
+    }
+
     // [C-2, A-1] Uses pessimistic lock + Argentina timezone
     public BulkAssignResultDTO assignUsersInBulk(Long tripId, UserAssignBulkDTO dto) {
         // [C-2] Pessimistic lock to avoid race conditions on concurrent bulk assignments
         Trip trip = tripRepository.findByIdForUpdate(tripId)
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found"));
-        
-        // [A-3] Force initialization of lazy collection natively within the transaction
-        trip.getAssignedUsers().size();
 
-        List<User> newUsers = new ArrayList<>();
-        for (Long userId : dto.userIds()) {
-            boolean alreadyAssigned = trip.getAssignedUsers().stream()
-                    .anyMatch(u -> u.getId().equals(userId));
-            if (!alreadyAssigned) {
-                User user = userRepository.findById(userId)
-                        .orElseThrow(() -> new EntityNotFoundException("User not found: " + userId));
-                newUsers.add(user);
+        // [Eje-3] Batch load: recover all users in a single WHERE id IN (...) query
+        Set<Long> alreadyAssignedIds = trip.getAssignedUsers().stream()
+                .map(User::getId)
+                .collect(Collectors.toSet());
+
+        List<Long> candidateIds = dto.userIds().stream()
+                .filter(id -> !alreadyAssignedIds.contains(id))
+                .collect(Collectors.toList());
+
+        if (candidateIds.isEmpty()) {
+            return new BulkAssignResultDTO("success", "All users were already assigned", 0);
+        }
+
+        Map<Long, User> foundUsersById = userRepository.findAllByIdIn(candidateIds).stream()
+                .collect(Collectors.toMap(User::getId, u -> u));
+
+        // Validate that every requested user exists
+        for (Long requestedId : candidateIds) {
+            if (!foundUsersById.containsKey(requestedId)) {
+                throw new EntityNotFoundException("User not found: " + requestedId);
             }
         }
+
+        List<User> newUsers = new ArrayList<>(foundUsersById.values());
 
         // [C-1] Distribute total amount to avoid losing cents (last installment absorbs remainder)
         List<BigDecimal> amounts = splitAmount(trip.getTotalAmount(), trip.getInstallmentsCount());
@@ -148,6 +256,7 @@ public class TripService {
                 BigDecimal installmentCapital = amounts.get(i - 1);
 
                 if (!currentDueDate.isBefore(now)) {
+                    // ── Cuota presente o futura ────────────────────────────────────────────
                     Installment installment = new Installment();
                     installment.setTrip(trip);
                     installment.setUser(user);
@@ -160,26 +269,38 @@ public class TripService {
                     // [A-2] Explicit call so totalDue is correct before batch save
                     installment.recalculateTotalDue();
                     installmentsToSave.add(installment);
+                    // Reset accumulator — only the first future quota receives the retroactive amount
                     acumuladoRetroactivo = BigDecimal.ZERO;
+                } else if (trip.getRetroactiveActive()) {
+                    // ── [Eje-1] Retroactividad activa: persistir la cuota pasada con status RETROACTIVE
+                    // para trazabilidad completa del historial, y acumular su capital en la primera futura.
+                    Installment retroInstallment = new Installment();
+                    retroInstallment.setTrip(trip);
+                    retroInstallment.setUser(user);
+                    retroInstallment.setInstallmentNumber(i);
+                    retroInstallment.setDueDate(currentDueDate);
+                    retroInstallment.setCapitalAmount(installmentCapital);
+                    retroInstallment.setRetroactiveAmount(BigDecimal.ZERO);
+                    retroInstallment.setFineAmount(BigDecimal.ZERO);
+                    retroInstallment.setStatus(InstallmentStatus.RETROACTIVE);
+                    retroInstallment.recalculateTotalDue();
+                    installmentsToSave.add(retroInstallment);
+                    // Accumulate for the first upcoming installment
+                    acumuladoRetroactivo = acumuladoRetroactivo.add(installmentCapital);
                 } else {
-                    if (trip.getRetroactiveActive()) {
-                        // Escenario B: accumulate without persisting past quota
-                        acumuladoRetroactivo = acumuladoRetroactivo.add(installmentCapital);
-                    } else {
-                        // Escenario C: persist past quota in RED with fine
-                        Installment installment = new Installment();
-                        installment.setTrip(trip);
-                        installment.setUser(user);
-                        installment.setInstallmentNumber(i);
-                        installment.setDueDate(currentDueDate);
-                        installment.setCapitalAmount(installmentCapital);
-                        installment.setRetroactiveAmount(BigDecimal.ZERO);
-                        installment.setFineAmount(trip.getFixedFineAmount());
-                        installment.setStatus(InstallmentStatus.RED);
-                        // [A-2] Explicit call so totalDue is correct before batch save
-                        installment.recalculateTotalDue();
-                        installmentsToSave.add(installment);
-                    }
+                    // ── Retroactividad inactiva: persistir la cuota pasada en RED con multa ──
+                    Installment installment = new Installment();
+                    installment.setTrip(trip);
+                    installment.setUser(user);
+                    installment.setInstallmentNumber(i);
+                    installment.setDueDate(currentDueDate);
+                    installment.setCapitalAmount(installmentCapital);
+                    installment.setRetroactiveAmount(BigDecimal.ZERO);
+                    installment.setFineAmount(trip.getFixedFineAmount());
+                    installment.setStatus(InstallmentStatus.RED);
+                    // [A-2] Explicit call so totalDue is correct before batch save
+                    installment.recalculateTotalDue();
+                    installmentsToSave.add(installment);
                 }
             }
         }
@@ -198,7 +319,8 @@ public class TripService {
      * cent is lost. All installments receive the truncated base value; the
      * last one absorbs the remaining cents.
      */
-    private List<BigDecimal> splitAmount(BigDecimal total, int count) {
+    /* package-private for testing */
+    List<BigDecimal> splitAmount(BigDecimal total, int count) {
         BigDecimal base = total.divide(BigDecimal.valueOf(count), 2, RoundingMode.DOWN);
         BigDecimal distributed = base.multiply(BigDecimal.valueOf(count));
         BigDecimal remainder = total.subtract(distributed);
@@ -232,5 +354,58 @@ public class TripService {
                 trip.getFirstDueDate(),
                 trip.getAssignedUsers().size()
         );
+    }
+
+    private SpreadsheetRowInstallmentDTO toSpreadsheetInstallmentDTO(Installment installment) {
+        Trip trip = installment.getTrip();
+        int yellowWarningDays = trip.getYellowWarningDays() == null ? 0 : trip.getYellowWarningDays();
+        InstallmentStatus effectiveStatus = computeEffectiveStatus(
+                installment.getStatus(),
+                installment.getDueDate(),
+                yellowWarningDays
+        );
+
+        return new SpreadsheetRowInstallmentDTO(
+                installment.getId(),
+                installment.getInstallmentNumber(),
+                installment.getDueDate(),
+                installment.getCapitalAmount(),
+                installment.getRetroactiveAmount(),
+                installment.getFineAmount(),
+                installment.getTotalDue(),
+                effectiveStatus
+        );
+    }
+
+    private InstallmentStatus computeEffectiveStatus(
+            InstallmentStatus storedStatus,
+            LocalDate dueDate,
+            int yellowWarningDays
+    ) {
+        if (storedStatus == InstallmentStatus.RETROACTIVE) {
+            return InstallmentStatus.RETROACTIVE;
+        }
+
+        LocalDate today = LocalDate.now(ZoneId.of("America/Argentina/Buenos_Aires"));
+        if (dueDate.isBefore(today)) {
+            return InstallmentStatus.RED;
+        }
+
+        long daysUntilDue = dueDate.toEpochDay() - today.toEpochDay();
+        int safeYellowWarningDays = Math.max(0, yellowWarningDays);
+        if (daysUntilDue <= safeYellowWarningDays) {
+            return InstallmentStatus.YELLOW;
+        }
+
+        // Future payment states (for example, PAID) should be resolved here before date-based fallback.
+        return InstallmentStatus.GREEN;
+    }
+
+    private static boolean containsIgnoreCase(String value, String search) {
+        return value != null && value.toLowerCase(Locale.ROOT).contains(search);
+    }
+
+    private static String safeLower(String value) {
+        return value == null ? "" : value.toLowerCase(Locale.ROOT);
     }
 }

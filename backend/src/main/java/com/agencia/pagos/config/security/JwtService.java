@@ -15,7 +15,8 @@ import java.util.Optional;
 @Service
 public class JwtService {
 
-    private final String secret;
+    /** Clave Pre-computada en el constructor — evita decodificar Base64 en cada request. */
+    private final SecretKey signingKey;
     private final Long expiration;
 
     @Autowired
@@ -23,7 +24,7 @@ public class JwtService {
             @Value("${jwt.access.secret}") String secret,
             @Value("${jwt.access.expiration}") Long expiration
     ) {
-        this.secret = secret;
+        this.signingKey = Keys.hmacShaKeyFor(Decoders.BASE64.decode(secret));
         this.expiration = expiration;
     }
 
@@ -37,14 +38,14 @@ public class JwtService {
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + expiration))
                 .claim("role", role)
-                .signWith(getSigningKey(), Jwts.SIG.HS256)
+                .signWith(signingKey, Jwts.SIG.HS256)
                 .compact();
     }
 
     public Optional<JwtUserDetails> extractVerifiedUserDetails(String token) {
         try {
             Claims claims = Jwts.parser()
-                    .verifyWith(getSigningKey())
+                    .verifyWith(signingKey)
                     .build()
                     .parseSignedClaims(token)
                     .getPayload();
@@ -56,9 +57,5 @@ public class JwtService {
         }
         return Optional.empty();
     }
-
-    private SecretKey getSigningKey() {
-        byte[] bytes = Decoders.BASE64.decode(secret);
-        return Keys.hmacShaKeyFor(bytes);
-    }
 }
+

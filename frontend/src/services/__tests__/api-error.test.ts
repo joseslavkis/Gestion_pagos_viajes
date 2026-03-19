@@ -46,6 +46,26 @@ describe("api-error utility", () => {
       }
     });
 
+    it("extrae el primer mensaje del array errors en un 400 de validación Bean", async () => {
+      const response = new Response(
+        JSON.stringify({ errors: ["name: size must be between 2 and 100"] }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+
+      try {
+        await handleApiResponse(response);
+      } catch (error) {
+        expect(error).toBeInstanceOf(ApiError);
+        const apiError = error as ApiError;
+        expect(apiError.status).toBe(400);
+        expect(apiError.rawMessage).toContain("name: size must be between 2 and 100");
+        expect(apiError.message).toBe("Petición inválida. Verifique los datos ingresados.");
+      }
+    });
+
     it("should map common status codes to friendly messages", async () => {
       const testCases = [
         { status: 401, expected: "Credenciales inválidas o sesión expirada." },
@@ -73,5 +93,6 @@ describe("api-error utility", () => {
         expect((error as ApiError).message).toBe("No se pudo completar la solicitud");
       }
     });
+
   });
 });
