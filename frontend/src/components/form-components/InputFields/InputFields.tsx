@@ -51,6 +51,7 @@ export const NumberField = ({ label, placeholder, autoComplete, min, max, step }
           step={step}
           aria-invalid={shouldShowErrors}
           aria-describedby={shouldShowErrors ? errorId : undefined}
+          onFocus={(e) => e.target.select()}
           onBlur={field.handleBlur}
           onChange={(e) => {
             const value = e.target.value;

@@ -2,6 +2,42 @@ import { z } from "zod";
 import { StatusResponseDTOSchema } from "@/lib/backend-dtos";
 import type { StatusResponseDTO } from "@/lib/backend-dtos";
 
+const MoneySchema = z.union([z.number(), z.string()]).transform((value, ctx) => {
+  const parsed = typeof value === "number" ? value : Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Monto inválido recibido del backend",
+    });
+    return z.NEVER;
+  }
+
+  if (Math.abs(parsed) > Number.MAX_SAFE_INTEGER) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Monto fuera del rango seguro de JavaScript",
+    });
+    return z.NEVER;
+  }
+
+  return parsed;
+});
+
+const FutureOrPresentDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Formato inválido, use YYYY-MM-DD")
+  .refine((value) => {
+    const candidate = new Date(`${value}T00:00:00`);
+    if (Number.isNaN(candidate.getTime())) {
+      return false;
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return candidate >= today;
+  }, { message: "La primera fecha de vencimiento no puede ser en el pasado" });
+
 // Backend DTOs:
 // - backend/src/main/java/com/agencia/pagos/dtos/response/TripDetailDTO.java
 // - backend/src/main/java/com/agencia/pagos/dtos/response/TripSummaryDTO.java
@@ -14,11 +50,11 @@ import type { StatusResponseDTO } from "@/lib/backend-dtos";
 export const TripDetailDTOSchema = z.object({
   id: z.number(),
   name: z.string(),
-  totalAmount: z.number(),
+  totalAmount: MoneySchema,
   installmentsCount: z.number(),
   dueDay: z.number(),
   yellowWarningDays: z.number(),
-  fixedFineAmount: z.number(),
+  fixedFineAmount: MoneySchema,
   retroactiveActive: z.boolean(),
   firstDueDate: z.string(), // LocalDate serialized as "YYYY-MM-DD"
   assignedUsersCount: z.number(),
@@ -29,7 +65,7 @@ export type TripDetailDTO = z.infer<typeof TripDetailDTOSchema>;
 export const TripSummaryDTOSchema = z.object({
   id: z.number(),
   name: z.string(),
-  totalAmount: z.number(),
+  totalAmount: MoneySchema,
   installmentsCount: z.number(),
   assignedUsersCount: z.number(),
 });
@@ -50,13 +86,13 @@ export type { StatusResponseDTO };
 // Requests
 export const TripCreateDTOSchema = z.object({
   name: z.string().min(2).max(100),
-  totalAmount: z.number().positive(),
+  totalAmount: z.number().positive().max(Number.MAX_SAFE_INTEGER),
   installmentsCount: z.number().min(1).max(60),
   dueDay: z.number().min(1).max(31),
   yellowWarningDays: z.number().min(0).max(30),
-  fixedFineAmount: z.number().min(0),
+  fixedFineAmount: z.number().min(0).max(Number.MAX_SAFE_INTEGER),
   retroactiveActive: z.boolean(),
-  firstDueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  firstDueDate: FutureOrPresentDateSchema,
 });
 
 export type TripCreateDTO = z.infer<typeof TripCreateDTOSchema>;
@@ -65,9 +101,9 @@ export const TripUpdateDTOSchema = z.object({
   name: z.string().min(2).max(100).optional(),
   dueDay: z.number().min(1).max(31).optional(),
   yellowWarningDays: z.number().min(0).max(30).optional(),
-  fixedFineAmount: z.number().min(0).optional(),
+  fixedFineAmount: z.number().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
   retroactiveActive: z.boolean().optional(),
-  firstDueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  firstDueDate: FutureOrPresentDateSchema.optional(),
 });
 
 export type TripUpdateDTO = z.infer<typeof TripUpdateDTOSchema>;
@@ -89,10 +125,10 @@ export const SpreadsheetRowInstallmentDTOSchema = z.object({
   id: z.number(),
   installmentNumber: z.number(),
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  capitalAmount: z.number(),
-  retroactiveAmount: z.number(),
-  fineAmount: z.number(),
-  totalDue: z.number(),
+  capitalAmount: MoneySchema,
+  retroactiveAmount: MoneySchema,
+  fineAmount: MoneySchema,
+  totalDue: MoneySchema,
   status: z.enum(["GREEN", "YELLOW", "RED", "RETROACTIVE"]),
 });
 

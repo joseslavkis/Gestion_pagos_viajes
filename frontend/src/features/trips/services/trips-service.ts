@@ -135,7 +135,11 @@ export function useAssignUsersBulk() {
             : undefined,
       }),
     onSuccess: async (_data, variables) => {
-      await queryClient.invalidateQueries({ queryKey: ["trips", variables.id] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["trips"] }),
+        queryClient.invalidateQueries({ queryKey: ["trips", variables.id] }),
+        queryClient.invalidateQueries({ queryKey: ["trips", variables.id, "spreadsheet"] }),
+      ]);
     },
   });
 }
@@ -144,7 +148,17 @@ export function useSpreadsheet(tripId: number, params: SpreadsheetParams) {
   const [tokenState] = useToken();
 
   return useQuery<SpreadsheetDTO, ApiError>({
-    queryKey: ["trips", tripId, "spreadsheet", params],
+    queryKey: [
+      "trips",
+      tripId,
+      "spreadsheet",
+      params.page,
+      params.size,
+      params.search ?? "",
+      params.sortBy,
+      params.order,
+      params.status ?? "",
+    ],
     enabled: tripId > 0,
     queryFn: async () => {
       const queryParams = new URLSearchParams();

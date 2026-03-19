@@ -126,6 +126,10 @@ public class TripService {
             String order,
             InstallmentStatus status
     ) {
+        if (size > 100) {
+            throw new IllegalArgumentException("Page size cannot exceed 100");
+        }
+
         Trip trip = tripRepository.findByIdWithUsers(tripId)
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + tripId));
 
@@ -167,9 +171,8 @@ public class TripService {
         }
 
         if (status != null) {
-            InstallmentStatus filterStatus = status;
             rows = rows.stream()
-                    .filter(row -> row.installments().stream().anyMatch(i -> i.status() == filterStatus))
+                    .filter(row -> row.installments().stream().anyMatch(i -> i.status() == status))
                     .toList();
         }
 
@@ -207,9 +210,6 @@ public class TripService {
         // [C-2] Pessimistic lock to avoid race conditions on concurrent bulk assignments
         Trip trip = tripRepository.findByIdForUpdate(tripId)
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found"));
-
-        // [A-3] Force initialization of lazy collection natively within the transaction
-        trip.getAssignedUsers().size();
 
         // [Eje-3] Batch load: recover all users in a single WHERE id IN (...) query
         Set<Long> alreadyAssignedIds = trip.getAssignedUsers().stream()

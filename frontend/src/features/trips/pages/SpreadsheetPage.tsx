@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 
 import { CommonLayout } from "@/components/CommonLayout/CommonLayout";
@@ -15,6 +15,13 @@ import styles from "./SpreadsheetPage.module.css";
 const currencyFormatter = new Intl.NumberFormat("es-AR", {
   style: "currency",
   currency: "ARS",
+});
+
+const dateFormatter = new Intl.DateTimeFormat("es-AR", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  timeZone: "America/Argentina/Buenos_Aires",
 });
 
 type SpreadsheetPageProps = {
@@ -38,8 +45,9 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
     status: "",
   });
   const [rawSearch, setRawSearch] = useState("");
-  const [hasShownScrollHint, setHasShownScrollHint] = useState(false);
+  const [hasScrolledHorizontally, setHasScrolledHorizontally] = useState(false);
   const [selected, setSelected] = useState<SelectedInstallment | null>(null);
+  const tableContainerRef = useRef<HTMLDivElement | null>(null);
 
   const { data, isLoading, error } = useSpreadsheet(tripId, params);
 
@@ -57,10 +65,20 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
   }, [rawSearch]);
 
   useEffect(() => {
-    if (!hasShownScrollHint) {
-      setHasShownScrollHint(true);
+    const element = tableContainerRef.current;
+    if (!element) {
+      return;
     }
-  }, [hasShownScrollHint]);
+
+    const handleScroll = () => {
+      if (element.scrollLeft > 0) {
+        setHasScrolledHorizontally(true);
+      }
+    };
+
+    element.addEventListener("scroll", handleScroll, { passive: true });
+    return () => element.removeEventListener("scroll", handleScroll);
+  }, []);
 
   useEffect(() => {
     const tableTopElement = document.getElementById("spreadsheet-table-top");
@@ -88,12 +106,15 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
   };
 
   const handleOrderChange = (value: string) => {
-    if (value === "lastname-asc") {
-      setParams((current) => ({ ...current, sortBy: "lastname", order: "asc" }));
-    } else if (value === "lastname-desc") {
-      setParams((current) => ({ ...current, sortBy: "lastname", order: "desc" }));
-    } else if (value === "name-asc") {
-      setParams((current) => ({ ...current, sortBy: "name", order: "asc" }));
+    const orderMap: Record<string, Pick<SpreadsheetParams, "sortBy" | "order">> = {
+      "lastname-asc": { sortBy: "lastname", order: "asc" },
+      "lastname-desc": { sortBy: "lastname", order: "desc" },
+      "name-asc": { sortBy: "name", order: "asc" },
+    };
+
+    const resolved = orderMap[value];
+    if (resolved) {
+      setParams((current) => ({ ...current, page: 0, ...resolved }));
     }
   };
 
@@ -183,8 +204,8 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
             loadingLabel="Cargando planilla..."
           >
             <div id="spreadsheet-table-top" className={styles.tableContainer}>
-              <div className={styles.scrollShell}>
-                {!hasShownScrollHint ? (
+              <div ref={tableContainerRef} className={styles.scrollShell}>
+                {!hasScrolledHorizontally ? (
                   <div className={styles.scrollHint}>Deslizá → para ver todas las cuotas</div>
                 ) : null}
                 <table className={styles.table}>
@@ -469,8 +490,7 @@ function StatusBadge({ status }: StatusBadgeProps) {
 }
 
 function formatDateDisplay(isoDate: string): string {
-  const [year, month, day] = isoDate.split("-");
-  if (!year || !month || !day) return isoDate;
-  return `${day.padStart(2, "0")}/${month.padStart(2, "0")}/${year}`;
+  const date = new Date(`${isoDate}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? isoDate : dateFormatter.format(date);
 }
 

@@ -31,7 +31,7 @@ type ModalState =
   | { type: "none" }
   | { type: "create" }
   | { type: "edit"; tripId: number }
-  | { type: "assign"; tripId: number }
+  | { type: "assign"; tripId: number; tripName: string }
   | { type: "delete"; trip: TripSummaryDTO };
 
 export function TripsAdminPage() {
@@ -42,7 +42,8 @@ export function TripsAdminPage() {
   const closeModal = () => setModalState({ type: "none" });
 
   const handleEdit = (tripId: number) => setModalState({ type: "edit", tripId });
-  const handleAssign = (tripId: number) => setModalState({ type: "assign", tripId });
+  const handleAssign = (trip: TripSummaryDTO) =>
+    setModalState({ type: "assign", tripId: trip.id, tripName: trip.name });
   const handleDelete = (trip: TripSummaryDTO) => setModalState({ type: "delete", trip });
 
   const trips = data ?? [];
@@ -126,7 +127,11 @@ export function TripsAdminPage() {
         ) : modalState.type === "edit" ? (
           <TripModalEdit tripId={modalState.tripId} onClose={closeModal} />
         ) : modalState.type === "assign" ? (
-          <AssignUsersModal tripId={modalState.tripId} onClose={closeModal} />
+          <AssignUsersModal
+            tripId={modalState.tripId}
+            tripName={modalState.tripName}
+            onClose={closeModal}
+          />
         ) : modalState.type === "delete" ? (
           <DeleteTripModal trip={modalState.trip} onClose={closeModal} />
         ) : null}
@@ -144,7 +149,7 @@ export function TripsAdminPage() {
 type TripCardProps = {
   trip: TripSummaryDTO;
   onEdit: (tripId: number) => void;
-  onAssign: (tripId: number) => void;
+  onAssign: (trip: TripSummaryDTO) => void;
   onDelete: (trip: TripSummaryDTO) => void;
 };
 
@@ -201,7 +206,7 @@ function TripCard({ trip, onEdit, onAssign, onDelete }: TripCardProps) {
         <button
           type="button"
           className={styles.chipButton}
-          onClick={() => onAssign(trip.id)}
+          onClick={() => onAssign(trip)}
           aria-label={`Asignar usuarios al viaje ${trip.name}`}
         >
           👥 Asignar usuarios
@@ -499,6 +504,14 @@ function TripModalCreate({ onClose }: TripModalCreateProps) {
                   </div>
                 )}
               />
+
+              {error?.fieldErrors?.length ? (
+                <ul className={styles.fieldErrorList}>
+                  {error.fieldErrors.map((message) => (
+                    <li key={message}>{message}</li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
           </formData.FormContainer>
         </formData.AppForm>
@@ -513,7 +526,7 @@ type TripModalEditProps = {
 };
 
 function TripModalEdit({ tripId, onClose }: TripModalEditProps) {
-  const { data, isLoading, error: loadError, refetch } = useTrip(tripId);
+  const { data, isLoading, error: loadError } = useTrip(tripId);
   const { mutateAsync, error: mutateError, isPending } = useUpdateTrip();
 
   const trip = data;
@@ -668,23 +681,20 @@ function TripModalEdit({ tripId, onClose }: TripModalEditProps) {
                     </div>
                   )}
                 />
+
+                {mutateError?.fieldErrors?.length ? (
+                  <ul className={styles.fieldErrorList}>
+                    {mutateError.fieldErrors.map((message) => (
+                      <li key={message}>{message}</li>
+                    ))}
+                  </ul>
+                ) : null}
               </div>
             </formData.FormContainer>
           </formData.AppForm>
         ) : (
           <div className={styles.fieldGroup}>
-            <p className={styles.modalDescription}>
-              No pudimos cargar los datos del viaje. Intentá nuevamente.
-            </p>
-            <div className={styles.modalFooter}>
-              <button
-                type="button"
-                className={styles.chipButton}
-                onClick={() => void (refetch as unknown as () => Promise<unknown>)()}
-              >
-                Reintentar
-              </button>
-            </div>
+            <p className={styles.modalDescription}>No pudimos cargar los datos del viaje.</p>
           </div>
         )}
       </RequestState>
@@ -694,11 +704,11 @@ function TripModalEdit({ tripId, onClose }: TripModalEditProps) {
 
 type AssignUsersModalProps = {
   tripId: number;
+  tripName: string;
   onClose: () => void;
 };
 
-function AssignUsersModal({ tripId, onClose }: AssignUsersModalProps) {
-  const { data: trip, isLoading, error: loadError, refetch } = useTrip(tripId);
+function AssignUsersModal({ tripId, tripName, onClose }: AssignUsersModalProps) {
   const { mutateAsync, error, isPending, data } = useAssignUsersBulk();
   const [rawInput, setRawInput] = useState("");
 
@@ -737,60 +747,43 @@ function AssignUsersModal({ tripId, onClose }: AssignUsersModalProps) {
 
   return (
     <ModalShell
-      title={trip ? `Asignar usuarios a ${trip.name}` : "Asignar usuarios"}
+      title={`Asignar usuarios a ${tripName}`}
       description="Pega o escribe los IDs de usuario separados por coma o salto de línea. Máximo 500 IDs, sin duplicados."
       onClose={onClose}
     >
       <RequestState
-        isLoading={isLoading || isPending}
-        error={loadError ?? error ?? null}
-        loadingLabel={isLoading ? "Cargando datos del viaje..." : "Asignando usuarios al viaje..."}
+        isLoading={isPending}
+        error={error ?? null}
+        loadingLabel="Asignando usuarios al viaje..."
       >
-        {trip ? (
-          <>
-            <label className={styles.fieldGroup}>
-              <span className={styles.label}>IDs de usuario</span>
-              <textarea
-                className={styles.idsTextArea}
-                value={rawInput}
-                onChange={(event) => setRawInput(event.target.value)}
-                placeholder="Ej: 101, 102, 103 o uno por línea"
-              />
-              <p className={styles.idsHelper}>
-                Se aceptan solo números. Los duplicados se eliminarán automáticamente. Máximo 500 IDs.
-              </p>
-              <p className={styles.idsPreview}>
-                IDs válidos detectados: {parsedIds.length}
-                {parsedIds.length > 0 ? ` · Se enviarán ${Math.min(parsedIds.length, 500)} IDs` : ""}
-              </p>
-            </label>
-            <div className={styles.modalFooter}>
-              <button
-                type="button"
-                className={styles.newTripButton}
-                onClick={handleSubmit}
-                disabled={!hasValidIds || isPending}
-              >
-                Confirmar asignación
-              </button>
-            </div>
-          </>
-        ) : (
-          <div className={styles.fieldGroup}>
-            <p className={styles.modalDescription}>
-              No pudimos cargar los datos del viaje. Intentá nuevamente.
+        <>
+          <label className={styles.fieldGroup}>
+            <span className={styles.label}>IDs de usuario</span>
+            <textarea
+              className={styles.idsTextArea}
+              value={rawInput}
+              onChange={(event) => setRawInput(event.target.value)}
+              placeholder="Ej: 101, 102, 103 o uno por línea"
+            />
+            <p className={styles.idsHelper}>
+              Se aceptan solo números. Los duplicados se eliminarán automáticamente. Máximo 500 IDs.
             </p>
-            <div className={styles.modalFooter}>
-              <button
-                type="button"
-                className={styles.chipButton}
-                onClick={() => void (refetch as unknown as () => Promise<unknown>)()}
-              >
-                Reintentar
-              </button>
-            </div>
+            <p className={styles.idsPreview}>
+              IDs válidos detectados: {parsedIds.length}
+              {parsedIds.length > 0 ? ` · Se enviarán ${Math.min(parsedIds.length, 500)} IDs` : ""}
+            </p>
+          </label>
+          <div className={styles.modalFooter}>
+            <button
+              type="button"
+              className={styles.newTripButton}
+              onClick={handleSubmit}
+              disabled={!hasValidIds || isPending}
+            >
+              Confirmar asignación
+            </button>
           </div>
-        )}
+        </>
       </RequestState>
     </ModalShell>
   );
