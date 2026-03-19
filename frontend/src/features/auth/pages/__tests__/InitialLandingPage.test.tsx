@@ -5,11 +5,28 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { InitialLandingPage } from "../InitialLandingPage";
 
+const { mutateAsyncMock, resetMock } = vi.hoisted(() => ({
+  mutateAsyncMock: vi.fn().mockResolvedValue({ status: "success", message: "ok" }),
+  resetMock: vi.fn(),
+}));
+
+vi.mock("@/features/contact/services/contact-service", () => ({
+  useSendContactMessage: () => ({
+    mutateAsync: mutateAsyncMock,
+    error: null,
+    isPending: false,
+    reset: resetMock,
+  }),
+}));
+
 describe("InitialLandingPage", () => {
   let scrollIntoViewMock: ReturnType<typeof vi.fn>;
   let queryClient: QueryClient;
 
   beforeEach(() => {
+    mutateAsyncMock.mockClear();
+    resetMock.mockClear();
+
     queryClient = new QueryClient({
       defaultOptions: {
         queries: { retry: false },
@@ -75,5 +92,6 @@ describe("InitialLandingPage", () => {
     const submitEvent = new Event("submit", { bubbles: true, cancelable: true });
     fireEvent(form!, submitEvent);
     expect(submitEvent.defaultPrevented).toBe(true);
+    expect(mutateAsyncMock).toHaveBeenCalledTimes(1);
   });
 });
