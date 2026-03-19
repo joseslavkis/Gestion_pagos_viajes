@@ -41,7 +41,7 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
   const [hasShownScrollHint, setHasShownScrollHint] = useState(false);
   const [selected, setSelected] = useState<SelectedInstallment | null>(null);
 
-  const { data, isLoading, error, refetch } = useSpreadsheet(tripId, params);
+  const { data, isLoading, error } = useSpreadsheet(tripId, params);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {

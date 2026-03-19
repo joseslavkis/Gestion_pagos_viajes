@@ -131,6 +131,7 @@
   height: auto;
   display: block;
   border-radius: 1.6rem;
+  object-fit: cover;
   box-shadow: 0 0.875rem 1.875rem rgba(8, 47, 73, 0.12);
   filter:
     drop-shadow(0 1.375rem 2.875rem rgba(14, 165, 233, 0.32))

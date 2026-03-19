@@ -4,6 +4,9 @@ import com.agencia.pagos.dtos.request.TripCreateDTO;
 import com.agencia.pagos.dtos.request.TripUpdateDTO;
 import com.agencia.pagos.dtos.request.UserAssignBulkDTO;
 import com.agencia.pagos.dtos.response.BulkAssignResultDTO;
+import com.agencia.pagos.dtos.response.SpreadsheetDTO;
+import com.agencia.pagos.dtos.response.SpreadsheetRowDTO;
+import com.agencia.pagos.dtos.response.SpreadsheetRowInstallmentDTO;
 import com.agencia.pagos.dtos.response.TripDetailDTO;
 import com.agencia.pagos.dtos.response.TripSummaryDTO;
 import com.agencia.pagos.entities.Installment;
@@ -24,8 +27,10 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -109,6 +114,92 @@ public class TripService {
         }
 
         tripRepository.delete(trip);
+    }
+
+    @Transactional(readOnly = true)
+    public SpreadsheetDTO getSpreadsheet(
+            Long tripId,
+            int page,
+            int size,
+            String search,
+            String sortBy,
+            String order,
+            InstallmentStatus status
+    ) {
+        Trip trip = tripRepository.findByIdWithUsers(tripId)
+                .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + tripId));
+
+        List<Installment> installments = installmentRepository.findByTripIdWithUsers(tripId);
+
+        Map<Long, List<Installment>> installmentsByUserId = installments.stream()
+                .collect(Collectors.groupingBy(i -> i.getUser().getId()));
+
+        List<SpreadsheetRowDTO> rows = trip.getAssignedUsers().stream()
+                .map(user -> {
+                    List<SpreadsheetRowInstallmentDTO> rowInstallments = installmentsByUserId
+                            .getOrDefault(user.getId(), List.of())
+                            .stream()
+                            .sorted(Comparator.comparing(Installment::getInstallmentNumber))
+                            .map(this::toSpreadsheetInstallmentDTO)
+                            .toList();
+
+                    return new SpreadsheetRowDTO(
+                            user.getId(),
+                            user.getName(),
+                            user.getLastname(),
+                            user.getPhone(),
+                            user.getEmail(),
+                            user.getStudentName(),
+                            user.getSchoolName(),
+                            user.getCourseName(),
+                            rowInstallments
+                    );
+                })
+                .toList();
+
+        String normalizedSearch = search == null ? "" : search.trim().toLowerCase(Locale.ROOT);
+        if (!normalizedSearch.isEmpty()) {
+            rows = rows.stream()
+                    .filter(row -> containsIgnoreCase(row.name(), normalizedSearch)
+                            || containsIgnoreCase(row.lastname(), normalizedSearch)
+                            || containsIgnoreCase(row.email(), normalizedSearch))
+                    .toList();
+        }
+
+        if (status != null) {
+            InstallmentStatus filterStatus = status;
+            rows = rows.stream()
+                    .filter(row -> row.installments().stream().anyMatch(i -> i.status() == filterStatus))
+                    .toList();
+        }
+
+        Comparator<SpreadsheetRowDTO> comparator;
+        if ("name".equalsIgnoreCase(sortBy)) {
+            comparator = Comparator.comparing(row -> safeLower(row.name()));
+        } else if ("email".equalsIgnoreCase(sortBy)) {
+            comparator = Comparator.comparing(row -> safeLower(row.email()));
+        } else {
+            comparator = Comparator.comparing(row -> safeLower(row.lastname()));
+        }
+
+        if ("desc".equalsIgnoreCase(order)) {
+            comparator = comparator.reversed();
+        }
+        rows = rows.stream().sorted(comparator).toList();
+
+        int safeSize = Math.max(1, size);
+        int safePage = Math.max(0, page);
+        int fromIndex = Math.min(safePage * safeSize, rows.size());
+        int toIndex = Math.min(fromIndex + safeSize, rows.size());
+        List<SpreadsheetRowDTO> paginatedRows = rows.subList(fromIndex, toIndex);
+
+        return new SpreadsheetDTO(
+                trip.getName(),
+                trip.getInstallmentsCount(),
+                safePage,
+                (long) rows.size(),
+                paginatedRows
+        );
     }
 
     // [C-2, A-1] Uses pessimistic lock + Argentina timezone
@@ -263,5 +354,26 @@ public class TripService {
                 trip.getFirstDueDate(),
                 trip.getAssignedUsers().size()
         );
+    }
+
+    private SpreadsheetRowInstallmentDTO toSpreadsheetInstallmentDTO(Installment installment) {
+        return new SpreadsheetRowInstallmentDTO(
+                installment.getId(),
+                installment.getInstallmentNumber(),
+                installment.getDueDate(),
+                installment.getCapitalAmount(),
+                installment.getRetroactiveAmount(),
+                installment.getFineAmount(),
+                installment.getTotalDue(),
+                installment.getStatus()
+        );
+    }
+
+    private static boolean containsIgnoreCase(String value, String search) {
+        return value != null && value.toLowerCase(Locale.ROOT).contains(search);
+    }
+
+    private static String safeLower(String value) {
+        return value == null ? "" : value.toLowerCase(Locale.ROOT);
     }
 }

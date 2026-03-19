@@ -1,15 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CommonLayout } from "@/components/CommonLayout/CommonLayout";
-import { FormContainer } from "@/components/form-components/FormContainer/FormContainer";
 import { RequestState } from "@/components/ui/RequestState/RequestState";
 import { useLocation } from "wouter";
 import { useAppForm } from "@/config/use-app-form";
 import {
   TripCreateDTOSchema,
   TripUpdateDTOSchema,
-  type TripCreateDTO,
-  type TripDetailDTO,
   type TripSummaryDTO,
   type TripUpdateDTO,
   UserAssignBulkDTOSchema,
@@ -29,12 +26,6 @@ const currencyFormatter = new Intl.NumberFormat("es-AR", {
   style: "currency",
   currency: "ARS",
 });
-
-function formatDateDisplay(isoDate: string): string {
-  const [year, month, day] = isoDate.split("-");
-  if (!year || !month || !day) return isoDate;
-  return `${day.padStart(2, "0")}/${month.padStart(2, "0")}/${year}`;
-}
 
 type ModalState =
   | { type: "none" }
@@ -365,7 +356,7 @@ type TripModalCreateProps = {
 function TripModalCreate({ onClose }: TripModalCreateProps) {
   const { mutateAsync, error, isPending } = useCreateTrip();
 
-  const formData = useAppForm<TripCreateDTO>({
+  const formData = useAppForm({
     defaultValues: {
       name: "",
       totalAmount: 0,
@@ -530,8 +521,8 @@ function TripModalEdit({ tripId, onClose }: TripModalEditProps) {
   const isLoadingState = isLoading || !trip;
   const combinedError = loadError ?? mutateError ?? null;
 
-  const formData = useAppForm<TripUpdateDTO>({
-    defaultValues: trip
+  const formData = useAppForm({
+    defaultValues: (trip
       ? {
           name: trip.name,
           dueDay: trip.dueDay,
@@ -547,7 +538,7 @@ function TripModalEdit({ tripId, onClose }: TripModalEditProps) {
           fixedFineAmount: 0,
           retroactiveActive: false,
           firstDueDate: "",
-        },
+        }) as TripUpdateDTO,
     validators: {
       onChange: TripUpdateDTOSchema,
     },
@@ -689,7 +680,7 @@ function TripModalEdit({ tripId, onClose }: TripModalEditProps) {
               <button
                 type="button"
                 className={styles.chipButton}
-                onClick={() => refetch()}
+                onClick={() => void (refetch as unknown as () => Promise<unknown>)()}
               >
                 Reintentar
               </button>
@@ -793,7 +784,7 @@ function AssignUsersModal({ tripId, onClose }: AssignUsersModalProps) {
               <button
                 type="button"
                 className={styles.chipButton}
-                onClick={() => refetch()}
+                onClick={() => void (refetch as unknown as () => Promise<unknown>)()}
               >
                 Reintentar
               </button>

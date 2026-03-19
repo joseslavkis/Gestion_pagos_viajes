@@ -49,9 +49,11 @@ describe("InitialLandingPage", () => {
     expect(video?.hasAttribute("playsinline")).toBe(true);
 
     const sources = container.querySelectorAll("video source");
-    expect(sources[0]?.getAttribute("src")).toBe("/logo-animado.webm");
-    expect(sources[0]?.getAttribute("type")).toBe("video/webm");
-    expect(sources[1]?.getAttribute("type")).toBe("video/quicktime");
+    expect(sources).toHaveLength(2);
+    expect(sources[0]?.getAttribute("src")).toContain("logo-animado");
+    expect(sources[0]?.getAttribute("type")).toBe("video/quicktime");
+    expect(sources[1]?.getAttribute("src")).toContain("logo-animado");
+    expect(sources[1]?.getAttribute("type")).toBe("video/mp4");
   });
 
   it("uses scrollIntoView smooth behavior when clicking Contacto", () => {

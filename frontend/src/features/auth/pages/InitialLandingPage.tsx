@@ -7,6 +7,7 @@ import { useSendContactMessage } from "@/features/contact/services/contact-servi
 
 import styles from "./InitialLandingPage.module.css";
 import logoAnimado from "@/assets/logo-animado.mov";
+import logoAnimadoMp4 from "@/assets/logo-animado.mp4";
 
 export function InitialLandingPage() {
   const { mutateAsync, error, isPending, reset } = useSendContactMessage();
@@ -59,8 +60,8 @@ export function InitialLandingPage() {
                 playsInline
                 preload="metadata"
               >
-                <source src="/logo-animado.webm" type="video/webm" />
                 <source src={logoAnimado} type="video/quicktime" />
+                <source src={logoAnimadoMp4} type="video/mp4" />
               </video>
             </div>
           </div>
