@@ -27,10 +27,8 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -130,78 +128,72 @@ public class TripService {
             throw new IllegalArgumentException("Page size cannot exceed 100");
         }
 
-        Trip trip = tripRepository.findByIdWithUsers(tripId)
+        Trip trip = tripRepository.findById(tripId)
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + tripId));
-
-        List<Installment> installments = installmentRepository.findByTripIdWithUsers(tripId);
-
-        Map<Long, List<Installment>> installmentsByUserId = installments.stream()
-                .collect(Collectors.groupingBy(i -> i.getUser().getId()));
-
-        List<SpreadsheetRowDTO> rows = trip.getAssignedUsers().stream()
-                .map(user -> {
-                    List<SpreadsheetRowInstallmentDTO> rowInstallments = installmentsByUserId
-                            .getOrDefault(user.getId(), List.of())
-                            .stream()
-                            .sorted(Comparator.comparing(Installment::getInstallmentNumber))
-                            .map(this::toSpreadsheetInstallmentDTO)
-                            .toList();
-
-                    return new SpreadsheetRowDTO(
-                            user.getId(),
-                            user.getName(),
-                            user.getLastname(),
-                            user.getPhone(),
-                            user.getEmail(),
-                            user.getStudentName(),
-                            user.getSchoolName(),
-                            user.getCourseName(),
-                            rowInstallments
-                    );
-                })
-                .toList();
-
-        String normalizedSearch = search == null ? "" : search.trim().toLowerCase(Locale.ROOT);
-        if (!normalizedSearch.isEmpty()) {
-            rows = rows.stream()
-                    .filter(row -> containsIgnoreCase(row.name(), normalizedSearch)
-                            || containsIgnoreCase(row.lastname(), normalizedSearch)
-                            || containsIgnoreCase(row.email(), normalizedSearch))
-                    .toList();
-        }
-
-        if (status != null) {
-            rows = rows.stream()
-                    .filter(row -> row.installments().stream().anyMatch(i -> i.status() == status))
-                    .toList();
-        }
-
-        Comparator<SpreadsheetRowDTO> comparator;
-        if ("name".equalsIgnoreCase(sortBy)) {
-            comparator = Comparator.comparing(row -> safeLower(row.name()));
-        } else if ("email".equalsIgnoreCase(sortBy)) {
-            comparator = Comparator.comparing(row -> safeLower(row.email()));
-        } else {
-            comparator = Comparator.comparing(row -> safeLower(row.lastname()));
-        }
-
-        if ("desc".equalsIgnoreCase(order)) {
-            comparator = comparator.reversed();
-        }
-        rows = rows.stream().sorted(comparator).toList();
 
         int safeSize = Math.max(1, size);
         int safePage = Math.max(0, page);
-        int fromIndex = Math.min(safePage * safeSize, rows.size());
-        int toIndex = Math.min(fromIndex + safeSize, rows.size());
-        List<SpreadsheetRowDTO> paginatedRows = rows.subList(fromIndex, toIndex);
+        int offset = safePage * safeSize;
+
+        String normalizedSortBy = normalizeSortBy(sortBy);
+        String normalizedOrder = normalizeOrder(order);
+
+        long totalElements = installmentRepository.countFilteredUsersForSpreadsheet(tripId, search);
+
+        List<Object[]> pagedUsers = installmentRepository.findPagedUsersForSpreadsheet(
+            tripId,
+            search,
+            normalizedSortBy,
+            normalizedOrder,
+            safeSize,
+            offset
+        );
+
+        List<Long> userIds = pagedUsers.stream()
+            .map(row -> ((Number) row[0]).longValue())
+            .toList();
+
+        Map<Long, List<Installment>> installmentsByUserId = userIds.isEmpty()
+            ? Map.of()
+            : installmentRepository.findInstallmentsByTripAndUserIds(tripId, userIds).stream()
+                .collect(Collectors.groupingBy(i -> i.getUser().getId()));
+
+        List<SpreadsheetRowDTO> rows = pagedUsers.stream()
+            .map(row -> {
+                Long userId = ((Number) row[0]).longValue();
+                List<SpreadsheetRowInstallmentDTO> rowInstallments = installmentsByUserId
+                    .getOrDefault(userId, List.of())
+                    .stream()
+                    .sorted((a, b) -> Integer.compare(a.getInstallmentNumber(), b.getInstallmentNumber()))
+                    .map(this::toSpreadsheetInstallmentDTO)
+                    .toList();
+
+                return new SpreadsheetRowDTO(
+                    userId,
+                    row[1] == null ? null : row[1].toString(),
+                    row[2] == null ? null : row[2].toString(),
+                    row[3] == null ? null : row[3].toString(),
+                    row[4] == null ? null : row[4].toString(),
+                    row[5] == null ? null : row[5].toString(),
+                    row[6] == null ? null : row[6].toString(),
+                    row[7] == null ? null : row[7].toString(),
+                    rowInstallments
+                );
+            })
+            .toList();
+
+        if (status != null) {
+            rows = rows.stream()
+                .filter(row -> row.installments().stream().anyMatch(i -> i.status() == status))
+                .toList();
+        }
 
         return new SpreadsheetDTO(
                 trip.getName(),
                 trip.getInstallmentsCount(),
                 safePage,
-                (long) rows.size(),
-                paginatedRows
+            totalElements,
+            rows
         );
     }
 
@@ -401,11 +393,17 @@ public class TripService {
         return InstallmentStatus.GREEN;
     }
 
-    private static boolean containsIgnoreCase(String value, String search) {
-        return value != null && value.toLowerCase(Locale.ROOT).contains(search);
+    private static String normalizeSortBy(String sortBy) {
+        if ("name".equalsIgnoreCase(sortBy)) {
+            return "name";
+        }
+        if ("email".equalsIgnoreCase(sortBy)) {
+            return "email";
+        }
+        return "lastname";
     }
 
-    private static String safeLower(String value) {
-        return value == null ? "" : value.toLowerCase(Locale.ROOT);
+    private static String normalizeOrder(String order) {
+        return "desc".equalsIgnoreCase(order) ? "desc" : "asc";
     }
 }

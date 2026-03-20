@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 
 import { CommonLayout } from "@/components/CommonLayout/CommonLayout";
 import { RequestState } from "@/components/ui/RequestState/RequestState";
+import { PaymentDrawer } from "@/features/payments/components/PaymentDrawer";
 import { useSpreadsheet } from "@/features/trips/services/trips-service";
 import type {
   SpreadsheetParams,
@@ -327,9 +328,7 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
             </div>
           </RequestState>
 
-          {selected ? (
-            <InstallmentDrawer selected={selected} onClose={() => setSelected(null)} />
-          ) : null}
+          {selected ? <PaymentDrawer installment={selected.installment} row={selected.row} onClose={() => setSelected(null)} /> : null}
         </div>
       </section>
     </CommonLayout>
@@ -441,6 +440,8 @@ function InstallmentDrawer({ selected, onClose }: InstallmentDrawerProps) {
     </div>
   );
 }
+
+void InstallmentDrawer;
 
 function getStatusClass(status: SpreadsheetRowInstallmentDTO["status"]): { pill: string; dot: string } {
   switch (status) {

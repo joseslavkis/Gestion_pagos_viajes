@@ -2,27 +2,15 @@ import { z } from "zod";
 import { StatusResponseDTOSchema } from "@/lib/backend-dtos";
 import type { StatusResponseDTO } from "@/lib/backend-dtos";
 
-const MoneySchema = z.union([z.number(), z.string()]).transform((value, ctx) => {
-  const parsed = typeof value === "number" ? value : Number(value);
-
-  if (!Number.isFinite(parsed)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "Monto inválido recibido del backend",
-    });
-    return z.NEVER;
-  }
-
-  if (Math.abs(parsed) > Number.MAX_SAFE_INTEGER) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "Monto fuera del rango seguro de JavaScript",
-    });
-    return z.NEVER;
-  }
-
-  return parsed;
-});
+const MoneySchema = z.union([z.string(), z.number()])
+  .transform((val) => {
+    const n = Number(val);
+    if (isNaN(n)) throw new Error(`Valor monetario inválido: ${String(val)}`);
+    return n;
+  })
+  .refine((n) => n <= Number.MAX_SAFE_INTEGER, {
+    message: "Monto excede la precisión segura de JavaScript",
+  });
 
 const FutureOrPresentDateSchema = z
   .string()
