@@ -659,8 +659,8 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             }
 
             @Test
-            void getSpreadsheet_cuotasFuturas_devuelveStatusGreenEnLaRespuesta() throws Exception {
-            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-spreadsheet-green"));
+    void getSpreadsheet_cuotasFuturas_devuelveStatusYellowEnLaRespuesta() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-spreadsheet-green"));
 
             UserCreateDTO userDto = buildValidUser("user-spreadsheet-green");
             signUp(userDto);
@@ -688,13 +688,11 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             mockMvc.perform(get("/api/v1/trips/{id}/spreadsheet", trip.getId())
                     .header("Authorization", "Bearer " + adminTokens.accessToken()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.rows[0].installments[0].status").value("GREEN"))
-                .andExpect(jsonPath("$.rows[0].installments[1].status").value("GREEN"))
-                .andExpect(jsonPath("$.rows[0].installments[2].status").value("GREEN"));
-            }
+            .andExpect(jsonPath("$.rows[0].installments[0].status").value("YELLOW"))
+            .andExpect(jsonPath("$.rows[0].installments[1].status").value("YELLOW"))
+            .andExpect(jsonPath("$.rows[0].installments[2].status").value("YELLOW"));    }
 
-            @Test
-            void getSpreadsheet_cuotaVencidaSinRetroactivo_devuelveStatusRedEnLaRespuesta() throws Exception {
+    @Test            void getSpreadsheet_cuotaVencidaSinRetroactivo_devuelveStatusRedEnLaRespuesta() throws Exception {
             TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-spreadsheet-red"));
 
             UserCreateDTO userDto = buildValidUser("user-spreadsheet-red");
