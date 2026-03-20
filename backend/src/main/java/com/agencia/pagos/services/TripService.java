@@ -42,12 +42,28 @@ public class TripService {
     private final TripRepository tripRepository;
     private final UserRepository userRepository;
     private final InstallmentRepository installmentRepository;
+    private final InstallmentStatusResolver installmentStatusResolver;
 
     @Autowired
-    public TripService(TripRepository tripRepository, UserRepository userRepository, InstallmentRepository installmentRepository) {
+    public TripService(
+            TripRepository tripRepository,
+            UserRepository userRepository,
+            InstallmentRepository installmentRepository,
+            InstallmentStatusResolver installmentStatusResolver
+    ) {
         this.tripRepository = tripRepository;
         this.userRepository = userRepository;
         this.installmentRepository = installmentRepository;
+        this.installmentStatusResolver = installmentStatusResolver;
+    }
+
+    // Backward-compatible constructor for tests that still instantiate TripService with 3 args.
+    public TripService(
+            TripRepository tripRepository,
+            UserRepository userRepository,
+            InstallmentRepository installmentRepository
+    ) {
+        this(tripRepository, userRepository, installmentRepository, new InstallmentStatusResolver());
     }
 
     public TripDetailDTO createTrip(TripCreateDTO dto) {
@@ -351,7 +367,7 @@ public class TripService {
     private SpreadsheetRowInstallmentDTO toSpreadsheetInstallmentDTO(Installment installment) {
         Trip trip = installment.getTrip();
         int yellowWarningDays = trip.getYellowWarningDays() == null ? 0 : trip.getYellowWarningDays();
-        InstallmentStatus effectiveStatus = computeEffectiveStatus(
+        InstallmentStatus effectiveStatus = installmentStatusResolver.computeEffective(
                 installment.getStatus(),
                 installment.getDueDate(),
                 yellowWarningDays
@@ -367,30 +383,6 @@ public class TripService {
                 installment.getTotalDue(),
                 effectiveStatus
         );
-    }
-
-    private InstallmentStatus computeEffectiveStatus(
-            InstallmentStatus storedStatus,
-            LocalDate dueDate,
-            int yellowWarningDays
-    ) {
-        if (storedStatus == InstallmentStatus.RETROACTIVE) {
-            return InstallmentStatus.RETROACTIVE;
-        }
-
-        LocalDate today = LocalDate.now(ZoneId.of("America/Argentina/Buenos_Aires"));
-        if (dueDate.isBefore(today)) {
-            return InstallmentStatus.RED;
-        }
-
-        long daysUntilDue = dueDate.toEpochDay() - today.toEpochDay();
-        int safeYellowWarningDays = Math.max(0, yellowWarningDays);
-        if (daysUntilDue <= safeYellowWarningDays) {
-            return InstallmentStatus.YELLOW;
-        }
-
-        // Future payment states (for example, PAID) should be resolved here before date-based fallback.
-        return InstallmentStatus.GREEN;
     }
 
     private static String normalizeSortBy(String sortBy) {

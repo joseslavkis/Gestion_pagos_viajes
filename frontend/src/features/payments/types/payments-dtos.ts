@@ -21,6 +21,19 @@ export const PaymentReceiptDTOSchema = z.object({
 
 export type PaymentReceiptDTO = z.infer<typeof PaymentReceiptDTOSchema>;
 
+export const UserInstallmentDTOSchema = z.object({
+  tripId: z.number(),
+  installmentId: z.number(),
+  installmentNumber: z.number(),
+  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  totalDue: MoneySchema,
+  installmentStatus: z.enum(["GREEN", "YELLOW", "RED", "RETROACTIVE"]),
+  latestReceiptStatus: ReceiptStatusSchema.nullable(),
+  latestReceiptObservation: z.string().nullable(),
+});
+
+export type UserInstallmentDTO = z.infer<typeof UserInstallmentDTOSchema>;
+
 export const RegisterPaymentDTOSchema = z.object({
   installmentId: z.number().int().positive(),
   reportedAmount: z.number().positive(),

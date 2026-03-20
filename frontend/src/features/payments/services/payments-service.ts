@@ -4,8 +4,12 @@ import type {
   PaymentReceiptDTO,
   RegisterPaymentDTO,
   ReviewPaymentDTO,
+  UserInstallmentDTO,
 } from "@/features/payments/types/payments-dtos";
-import { PaymentReceiptDTOSchema } from "@/features/payments/types/payments-dtos";
+import {
+  PaymentReceiptDTOSchema,
+  UserInstallmentDTOSchema,
+} from "@/features/payments/types/payments-dtos";
 import { ApiError } from "@/lib/api-error";
 import { apiGet, apiPatch, apiPost } from "@/lib/api-client";
 import { useToken } from "@/lib/session";
@@ -29,6 +33,7 @@ export function useRegisterPayment() {
         queryClient.invalidateQueries({ queryKey: ["trips"] }),
         queryClient.invalidateQueries({ queryKey: ["installments", variables.installmentId] }),
         queryClient.invalidateQueries({ queryKey: ["spreadsheet"] }),
+        queryClient.invalidateQueries({ queryKey: ["payments", "my", "installments"] }),
       ]);
     },
   });
@@ -93,11 +98,34 @@ export function useInstallmentReceipts(installmentId: number | null) {
 
   return useQuery<PaymentReceiptDTO[], ApiError>({
     queryKey: ["payments", "installment", installmentId],
+    staleTime: 0,
     enabled: installmentId != null && installmentId > 0,
     queryFn: async () =>
       apiGet(
         `/api/v1/payments/installment/${installmentId}`,
         (json) => PaymentReceiptDTOSchema.array().parse(json),
+        {
+          headers:
+            tokenState.state === "LOGGED_IN"
+              ? {
+                  Authorization: `Bearer ${tokenState.accessToken}`,
+                }
+              : undefined,
+        },
+      ),
+  });
+}
+
+export function useMyInstallments() {
+  const [tokenState] = useToken();
+
+  return useQuery<UserInstallmentDTO[], ApiError>({
+    queryKey: ["payments", "my", "installments"],
+    staleTime: 0,
+    queryFn: async () =>
+      apiGet(
+        "/api/v1/payments/my/installments",
+        (json) => UserInstallmentDTOSchema.array().parse(json),
         {
           headers:
             tokenState.state === "LOGGED_IN"

@@ -3,6 +3,7 @@ package com.agencia.pagos.controllers;
 import com.agencia.pagos.dtos.request.RegisterPaymentDTO;
 import com.agencia.pagos.dtos.request.ReviewPaymentDTO;
 import com.agencia.pagos.dtos.response.PaymentReceiptDTO;
+import com.agencia.pagos.dtos.response.UserInstallmentDTO;
 import com.agencia.pagos.services.PaymentService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -58,5 +59,13 @@ class PaymentRestController {
             @AuthenticationPrincipal(expression = "username") String email
     ) {
         return ResponseEntity.ok(paymentService.getReceiptsForCurrentUser(email));
+    }
+
+    @PreAuthorize("hasRole('USER')")
+    @GetMapping(value = "/my/installments", produces = "application/json")
+    ResponseEntity<List<UserInstallmentDTO>> getMyInstallments(
+            @AuthenticationPrincipal(expression = "username") String email
+    ) {
+        return ResponseEntity.ok(paymentService.getInstallmentsForCurrentUser(email));
     }
 }

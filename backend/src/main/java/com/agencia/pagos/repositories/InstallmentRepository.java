@@ -5,9 +5,18 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Optional;
 import java.util.List;
 
 public interface InstallmentRepository extends JpaRepository<Installment, Long> {
+
+  List<Installment> findByUserId(Long userId);
+
+    @Query("SELECT i FROM Installment i JOIN FETCH i.trip WHERE i.id = :id")
+    Optional<Installment> findByIdWithTrip(@Param("id") Long id);
+
+    @Query("SELECT i FROM Installment i JOIN FETCH i.trip WHERE i.user.id = :userId")
+    List<Installment> findByUserIdWithTrip(@Param("userId") Long userId);
 
     @Query(value = """
         SELECT

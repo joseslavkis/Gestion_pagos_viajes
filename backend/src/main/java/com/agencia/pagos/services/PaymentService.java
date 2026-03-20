@@ -3,6 +3,7 @@ package com.agencia.pagos.services;
 import com.agencia.pagos.dtos.request.RegisterPaymentDTO;
 import com.agencia.pagos.dtos.request.ReviewPaymentDTO;
 import com.agencia.pagos.dtos.response.PaymentReceiptDTO;
+import com.agencia.pagos.dtos.response.UserInstallmentDTO;
 import com.agencia.pagos.entities.Installment;
 import com.agencia.pagos.entities.InstallmentStatus;
 import com.agencia.pagos.entities.PaymentReceipt;
@@ -19,6 +20,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 @Transactional
@@ -27,30 +31,39 @@ public class PaymentService {
     private final PaymentReceiptRepository paymentReceiptRepository;
     private final InstallmentRepository installmentRepository;
     private final UserRepository userRepository;
+    private final InstallmentStatusResolver installmentStatusResolver;
 
     @Autowired
     public PaymentService(
             PaymentReceiptRepository paymentReceiptRepository,
             InstallmentRepository installmentRepository,
-            UserRepository userRepository
+            UserRepository userRepository,
+            InstallmentStatusResolver installmentStatusResolver
     ) {
         this.paymentReceiptRepository = paymentReceiptRepository;
         this.installmentRepository = installmentRepository;
         this.userRepository = userRepository;
+        this.installmentStatusResolver = installmentStatusResolver;
     }
 
     public PaymentReceiptDTO registerPayment(RegisterPaymentDTO dto, String email) {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new EntityNotFoundException("User not found with email " + email));
 
-        Installment installment = installmentRepository.findById(dto.installmentId())
+        Installment installment = installmentRepository.findByIdWithTrip(dto.installmentId())
                 .orElseThrow(() -> new EntityNotFoundException("Installment not found with id " + dto.installmentId()));
 
         if (!installment.getUser().getId().equals(user.getId())) {
             throw new AccessDeniedException("No podés registrar un pago para una cuota que no es tuya");
         }
 
-        if (installment.getStatus() == InstallmentStatus.GREEN) {
+        int yellowDays = installment.getTrip().getYellowWarningDays() == null
+            ? 0
+            : installment.getTrip().getYellowWarningDays();
+        InstallmentStatus effective = installmentStatusResolver.computeEffective(
+            installment.getStatus(), installment.getDueDate(), yellowDays);
+        if (effective == InstallmentStatus.GREEN
+            && installment.getStatus() == InstallmentStatus.GREEN) {
             throw new IllegalStateException("Esta cuota ya está pagada");
         }
 
@@ -134,16 +147,60 @@ public class PaymentService {
                 .toList();
     }
 
-        @Transactional(readOnly = true)
-        public List<PaymentReceiptDTO> getReceiptsForCurrentUser(String email) {
+    @Transactional(readOnly = true)
+    public List<PaymentReceiptDTO> getReceiptsForCurrentUser(String email) {
         User user = userRepository.findByEmail(email)
-            .orElseThrow(() -> new EntityNotFoundException("User not found with email " + email));
+                .orElseThrow(() -> new EntityNotFoundException("User not found with email " + email));
 
         return paymentReceiptRepository.findByInstallmentUserId(user.getId()).stream()
-            .sorted(Comparator.comparing(PaymentReceipt::getId).reversed())
-            .map(this::toDTO)
+                .sorted(Comparator.comparing(PaymentReceipt::getId).reversed())
+                .map(this::toDTO)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<UserInstallmentDTO> getInstallmentsForCurrentUser(String email) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new EntityNotFoundException("User not found with email " + email));
+
+        List<Installment> installments = installmentRepository.findByUserIdWithTrip(user.getId());
+        List<Long> installmentIds = installments.stream()
+            .map(Installment::getId)
             .toList();
-        }
+
+        Map<Long, PaymentReceipt> latestReceiptByInstallmentId = installmentIds.isEmpty()
+            ? Map.of()
+            : paymentReceiptRepository.findByInstallmentIdIn(installmentIds)
+                .stream()
+                .collect(Collectors.toMap(
+                    receipt -> receipt.getInstallment().getId(),
+                    Function.identity(),
+                    (existing, ignored) -> existing
+                ));
+
+        return installments.stream()
+                .map((installment) -> {
+                PaymentReceipt latestReceipt = latestReceiptByInstallmentId.get(installment.getId());
+
+                    int yellowDays = installment.getTrip().getYellowWarningDays() == null
+                            ? 0
+                            : installment.getTrip().getYellowWarningDays();
+
+                    return new UserInstallmentDTO(
+                    installment.getTrip().getId(),
+                            installment.getId(),
+                            installment.getInstallmentNumber(),
+                            installment.getDueDate(),
+                            installment.getTotalDue(),
+                    installmentStatusResolver.computeEffective(
+                        installment.getStatus(), installment.getDueDate(), yellowDays),
+                            latestReceipt != null ? latestReceipt.getStatus() : null,
+                            latestReceipt != null ? latestReceipt.getAdminObservation() : null
+                    );
+                })
+                .sorted(Comparator.comparing(UserInstallmentDTO::installmentNumber))
+                .toList();
+    }
 
     private PaymentReceiptDTO toDTO(PaymentReceipt receipt) {
         return new PaymentReceiptDTO(

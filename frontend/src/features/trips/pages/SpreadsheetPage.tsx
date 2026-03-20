@@ -18,13 +18,6 @@ const currencyFormatter = new Intl.NumberFormat("es-AR", {
   currency: "ARS",
 });
 
-const dateFormatter = new Intl.DateTimeFormat("es-AR", {
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric",
-  timeZone: "America/Argentina/Buenos_Aires",
-});
-
 type SpreadsheetPageProps = {
   tripId: number;
 };
@@ -176,10 +169,10 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                 onChange={(event) => handleStatusChange(event.target.value)}
               >
                 <option value="">Todos los estados</option>
-                <option value="GREEN">Verde (al día)</option>
-                <option value="YELLOW">Amarillo (aviso)</option>
-                <option value="RED">Rojo (mora)</option>
-                <option value="RETROACTIVE">Retroactivo</option>
+                <option value="GREEN">Verde — Pagada</option>
+                <option value="YELLOW">Amarillo — Vence pronto</option>
+                <option value="RED">Rojo — Vencida</option>
+                <option value="RETROACTIVE">Rojo — Deuda retroactiva</option>
               </select>
               <select
                 className={styles.select}
@@ -335,114 +328,6 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
   );
 }
 
-type InstallmentDrawerProps = {
-  selected: SelectedInstallment;
-  onClose: () => void;
-};
-
-function InstallmentDrawer({ selected, onClose }: InstallmentDrawerProps) {
-  const { row, installment } = selected;
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
-
-  return (
-    <div
-      className={styles.drawerOverlay}
-      role="presentation"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) {
-          onClose();
-        }
-      }}
-    >
-      <aside
-        className={styles.drawer}
-        role="complementary"
-        aria-label="Detalle de cuota"
-      >
-        <header className={styles.drawerHeader}>
-          <h2 className={styles.drawerTitle}>
-            Cuota {installment.installmentNumber} · {currencyFormatter.format(installment.totalDue)}
-          </h2>
-          <button
-            type="button"
-            className={styles.drawerCloseButton}
-            onClick={onClose}
-          >
-            Cerrar
-          </button>
-        </header>
-        <div className={styles.drawerBody}>
-          <section className={styles.drawerSection}>
-            <div className={styles.drawerLabel}>Participante</div>
-            <div>
-              <span className={styles.strong}>
-                {row.lastname}, {row.name}
-              </span>
-              <div>{row.email}</div>
-              {row.phone ? <div>Tel: {row.phone}</div> : null}
-            </div>
-          </section>
-
-          <section className={styles.drawerSection}>
-            <div className={styles.drawerLabel}>Detalle de importes</div>
-            <div>
-              <div>
-                Capital base:{" "}
-                <span className={styles.strong}>
-                  {currencyFormatter.format(installment.capitalAmount)}
-                </span>
-              </div>
-              <div>
-                Retroactivo acumulado:{" "}
-                <span className={styles.highlightPositive}>
-                  {currencyFormatter.format(installment.retroactiveAmount)}
-                </span>
-              </div>
-              <div>
-                Recargo por mora:{" "}
-                <span className={styles.highlightDanger}>
-                  {currencyFormatter.format(installment.fineAmount)}
-                </span>
-              </div>
-              <div>
-                Total exigible:{" "}
-                <span className={styles.strong}>
-                  {currencyFormatter.format(installment.totalDue)}
-                </span>
-              </div>
-            </div>
-          </section>
-
-          <section className={styles.drawerSection}>
-            <div className={styles.drawerLabel}>Estado</div>
-            <div>
-              <StatusBadge status={installment.status} />
-            </div>
-          </section>
-
-          <section className={styles.drawerSection}>
-            <div className={styles.drawerLabel}>Fecha de vencimiento</div>
-            <div>{formatDateDisplay(installment.dueDate)}</div>
-          </section>
-        </div>
-      </aside>
-    </div>
-  );
-}
-
-void InstallmentDrawer;
-
 function getStatusClass(status: SpreadsheetRowInstallmentDTO["status"]): { pill: string; dot: string } {
   switch (status) {
     case "GREEN":
@@ -461,37 +346,16 @@ function getStatusClass(status: SpreadsheetRowInstallmentDTO["status"]): { pill:
 function getStatusIcon(status: SpreadsheetRowInstallmentDTO["status"]): string {
   switch (status) {
     case "GREEN":
-      return "✓";
+      return "Pagada";
     case "YELLOW":
-      return "•";
+      return "Vence pronto";
     case "RED":
-      return "⚠";
+      return "Vencida";
     case "RETROACTIVE":
-      return "↩";
+      return "Deuda retroactiva";
     default:
-      return "";
+      return "Al día";
   }
 }
 
-type StatusBadgeProps = {
-  status: SpreadsheetRowInstallmentDTO["status"];
-};
-
-function StatusBadge({ status }: StatusBadgeProps) {
-  const classes = getStatusClass(status);
-  const icon = getStatusIcon(status);
-
-  return (
-    <span className={`${styles.statusPill} ${classes.pill}`}>
-      <span className={`${styles.statusDot} ${classes.dot}`} />
-      <span>{icon}</span>
-      <span>{status}</span>
-    </span>
-  );
-}
-
-function formatDateDisplay(isoDate: string): string {
-  const date = new Date(`${isoDate}T00:00:00`);
-  return Number.isNaN(date.getTime()) ? isoDate : dateFormatter.format(date);
-}
 

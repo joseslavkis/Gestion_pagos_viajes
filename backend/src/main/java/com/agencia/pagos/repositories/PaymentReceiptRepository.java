@@ -3,6 +3,8 @@ package com.agencia.pagos.repositories;
 import com.agencia.pagos.entities.PaymentReceipt;
 import com.agencia.pagos.entities.ReceiptStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 
@@ -13,6 +15,9 @@ public interface PaymentReceiptRepository extends JpaRepository<PaymentReceipt, 
     List<PaymentReceipt> findByInstallmentIdAndStatus(Long installmentId, ReceiptStatus status);
 
     List<PaymentReceipt> findByInstallmentUserId(Long userId);
+
+    @Query("SELECT p FROM PaymentReceipt p JOIN FETCH p.installment WHERE p.installment.id IN :installmentIds ORDER BY p.id DESC")
+    List<PaymentReceipt> findByInstallmentIdIn(@Param("installmentIds") List<Long> installmentIds);
 
     boolean existsByInstallmentIdAndStatus(Long installmentId, ReceiptStatus status);
 }
