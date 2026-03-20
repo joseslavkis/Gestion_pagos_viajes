@@ -259,8 +259,8 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                                 );
                               }
 
-                              const statusClass = getStatusClass(installment.status);
-                              const icon = getStatusIcon(installment.status);
+                              const statusClass = getStatusClass(installment.status, installment.dueDate);
+                              const icon = getStatusIcon(installment.status, installment.dueDate);
 
                               return (
                                 <td
@@ -328,12 +328,22 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
   );
 }
 
-function getStatusClass(status: SpreadsheetRowInstallmentDTO["status"]): { pill: string; dot: string } {
+function getStatusClass(status: SpreadsheetRowInstallmentDTO["status"], dueDate: string): { pill: string; dot: string } {
   switch (status) {
     case "GREEN":
       return { pill: styles.statusGreen, dot: styles.statusGreenDot };
-    case "YELLOW":
-      return { pill: styles.statusYellow, dot: styles.statusYellowDot };
+    case "YELLOW": {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const due = new Date(dueDate);
+      due.setHours(0, 0, 0, 0);
+      const diffDays = Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      
+      if (diffDays <= 30) {
+        return { pill: styles.statusYellow, dot: styles.statusYellowDot };
+      }
+      return { pill: styles.statusGreen, dot: styles.statusGreenDot };
+    }
     case "RED":
       return { pill: styles.statusRed, dot: styles.statusRedDot };
     case "RETROACTIVE":
@@ -343,12 +353,22 @@ function getStatusClass(status: SpreadsheetRowInstallmentDTO["status"]): { pill:
   }
 }
 
-function getStatusIcon(status: SpreadsheetRowInstallmentDTO["status"]): string {
+function getStatusIcon(status: SpreadsheetRowInstallmentDTO["status"], dueDate: string): string {
   switch (status) {
     case "GREEN":
       return "Pagada";
-    case "YELLOW":
-      return "Vence pronto";
+    case "YELLOW": {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const due = new Date(dueDate);
+      due.setHours(0, 0, 0, 0);
+      const diffDays = Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      
+      if (diffDays <= 30) {
+        return "Vence pronto";
+      }
+      return "Al día";
+    }
     case "RED":
       return "Vencida";
     case "RETROACTIVE":

@@ -42,7 +42,7 @@ public class PaymentReceipt {
     @Builder.Default
     private ReceiptStatus status = ReceiptStatus.PENDING;
 
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String fileKey; // La ruta o clave en S3/almacenamiento para la imagen/PDF
 
     @Column(length = 500)

@@ -14,6 +14,7 @@ public record PaymentReceiptDTO(
         LocalDate reportedPaymentDate,
         PaymentMethod paymentMethod,
         ReceiptStatus status,
+        String fileKey,
         String adminObservation
 ) {
 }

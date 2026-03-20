@@ -154,7 +154,10 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
                 Total: <span className={styles.strong}>{currencyFormatter.format(installment.totalDue)}</span>
               </div>
               <div>
-                Estado: <StatusBadge status={installment.status} />
+                Vencimiento: <span className={styles.strong}>{formatDate(installment.dueDate)}</span>
+              </div>
+              <div>
+                Estado: <StatusBadge status={installment.status} dueDate={installment.dueDate} />
               </div>
             </div>
           </section>
@@ -181,6 +184,28 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
                 {receipt.adminObservation ? (
                   <div>
                     <span className={styles.strong}>Observación:</span> {receipt.adminObservation}
+                  </div>
+                ) : null}
+
+                {receipt.fileKey ? (
+                  <div style={{ marginTop: 8 }}>
+                    {receipt.fileKey.startsWith("data:image") ? (
+                      <img
+                        src={receipt.fileKey}
+                        alt="Comprobante"
+                        style={{
+                          maxWidth: "100%",
+                          maxHeight: 200,
+                          borderRadius: 8,
+                          objectFit: "contain",
+                          border: "1px solid #e2e8f0",
+                        }}
+                      />
+                    ) : (
+                      <a href={receipt.fileKey} target="_blank" rel="noreferrer">
+                        Ver comprobante adjunto
+                      </a>
+                    )}
                   </div>
                 ) : null}
 
@@ -250,11 +275,12 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
 
 type StatusBadgeProps = {
   status: SpreadsheetRowInstallmentDTO["status"];
+  dueDate: string;
 };
 
-function StatusBadge({ status }: StatusBadgeProps) {
-  const classes = getStatusClass(status);
-  const label = getStatusIcon(status);
+function StatusBadge({ status, dueDate }: StatusBadgeProps) {
+  const classes = getStatusClass(status, dueDate);
+  const label = getStatusIcon(status, dueDate);
 
   return (
     <span className={`${styles.statusPill} ${classes.pill}`}>
@@ -264,12 +290,22 @@ function StatusBadge({ status }: StatusBadgeProps) {
   );
 }
 
-function getStatusClass(status: SpreadsheetRowInstallmentDTO["status"]): { pill: string; dot: string } {
+function getStatusClass(status: SpreadsheetRowInstallmentDTO["status"], dueDate: string): { pill: string; dot: string } {
   switch (status) {
     case "GREEN":
       return { pill: styles.statusGreen, dot: styles.statusGreenDot };
-    case "YELLOW":
-      return { pill: styles.statusYellow, dot: styles.statusYellowDot };
+    case "YELLOW": {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const due = new Date(dueDate);
+      due.setHours(0, 0, 0, 0);
+      const diffDays = Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      
+      if (diffDays <= 30) {
+        return { pill: styles.statusYellow, dot: styles.statusYellowDot };
+      }
+      return { pill: styles.statusGreen, dot: styles.statusGreenDot };
+    }
     case "RED":
       return { pill: styles.statusRed, dot: styles.statusRedDot };
     case "RETROACTIVE":
@@ -279,12 +315,22 @@ function getStatusClass(status: SpreadsheetRowInstallmentDTO["status"]): { pill:
   }
 }
 
-function getStatusIcon(status: SpreadsheetRowInstallmentDTO["status"]): string {
+function getStatusIcon(status: SpreadsheetRowInstallmentDTO["status"], dueDate: string): string {
   switch (status) {
     case "GREEN":
       return "Pagada";
-    case "YELLOW":
-      return "Vence pronto";
+    case "YELLOW": {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const due = new Date(dueDate);
+      due.setHours(0, 0, 0, 0);
+      const diffDays = Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      
+      if (diffDays <= 30) {
+        return "Vence pronto";
+      }
+      return "Al día";
+    }
     case "RED":
       return "Vencida";
     case "RETROACTIVE":
@@ -293,3 +339,4 @@ function getStatusIcon(status: SpreadsheetRowInstallmentDTO["status"]): string {
       return "Al día";
   }
 }
+

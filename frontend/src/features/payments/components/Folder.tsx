@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
 import "./Folder.css";
@@ -9,6 +9,7 @@ type FolderProps = {
   items?: Array<ReactNode | null>;
   className?: string;
   onOpenChange?: (isOpen: boolean) => void;
+  forceClose?: boolean;
 };
 
 const darkenColor = (hex: string, percent: number): string => {
@@ -38,6 +39,7 @@ export function Folder({
   items = [],
   className = "",
   onOpenChange,
+  forceClose = false,
 }: FolderProps) {
   const maxItems = 3;
   const papers = items.slice(0, maxItems);
@@ -49,6 +51,13 @@ export function Folder({
   const [paperOffsets, setPaperOffsets] = useState<Array<{ x: number; y: number }>>(
     Array.from({ length: maxItems }, () => ({ x: 0, y: 0 })),
   );
+
+  useEffect(() => {
+    if (forceClose) {
+      setOpen(false);
+      setPaperOffsets(Array.from({ length: maxItems }, () => ({ x: 0, y: 0 })));
+    }
+  }, [forceClose, maxItems]);
 
   const folderBackColor = darkenColor(color, 0.08);
   const paper1 = darkenColor("#ffffff", 0.1);

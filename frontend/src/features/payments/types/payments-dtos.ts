@@ -16,6 +16,7 @@ export const PaymentReceiptDTOSchema = z.object({
   reportedPaymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   paymentMethod: PaymentMethodSchema,
   status: ReceiptStatusSchema,
+  fileKey: z.string(),
   adminObservation: z.string().nullable(),
 });
 
@@ -42,6 +43,14 @@ export const RegisterPaymentDTOSchema = z.object({
 });
 
 export type RegisterPaymentDTO = z.infer<typeof RegisterPaymentDTOSchema>;
+
+export type RegisterPaymentFormData = {
+  installmentId: number;
+  reportedAmount: number;
+  reportedPaymentDate: string;
+  paymentMethod: PaymentMethod;
+  file?: File | null;
+};
 
 export const ReviewPaymentDTOSchema = z.object({
   decision: ReceiptStatusSchema,

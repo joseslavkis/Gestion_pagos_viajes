@@ -367,7 +367,7 @@ public class TripService {
     private SpreadsheetRowInstallmentDTO toSpreadsheetInstallmentDTO(Installment installment) {
         Trip trip = installment.getTrip();
         int yellowWarningDays = trip.getYellowWarningDays() == null ? 0 : trip.getYellowWarningDays();
-        InstallmentStatus effectiveStatus = installmentStatusResolver.computeEffective(
+        InstallmentStatus effectiveStatus = computeEffectiveStatus(
                 installment.getStatus(),
                 installment.getDueDate(),
                 yellowWarningDays
@@ -383,6 +383,14 @@ public class TripService {
                 installment.getTotalDue(),
                 effectiveStatus
         );
+    }
+
+    private InstallmentStatus computeEffectiveStatus(
+            InstallmentStatus storedStatus,
+            LocalDate dueDate,
+            int yellowWarningDays
+    ) {
+        return installmentStatusResolver.computeEffective(storedStatus, dueDate, yellowWarningDays);
     }
 
     private static String normalizeSortBy(String sortBy) {

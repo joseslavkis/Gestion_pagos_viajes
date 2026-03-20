@@ -6,7 +6,9 @@ import com.agencia.pagos.dtos.response.PaymentReceiptDTO;
 import com.agencia.pagos.dtos.response.UserInstallmentDTO;
 import com.agencia.pagos.entities.Installment;
 import com.agencia.pagos.entities.InstallmentStatus;
+import com.agencia.pagos.entities.PaymentMethod;
 import com.agencia.pagos.entities.PaymentReceipt;
+import com.agencia.pagos.entities.Role;
 import com.agencia.pagos.entities.ReceiptStatus;
 import com.agencia.pagos.entities.user.User;
 import com.agencia.pagos.repositories.InstallmentRepository;
@@ -17,7 +19,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -46,14 +53,22 @@ public class PaymentService {
         this.installmentStatusResolver = installmentStatusResolver;
     }
 
-    public PaymentReceiptDTO registerPayment(RegisterPaymentDTO dto, String email) {
+        public PaymentReceiptDTO registerPayment(
+            Long installmentId,
+            BigDecimal reportedAmount,
+            LocalDate reportedPaymentDate,
+            PaymentMethod paymentMethod,
+            MultipartFile file,
+            String email
+        ) {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new EntityNotFoundException("User not found with email " + email));
 
-        Installment installment = installmentRepository.findByIdWithTrip(dto.installmentId())
-                .orElseThrow(() -> new EntityNotFoundException("Installment not found with id " + dto.installmentId()));
+        Installment installment = installmentRepository.findByIdWithTrip(installmentId)
+            .orElseThrow(() -> new EntityNotFoundException("Installment not found with id " + installmentId));
 
-        if (!installment.getUser().getId().equals(user.getId())) {
+        boolean isAdmin = user.getRole() == Role.ADMIN;
+        if (!isAdmin && !installment.getUser().getId().equals(user.getId())) {
             throw new AccessDeniedException("No podés registrar un pago para una cuota que no es tuya");
         }
 
@@ -67,22 +82,59 @@ public class PaymentService {
             throw new IllegalStateException("Esta cuota ya está pagada");
         }
 
-        if (paymentReceiptRepository.existsByInstallmentIdAndStatus(dto.installmentId(), ReceiptStatus.PENDING)) {
+        if (paymentReceiptRepository.existsByInstallmentIdAndStatus(installmentId, ReceiptStatus.PENDING)) {
             throw new IllegalStateException("Ya existe un comprobante pendiente de revisión para esta cuota");
+        }
+
+        String fileKey = "";
+        if (file != null && !file.isEmpty()) {
+            String mimeType = file.getContentType();
+            List<String> allowedTypes = List.of(
+                    "image/jpeg",
+                    "image/png",
+                    "image/webp",
+                    "application/pdf"
+            );
+            if (mimeType == null || !allowedTypes.contains(mimeType)) {
+                throw new IllegalArgumentException("Solo se aceptan imágenes JPG, PNG, WEBP o archivos PDF");
+            }
+
+            long maxBytes = 5L * 1024L * 1024L;
+            if (file.getSize() > maxBytes) {
+                throw new IllegalArgumentException("El archivo no puede superar los 5MB");
+            }
+
+            try {
+                String base64 = Base64.getEncoder().encodeToString(file.getBytes());
+                fileKey = "data:" + mimeType + ";base64," + base64;
+            } catch (IOException exception) {
+                throw new IllegalStateException("No se pudo procesar el archivo adjunto", exception);
+            }
         }
 
         PaymentReceipt receipt = PaymentReceipt.builder()
                 .installment(installment)
-                .reportedAmount(dto.reportedAmount())
-                .reportedPaymentDate(dto.reportedPaymentDate())
-                .paymentMethod(dto.paymentMethod())
+                .reportedAmount(reportedAmount)
+                .reportedPaymentDate(reportedPaymentDate)
+                .paymentMethod(paymentMethod)
                 .status(ReceiptStatus.PENDING)
-                .fileKey("")
+                .fileKey(fileKey)
                 .adminObservation(null)
                 .build();
 
         PaymentReceipt saved = paymentReceiptRepository.save(receipt);
         return toDTO(saved);
+    }
+
+    public PaymentReceiptDTO registerPayment(RegisterPaymentDTO dto, String email) {
+        return registerPayment(
+                dto.installmentId(),
+                dto.reportedAmount(),
+                dto.reportedPaymentDate(),
+                dto.paymentMethod(),
+                null,
+                email
+        );
     }
 
     public PaymentReceiptDTO reviewPayment(Long receiptId, ReviewPaymentDTO dto) {
@@ -211,6 +263,7 @@ public class PaymentService {
                 receipt.getReportedPaymentDate(),
                 receipt.getPaymentMethod(),
                 receipt.getStatus(),
+                receipt.getFileKey(),
                 receipt.getAdminObservation()
         );
     }

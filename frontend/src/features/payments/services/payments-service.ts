@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type {
   PaymentReceiptDTO,
-  RegisterPaymentDTO,
+  RegisterPaymentFormData,
   ReviewPaymentDTO,
   UserInstallmentDTO,
 } from "@/features/payments/types/payments-dtos";
@@ -10,24 +10,43 @@ import {
   PaymentReceiptDTOSchema,
   UserInstallmentDTOSchema,
 } from "@/features/payments/types/payments-dtos";
-import { ApiError } from "@/lib/api-error";
-import { apiGet, apiPatch, apiPost } from "@/lib/api-client";
+import { ApiError, handleApiResponse } from "@/lib/api-error";
+import { BASE_API_URL, apiGet, apiPatch, apiPost } from "@/lib/api-client";
 import { useToken } from "@/lib/session";
 
 export function useRegisterPayment() {
   const [tokenState] = useToken();
   const queryClient = useQueryClient();
 
-  return useMutation<PaymentReceiptDTO, ApiError, RegisterPaymentDTO>({
-    mutationFn: async (payload) =>
-      apiPost("/api/v1/payments", payload, (json) => PaymentReceiptDTOSchema.parse(json), {
-        headers:
-          tokenState.state === "LOGGED_IN"
-            ? {
-                Authorization: `Bearer ${tokenState.accessToken}`,
-              }
-            : undefined,
-      }),
+  return useMutation<PaymentReceiptDTO, ApiError, RegisterPaymentFormData>({
+    mutationFn: async (payload) => {
+      const formData = new FormData();
+      formData.append("installmentId", String(payload.installmentId));
+      formData.append("reportedAmount", String(payload.reportedAmount));
+      formData.append("reportedPaymentDate", payload.reportedPaymentDate);
+      formData.append("paymentMethod", payload.paymentMethod);
+      if (payload.file) {
+        formData.append("file", payload.file);
+      }
+
+      const headers: Record<string, string> = {};
+      if (tokenState.state === "LOGGED_IN") {
+        headers.Authorization = `Bearer ${tokenState.accessToken}`;
+      }
+
+      const response = await fetch(`${BASE_API_URL}/api/v1/payments`, {
+        method: "POST",
+        headers,
+        body: formData,
+      });
+
+      if (response.ok) {
+        const json: unknown = await response.json();
+        return PaymentReceiptDTOSchema.parse(json);
+      }
+
+      return handleApiResponse(response);
+    },
     onSuccess: async (_data, variables) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["trips"] }),

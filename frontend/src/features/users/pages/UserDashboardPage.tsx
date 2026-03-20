@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useQueryClient } from "@tanstack/react-query";
 
 import { CommonLayout } from "@/components/CommonLayout/CommonLayout";
+import { Folder } from "@/features/payments/components/Folder";
 import {
   useMyInstallments,
   useRegisterPayment,
@@ -66,7 +67,16 @@ function resolveInstallmentDisplay(dto: UserInstallmentDTO): {
   }
 
   if (dto.installmentStatus === "YELLOW") {
-    return { color: "yellow", label: "Vence pronto" };
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const due = new Date(dto.dueDate);
+    due.setHours(0, 0, 0, 0);
+    const diffDays = Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    
+    if (diffDays <= 30) {
+      return { color: "yellow", label: "Vence pronto" };
+    }
+    return { color: "green", label: "Al día" };
   }
 
   return { color: "green", label: "Al día" };
@@ -151,8 +161,12 @@ export function UserDashboardPage() {
   const [reportedAmount, setReportedAmount] = useState("");
   const [reportedPaymentDate, setReportedPaymentDate] = useState(getTodayDate);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("BANK_TRANSFER");
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [receiptPreviewUrl, setReceiptPreviewUrl] = useState<string | null>(null);
+  const [closeFolderSignal, setCloseFolderSignal] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!successMessage) {
@@ -165,6 +179,14 @@ export function UserDashboardPage() {
 
     return () => window.clearTimeout(timeoutId);
   }, [successMessage]);
+
+  useEffect(() => {
+    return () => {
+      if (receiptPreviewUrl) {
+        URL.revokeObjectURL(receiptPreviewUrl);
+      }
+    };
+  }, [receiptPreviewUrl]);
 
   const installmentItems = useMemo(() => installments ?? [], [installments]);
   const groups = useMemo(() => buildInstallmentGroups(installmentItems), [installmentItems]);
@@ -245,6 +267,17 @@ export function UserDashboardPage() {
     });
   };
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] ?? null;
+    if (receiptPreviewUrl) URL.revokeObjectURL(receiptPreviewUrl);
+    setReceiptFile(file);
+    setReceiptPreviewUrl(file ? URL.createObjectURL(file) : null);
+    
+    // Trigger the folder close animation
+    setCloseFolderSignal(true);
+    setTimeout(() => setCloseFolderSignal(false), 200);
+  };
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSubmitError(null);
@@ -268,6 +301,7 @@ export function UserDashboardPage() {
         reportedAmount: parsedAmount,
         reportedPaymentDate,
         paymentMethod,
+        file: receiptFile,
       });
 
       setSelectedTripIndex(null);
@@ -275,6 +309,10 @@ export function UserDashboardPage() {
       setReportedAmount("");
       setReportedPaymentDate(getTodayDate());
       setPaymentMethod("BANK_TRANSFER");
+      setReceiptFile(null);
+      if (receiptPreviewUrl) URL.revokeObjectURL(receiptPreviewUrl);
+      setReceiptPreviewUrl(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
       setSuccessMessage("Comprobante enviado. El administrador lo revisará pronto.");
 
       await queryClient.invalidateQueries({ queryKey: ["payments", "my"] });
@@ -415,6 +453,31 @@ export function UserDashboardPage() {
                   </div>
                 </div>
               ) : null}
+
+              <label className={styles.folderContainer} style={{ cursor: "pointer" }}>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,application/pdf"
+                  style={{ display: "none" }}
+                  onChange={handleFileChange}
+                />
+                <Folder
+                  size={1}
+                  color="#0b77d5"
+                  forceClose={closeFolderSignal}
+                  items={
+                    receiptPreviewUrl
+                      ? [<img key="preview" src={receiptPreviewUrl} style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 6 }} alt="Vista previa" />]
+                      : []
+                  }
+                />
+                <p className={styles.folderHint}>
+                  {receiptFile
+                    ? receiptFile.name
+                    : "Hacé click para adjuntar el comprobante (opcional)"}
+                </p>
+              </label>
 
               <label className={styles.formField}>
                 <span className={styles.label}>Monto pagado</span>
