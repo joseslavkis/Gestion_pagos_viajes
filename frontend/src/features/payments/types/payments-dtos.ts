@@ -31,6 +31,7 @@ export const UserInstallmentDTOSchema = z.object({
   installmentStatus: z.enum(["GREEN", "YELLOW", "RED", "RETROACTIVE"]),
   latestReceiptStatus: ReceiptStatusSchema.nullable(),
   latestReceiptObservation: z.string().nullable(),
+  userCompletedTrip: z.boolean(),
 });
 
 export type UserInstallmentDTO = z.infer<typeof UserInstallmentDTOSchema>;

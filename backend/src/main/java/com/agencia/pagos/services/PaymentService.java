@@ -230,24 +230,32 @@ public class PaymentService {
                     (existing, ignored) -> existing
                 ));
 
+        Map<Long, List<Installment>> installmentsByTripId = installments.stream()
+                .collect(Collectors.groupingBy(i -> i.getTrip().getId()));
+
         return installments.stream()
                 .map((installment) -> {
-                PaymentReceipt latestReceipt = latestReceiptByInstallmentId.get(installment.getId());
+                    PaymentReceipt latestReceipt = latestReceiptByInstallmentId.get(installment.getId());
 
                     int yellowDays = installment.getTrip().getYellowWarningDays() == null
                             ? 0
                             : installment.getTrip().getYellowWarningDays();
+                            
+                    List<Installment> tripGroup = installmentsByTripId.get(installment.getTrip().getId());
+                    boolean userCompletedTrip = tripGroup.stream()
+                            .allMatch(i -> i.getStatus() == InstallmentStatus.GREEN);
 
                     return new UserInstallmentDTO(
-                    installment.getTrip().getId(),
+                            installment.getTrip().getId(),
                             installment.getId(),
                             installment.getInstallmentNumber(),
                             installment.getDueDate(),
                             installment.getTotalDue(),
-                    installmentStatusResolver.computeEffective(
-                        installment.getStatus(), installment.getDueDate(), yellowDays),
+                            installmentStatusResolver.computeEffective(
+                                installment.getStatus(), installment.getDueDate(), yellowDays),
                             latestReceipt != null ? latestReceipt.getStatus() : null,
-                            latestReceipt != null ? latestReceipt.getAdminObservation() : null
+                            latestReceipt != null ? latestReceipt.getAdminObservation() : null,
+                            userCompletedTrip
                     );
                 })
                 .sorted(Comparator.comparing(UserInstallmentDTO::installmentNumber))

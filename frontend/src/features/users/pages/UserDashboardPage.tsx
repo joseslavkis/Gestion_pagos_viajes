@@ -190,6 +190,10 @@ export function UserDashboardPage() {
 
   const installmentItems = useMemo(() => installments ?? [], [installments]);
   const groups = useMemo(() => buildInstallmentGroups(installmentItems), [installmentItems]);
+  const completedGroups = useMemo(
+    () => groups.filter((g) => g.installments.every((i) => i.userCompletedTrip)),
+    [groups]
+  );
   const allInstallments = useMemo(
     () => groups.flatMap((g) => g.installments),
     [groups],
@@ -365,7 +369,12 @@ export function UserDashboardPage() {
                             {nextDueDate ? ` · próximo vencimiento ${formatReportedDate(nextDueDate)}` : ""}
                           </p>
                         </div>
-                        <span className={styles.expandIcon}>{isExpanded ? "−" : "+"}</span>
+                        <div className={styles.tripGroupActions}>
+                          {group.installments.every((i) => i.userCompletedTrip) ? (
+                            <span className={styles.tripCompletedBadge}>✓ Viaje completado</span>
+                          ) : null}
+                          <span className={styles.expandIcon}>{isExpanded ? "−" : "+"}</span>
+                        </div>
                       </button>
 
                       {isExpanded ? (
@@ -412,7 +421,46 @@ export function UserDashboardPage() {
           </section>
 
           <section className={styles.section}>
+            <h2 className={styles.sectionTitle}>Historial de viajes</h2>
+            {completedGroups.length === 0 ? (
+              <p className={styles.helperText}>
+                Todavía no tenés viajes completados.
+              </p>
+            ) : (
+              <div className={styles.historyList}>
+                {completedGroups.map((group, index) => (
+                  <div key={group.tripIndex} className={styles.historyItem}>
+                    <span className={styles.historyTripName}>
+                      Viaje {index + 1}
+                    </span>
+                    <span className={styles.historyBadge}>✓ Pagado</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className={styles.section}>
             <h2 className={styles.sectionTitle}>Reportar un pago</h2>
+
+            <div className={styles.bankDetailsContainer}>
+              <div className={styles.bankCard}>
+                <h3 className={styles.bankCardTitle}>Banco ICBC – CUENTA EN PESOS</h3>
+                <div>Titular: <strong>Proyecto VA SRL</strong></div>
+                <div>Cta. Cte. En $: <strong>0849/02102577/27</strong></div>
+                <div>CUIT: <strong>30-71131646-5</strong></div>
+                <div>CBU: <strong>0150 8497 0200 0102 5772 71</strong></div>
+                <div>Alias: <strong>CUERVO.J23</strong></div>
+              </div>
+              <div className={styles.bankCard}>
+                <h3 className={styles.bankCardTitle}>Banco Galicia – CUENTA EN DOLARES</h3>
+                <div>Titular: <strong>Proyecto VA SRL</strong></div>
+                <div>Cta. Cte. U$: <strong>9750147-1 367-1</strong></div>
+                <div>CUIT: <strong>30-71131646-5</strong></div>
+                <div>CBU: <strong>0070 3671 3100 9750 1471 15</strong></div>
+                <div>Alias: <strong>PROYECTO.VA.DOLAR</strong></div>
+              </div>
+            </div>
 
             <form className={styles.form} onSubmit={handleSubmit}>
               <label className={styles.formField}>

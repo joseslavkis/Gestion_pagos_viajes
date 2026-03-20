@@ -124,7 +124,23 @@ public class TripService {
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + id));
 
         if (!trip.getAssignedUsers().isEmpty()) {
-            throw new IllegalStateException("Cannot delete a trip with assigned users");
+            // Verificar si todos los usuarios tienen todas sus cuotas pagadas
+            boolean allUsersCompleted = trip.getAssignedUsers().stream()
+                .allMatch(user -> {
+                    List<Installment> userInstallments = installmentRepository
+                        .findByTripIdAndUserId(trip.getId(), user.getId());
+                    return !userInstallments.isEmpty() &&
+                        userInstallments.stream()
+                            .allMatch(i -> i.getStatus() == InstallmentStatus.GREEN);
+                });
+
+            if (!allUsersCompleted) {
+                throw new IllegalStateException(
+                    "No se puede eliminar el viaje porque hay usuarios con cuotas pendientes de pago.");
+            }
+            // Si todos están completados, permitir eliminar
+            // CascadeType.ALL en Trip.installments se encarga de borrar las cuotas
+            // La tabla trip_user se limpia al borrar el trip por el JoinTable
         }
 
         tripRepository.delete(trip);
@@ -177,8 +193,14 @@ public class TripService {
         List<SpreadsheetRowDTO> rows = pagedUsers.stream()
             .map(row -> {
                 Long userId = ((Number) row[0]).longValue();
-                List<SpreadsheetRowInstallmentDTO> rowInstallments = installmentsByUserId
-                    .getOrDefault(userId, List.of())
+                
+                List<Installment> userInstallments = installmentsByUserId
+                    .getOrDefault(userId, List.of());
+                    
+                boolean userCompleted = !userInstallments.isEmpty() && userInstallments.stream()
+                    .allMatch(i -> i.getStatus() == InstallmentStatus.GREEN);
+                    
+                List<SpreadsheetRowInstallmentDTO> rowInstallments = userInstallments
                     .stream()
                     .sorted((a, b) -> Integer.compare(a.getInstallmentNumber(), b.getInstallmentNumber()))
                     .map(this::toSpreadsheetInstallmentDTO)
@@ -193,6 +215,7 @@ public class TripService {
                     row[5] == null ? null : row[5].toString(),
                     row[6] == null ? null : row[6].toString(),
                     row[7] == null ? null : row[7].toString(),
+                    userCompleted,
                     rowInstallments
                 );
             })

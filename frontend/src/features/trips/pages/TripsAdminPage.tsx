@@ -6,18 +6,14 @@ import { useLocation } from "wouter";
 import { useAppForm } from "@/config/use-app-form";
 import {
   TripCreateDTOSchema,
-  TripUpdateDTOSchema,
   type TripSummaryDTO,
-  type TripUpdateDTO,
   UserAssignBulkDTOSchema,
 } from "@/features/trips/types/trips-dtos";
 import {
   useAssignUsersBulk,
   useCreateTrip,
   useDeleteTrip,
-  useTrip,
   useTrips,
-  useUpdateTrip,
 } from "@/features/trips/services/trips-service";
 
 import styles from "./TripsAdminPage.module.css";
@@ -30,7 +26,6 @@ const currencyFormatter = new Intl.NumberFormat("es-AR", {
 type ModalState =
   | { type: "none" }
   | { type: "create" }
-  | { type: "edit"; tripId: number }
   | { type: "assign"; tripId: number; tripName: string }
   | { type: "delete"; trip: TripSummaryDTO };
 
@@ -41,7 +36,6 @@ export function TripsAdminPage() {
   const openCreate = () => setModalState({ type: "create" });
   const closeModal = () => setModalState({ type: "none" });
 
-  const handleEdit = (tripId: number) => setModalState({ type: "edit", tripId });
   const handleAssign = (trip: TripSummaryDTO) =>
     setModalState({ type: "assign", tripId: trip.id, tripName: trip.name });
   const handleDelete = (trip: TripSummaryDTO) => setModalState({ type: "delete", trip });
@@ -113,7 +107,6 @@ export function TripsAdminPage() {
                 <TripCard
                   key={trip.id}
                   trip={trip}
-                  onEdit={handleEdit}
                   onAssign={handleAssign}
                   onDelete={handleDelete}
                 />
@@ -124,8 +117,6 @@ export function TripsAdminPage() {
 
         {modalState.type === "create" ? (
           <TripModalCreate onClose={closeModal} />
-        ) : modalState.type === "edit" ? (
-          <TripModalEdit tripId={modalState.tripId} onClose={closeModal} />
         ) : modalState.type === "assign" ? (
           <AssignUsersModal
             tripId={modalState.tripId}
@@ -148,12 +139,11 @@ export function TripsAdminPage() {
 
 type TripCardProps = {
   trip: TripSummaryDTO;
-  onEdit: (tripId: number) => void;
   onAssign: (trip: TripSummaryDTO) => void;
   onDelete: (trip: TripSummaryDTO) => void;
 };
 
-function TripCard({ trip, onEdit, onAssign, onDelete }: TripCardProps) {
+function TripCard({ trip, onAssign, onDelete }: TripCardProps) {
   const [, setLocation] = useLocation();
   const status = trip.assignedUsersCount > 0 ? "active" : "configuring";
   const isActive = status === "active";
@@ -195,14 +185,6 @@ function TripCard({ trip, onEdit, onAssign, onDelete }: TripCardProps) {
         <span className={styles.value}>{trip.assignedUsersCount}</span>
       </div>
       <div className={styles.cardFooter}>
-        <button
-          type="button"
-          className={styles.chipButton}
-          onClick={() => onEdit(trip.id)}
-          aria-label={`Editar viaje ${trip.name}`}
-        >
-          ✏️ Editar
-        </button>
         <button
           type="button"
           className={styles.chipButton}
@@ -515,188 +497,6 @@ function TripModalCreate({ onClose }: TripModalCreateProps) {
             </div>
           </formData.FormContainer>
         </formData.AppForm>
-      </RequestState>
-    </ModalShell>
-  );
-}
-
-type TripModalEditProps = {
-  tripId: number;
-  onClose: () => void;
-};
-
-function TripModalEdit({ tripId, onClose }: TripModalEditProps) {
-  const { data, isLoading, error: loadError } = useTrip(tripId);
-  const { mutateAsync, error: mutateError, isPending } = useUpdateTrip();
-
-  const trip = data;
-
-  const isLoadingState = isLoading || !trip;
-  const combinedError = loadError ?? mutateError ?? null;
-
-  const formData = useAppForm({
-    defaultValues: (trip
-      ? {
-          name: trip.name,
-          dueDay: trip.dueDay,
-          yellowWarningDays: trip.yellowWarningDays,
-          fixedFineAmount: trip.fixedFineAmount,
-          retroactiveActive: trip.retroactiveActive,
-          firstDueDate: trip.firstDueDate,
-        }
-      : {
-          name: "",
-          dueDay: 1,
-          yellowWarningDays: 0,
-          fixedFineAmount: 0,
-          retroactiveActive: false,
-          firstDueDate: "",
-        }) as TripUpdateDTO,
-    validators: {
-      onChange: TripUpdateDTOSchema,
-    },
-    onSubmit: async ({ value }) => {
-      if (!trip) {
-        return;
-      }
-      await mutateAsync({ id: trip.id, data: value });
-      onClose();
-    },
-  });
-
-  const hasAssignedUsers = trip?.assignedUsersCount ? trip.assignedUsersCount > 0 : false;
-
-  return (
-    <ModalShell
-      title={trip ? `Editar viaje: ${trip.name}` : "Editar viaje"}
-      description="Actualiza los parámetros de vencimiento y recargos. Algunos campos se bloquean si el viaje ya tiene usuarios."
-      onClose={onClose}
-    >
-      <RequestState
-        isLoading={isLoadingState || isPending}
-        error={combinedError}
-        loadingLabel={isLoadingState ? "Cargando datos del viaje..." : "Guardando cambios..."}
-      >
-        {isLoadingState ? (
-          <div className={styles.fieldGroup}>
-            <div className={styles.skeletonLine} />
-            <div className={styles.inlineFields}>
-              <div className={styles.skeletonLine} />
-              <div className={styles.skeletonLine} />
-            </div>
-            <div className={styles.skeletonLine} />
-          </div>
-        ) : trip ? (
-          <formData.AppForm>
-            <formData.FormContainer
-              submitLabel="Guardar cambios"
-              pendingLabel="Guardando..."
-              isPending={isPending}
-              extraError={combinedError}
-            >
-              <div className={styles.fieldGroup}>
-                <formData.AppField
-                  name="name"
-                  children={(field) => (
-                    <field.TextField label="Nombre del viaje" placeholder="Ej: Bariloche 5to año 2025" />
-                  )}
-                />
-
-                <div className={styles.inlineFields}>
-                  <formData.AppField
-                    name="dueDay"
-                    children={(field) => (
-                      <field.NumberField
-                        label="Día de vencimiento"
-                        placeholder="1-31"
-                        autoComplete="off"
-                        min={1}
-                        max={31}
-                        step={1}
-                      />
-                    )}
-                  />
-                  <formData.AppField
-                    name="yellowWarningDays"
-                    children={(field) => (
-                      <field.NumberField
-                        label="Días de aviso amarillo"
-                        placeholder="0-30"
-                        autoComplete="off"
-                        min={0}
-                        max={30}
-                        step={1}
-                      />
-                    )}
-                  />
-                </div>
-
-                <formData.AppField
-                  name="fixedFineAmount"
-                  children={(field) => (
-                    <field.NumberField
-                      label="Recargo fijo por mora"
-                      placeholder="Ej: 2000"
-                      autoComplete="off"
-                      min={0}
-                      step={0.01}
-                    />
-                  )}
-                />
-
-                <TooltipWrapper
-                  disabled={!hasAssignedUsers}
-                  message="No es posible modificar la primera fecha de vencimiento cuando el viaje ya tiene usuarios asignados."
-                >
-                  <formData.AppField
-                    name="firstDueDate"
-                    children={(field) => (
-                      <field.TextField
-                        label="Primera fecha de vencimiento"
-                        placeholder="YYYY-MM-DD"
-                        autoComplete="off"
-                      />
-                    )}
-                  />
-                </TooltipWrapper>
-
-                <formData.AppField
-                  name="retroactiveActive"
-                  children={(field) => (
-                    <div className={styles.checkboxRow}>
-                      <input
-                        id="retroactiveActive-edit"
-                        type="checkbox"
-                        name={field.name}
-                        checked={field.state.value}
-                        onChange={(event) => field.handleChange(event.target.checked)}
-                      />
-                      <label htmlFor="retroactiveActive-edit">
-                        Activar retroactivo en recargos
-                        <span className={styles.checkboxHint}>
-                          {" "}
-                          Aplica la lógica de multas a cuotas ya vencidas.
-                        </span>
-                      </label>
-                    </div>
-                  )}
-                />
-
-                {mutateError?.fieldErrors?.length ? (
-                  <ul className={styles.fieldErrorList}>
-                    {mutateError.fieldErrors.map((message) => (
-                      <li key={message}>{message}</li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-            </formData.FormContainer>
-          </formData.AppForm>
-        ) : (
-          <div className={styles.fieldGroup}>
-            <p className={styles.modalDescription}>No pudimos cargar los datos del viaje.</p>
-          </div>
-        )}
       </RequestState>
     </ModalShell>
   );

@@ -18,6 +18,11 @@ public interface InstallmentRepository extends JpaRepository<Installment, Long> 
     @Query("SELECT i FROM Installment i JOIN FETCH i.trip WHERE i.user.id = :userId")
     List<Installment> findByUserIdWithTrip(@Param("userId") Long userId);
 
+    @Query("SELECT i FROM Installment i WHERE i.trip.id = :tripId AND i.user.id = :userId")
+    List<Installment> findByTripIdAndUserId(
+        @Param("tripId") Long tripId,
+        @Param("userId") Long userId);
+
     @Query(value = """
         SELECT
         u.id AS user_id,

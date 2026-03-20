@@ -14,17 +14,7 @@ const MoneySchema = z.union([z.string(), z.number()])
 
 const FutureOrPresentDateSchema = z
   .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, "Formato inválido, use YYYY-MM-DD")
-  .refine((value) => {
-    const candidate = new Date(`${value}T00:00:00`);
-    if (Number.isNaN(candidate.getTime())) {
-      return false;
-    }
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    return candidate >= today;
-  }, { message: "La primera fecha de vencimiento no puede ser en el pasado" });
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Formato inválido, use YYYY-MM-DD");
 
 // Backend DTOs:
 // - backend/src/main/java/com/agencia/pagos/dtos/response/TripDetailDTO.java
@@ -131,6 +121,7 @@ export const SpreadsheetRowDTOSchema = z.object({
   studentName: z.string().nullable(),
   schoolName: z.string().nullable(),
   courseName: z.string().nullable(),
+  userCompleted: z.boolean(),
   installments: SpreadsheetRowInstallmentDTOSchema.array(),
 });
 

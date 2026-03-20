@@ -14,6 +14,7 @@ public record UserInstallmentDTO(
         BigDecimal totalDue,
         InstallmentStatus installmentStatus,
         ReceiptStatus latestReceiptStatus,
-        String latestReceiptObservation
+        String latestReceiptObservation,
+        Boolean userCompletedTrip
 ) {
 }

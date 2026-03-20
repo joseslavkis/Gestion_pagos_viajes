@@ -296,3 +296,80 @@
   }
 }
 
+
+.bankDetailsContainer {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+@media (min-width: 600px) {
+  .bankDetailsContainer {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.bankCard {
+  border: 1px solid #d8e6fb;
+  border-radius: 0.9rem;
+  background: #ffffff;
+  padding: 1rem;
+  font-size: 0.9rem;
+  color: #243b53;
+  line-height: 1.5;
+  box-shadow: 0 0.15rem 0.4rem rgba(15, 23, 42, 0.04);
+}
+
+.bankCardTitle {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.95rem;
+  color: #0f2f57;
+  font-weight: 700;
+  border-bottom: 1px solid #eef3fc;
+  padding-bottom: 0.5rem;
+}
+
+.tripCompletedBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: rgba(22, 163, 74, 0.12);
+  border: 1px solid rgba(22, 163, 74, 0.4);
+  color: #166534;
+}
+
+.historyList {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.historyItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.6rem 0.8rem;
+  border-radius: 0.6rem;
+  background: rgba(22, 163, 74, 0.06);
+  border: 1px solid rgba(22, 163, 74, 0.25);
+}
+
+.historyTripName {
+  font-weight: 600;
+  color: #0f2f57;
+}
+
+.historyBadge {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #166534;
+  background: rgba(22, 163, 74, 0.12);
+  border: 1px solid rgba(22, 163, 74, 0.4);
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+}

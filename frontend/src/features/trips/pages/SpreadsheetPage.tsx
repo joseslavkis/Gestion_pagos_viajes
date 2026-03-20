@@ -232,6 +232,9 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                             <td className={`${styles.td} ${styles.userCell}`}>
                               <span className={styles.userMain}>
                                 {row.lastname}, {row.name}
+                                {row.userCompleted ? (
+                                  <span className={styles.completedBadge}>✓ Completado</span>
+                                ) : null}
                               </span>
                               <span className={styles.userSecondary}>{row.email}</span>
                               {row.phone ? (
