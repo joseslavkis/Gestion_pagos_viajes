@@ -119,7 +119,7 @@
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  table-layout: fixed;
+  table-layout: auto;
   font-size: 0.8rem;
 }
 
@@ -135,6 +135,10 @@
   white-space: nowrap;
 }
 
+.td {
+  height: 1px;
+}
+
 .th:last-child,
 .td:last-child {
   border-right: none;
@@ -144,7 +148,9 @@
   position: sticky;
   top: 0;
   z-index: 5;
-  text-align: left;
+  min-width: 110px;
+  max-width: 140px;
+  text-align: center;
   font-weight: 600;
   color: #0f2f57;
   background: rgba(248, 250, 252, 0.96);
@@ -155,7 +161,8 @@
   left: 0;
   z-index: 4;
   background: rgba(248, 250, 252, 0.98);
-  min-width: 180px;
+  min-width: 200px;
+  max-width: 220px;
 }
 
 .userCell {
@@ -163,12 +170,18 @@
   left: 0;
   z-index: 3;
   background: #ffffff;
-  min-width: 180px;
+  min-width: 200px;
+  max-width: 220px;
 }
 
 .userMain {
+  display: block;
   font-weight: 600;
   color: #0f2f57;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 190px;
 }
 
 .userSecondary {
@@ -178,15 +191,47 @@
 }
 
 .amountCell {
-  font-variant-numeric: tabular-nums;
-  cursor: pointer;
-  min-width: 120px;
-  white-space: nowrap;
+  display: table-cell;
   vertical-align: top;
+  min-width: 110px;
+  max-width: 140px;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding: 0.4rem 0.5rem;
+  transition: background 0.1s;
+}
+
+.amountCell:hover {
+  background: rgba(11, 119, 213, 0.06);
+}
+
+.cellContent {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  align-items: flex-start;
+}
+
+.cellAmount {
+  display: block;
+  font-weight: 600;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.cellPartial {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.72rem;
+  color: #526883;
+  gap: 0.1rem;
+  white-space: nowrap;
 }
 
 .statusPill {
   display: inline-flex;
+  margin-top: 0.25rem;
   align-items: center;
   gap: 0.25rem;
   padding: 0.15rem 0.35rem;
@@ -242,6 +287,30 @@
 
 .statusRetroDot {
   background: #64748b;
+}
+
+.rowEven {
+  background: #ffffff;
+}
+
+.rowOdd {
+  background: rgba(248, 250, 252, 0.7);
+}
+
+.userCellEven {
+  background: #ffffff;
+}
+
+.userCellOdd {
+  background: rgba(248, 250, 252, 0.97);
+}
+
+.quotaHeader {
+  text-align: center;
+  font-size: 0.75rem;
+  color: #475569;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .skeletonRow {

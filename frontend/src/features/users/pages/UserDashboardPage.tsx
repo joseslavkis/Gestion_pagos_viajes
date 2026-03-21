@@ -20,6 +20,11 @@ const currencyFormatter = new Intl.NumberFormat("es-AR", {
   currency: "ARS",
 });
 
+const usdFormatter = new Intl.NumberFormat("es-AR", {
+  style: "currency",
+  currency: "USD",
+});
+
 const dateFormatter = new Intl.DateTimeFormat("es-AR", {
   day: "2-digit",
   month: "2-digit",
@@ -136,6 +141,7 @@ function findPendingInstallment(group: InstallmentGroup): UserInstallmentDTO | n
   const pending = group.installments
     .filter(
       (installment) =>
+        installment.installmentStatus !== "GREEN" &&
         installment.latestReceiptStatus !== "APPROVED" &&
         installment.latestReceiptStatus !== "PENDING",
     )
@@ -160,6 +166,7 @@ export function UserDashboardPage() {
   const [selectedInstallmentId, setSelectedInstallmentId] = useState<number | null>(null);
   const [reportedAmount, setReportedAmount] = useState("");
   const [reportedPaymentDate, setReportedPaymentDate] = useState(getTodayDate);
+  const [paymentCurrency, setPaymentCurrency] = useState<"ARS" | "USD">("ARS");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("BANK_TRANSFER");
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [receiptPreviewUrl, setReceiptPreviewUrl] = useState<string | null>(null);
@@ -304,6 +311,7 @@ export function UserDashboardPage() {
         installmentId: selectedInstallmentId,
         reportedAmount: parsedAmount,
         reportedPaymentDate,
+        paymentCurrency,
         paymentMethod,
         file: receiptFile,
       });
@@ -312,6 +320,7 @@ export function UserDashboardPage() {
       setSelectedInstallmentId(null);
       setReportedAmount("");
       setReportedPaymentDate(getTodayDate());
+      setPaymentCurrency("ARS");
       setPaymentMethod("BANK_TRANSFER");
       setReceiptFile(null);
       if (receiptPreviewUrl) URL.revokeObjectURL(receiptPreviewUrl);
@@ -392,6 +401,11 @@ export function UserDashboardPage() {
                                 </div>
 
                                 <p className={styles.chipMeta}>{currencyFormatter.format(installment.totalDue)}</p>
+                                {installment.paidAmount > 0 && installment.installmentStatus !== "GREEN" ? (
+                                  <p className={styles.chipMeta}>
+                                    Abonado: {installment.tripCurrency === "USD" ? usdFormatter.format(installment.paidAmount) : currencyFormatter.format(installment.paidAmount)} · Resta: {installment.tripCurrency === "USD" ? usdFormatter.format(installment.totalDue - installment.paidAmount) : currencyFormatter.format(installment.totalDue - installment.paidAmount)}
+                                  </p>
+                                ) : null}
                                 <p className={styles.chipMeta}>
                                   Vence: {formatReportedDate(installment.dueDate)}
                                 </p>
@@ -552,6 +566,25 @@ export function UserDashboardPage() {
                   required
                 />
               </label>
+
+              <label className={styles.formField}>
+                <span className={styles.label}>Moneda en que pagaste</span>
+                <select
+                  value={paymentCurrency}
+                  onChange={(event) => setPaymentCurrency(event.target.value as "ARS" | "USD")}
+                  className={styles.select}
+                  disabled={!selectedTripHasPending}
+                >
+                  <option value="ARS">Pesos (ARS)</option>
+                  <option value="USD">Dólares (USD)</option>
+                </select>
+              </label>
+
+              {selectedInstallment && paymentCurrency !== selectedInstallment.tripCurrency ? (
+                <p className={styles.helperWarning}>
+                  Se usará el tipo de cambio BNA oficial del día de pago. El administrador verá el detalle de la conversión.
+                </p>
+              ) : null}
 
               <label className={styles.formField}>
                 <span className={styles.label}>Método de pago</span>

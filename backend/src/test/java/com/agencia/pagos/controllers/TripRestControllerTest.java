@@ -275,14 +275,14 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             assertEquals(InstallmentStatus.RETROACTIVE, firstPast.getStatus());
         }
 
-        // Validate the first future installment carries the accumulated retroactive amount
+        // Validate future installments no longer carry accumulated retroactive amount
         if (expectedFuture > 0) {
             final int targetInstallmentNum = expectedPast + 1;
             Installment firstFuture = installments.stream()
                     .filter(i -> i.getInstallmentNumber() == targetInstallmentNum)
                     .findFirst().orElseThrow();
             assertEquals(BigDecimal.valueOf(10000).setScale(2), firstFuture.getCapitalAmount());
-            assertEquals(BigDecimal.valueOf(10000 * expectedPast).setScale(2), firstFuture.getRetroactiveAmount());
+            assertEquals(BigDecimal.ZERO.setScale(2), firstFuture.getRetroactiveAmount());
             assertEquals(InstallmentStatus.YELLOW, firstFuture.getStatus());
         }
     }

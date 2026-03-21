@@ -24,6 +24,7 @@ export function useRegisterPayment() {
       formData.append("installmentId", String(payload.installmentId));
       formData.append("reportedAmount", String(payload.reportedAmount));
       formData.append("reportedPaymentDate", payload.reportedPaymentDate);
+      formData.append("paymentCurrency", payload.paymentCurrency);
       formData.append("paymentMethod", payload.paymentMethod);
       if (payload.file) {
         formData.append("file", payload.file);

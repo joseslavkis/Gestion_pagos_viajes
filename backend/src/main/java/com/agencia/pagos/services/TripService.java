@@ -9,6 +9,7 @@ import com.agencia.pagos.dtos.response.SpreadsheetRowDTO;
 import com.agencia.pagos.dtos.response.SpreadsheetRowInstallmentDTO;
 import com.agencia.pagos.dtos.response.TripDetailDTO;
 import com.agencia.pagos.dtos.response.TripSummaryDTO;
+import com.agencia.pagos.entities.Currency;
 import com.agencia.pagos.entities.Installment;
 import com.agencia.pagos.entities.InstallmentStatus;
 import com.agencia.pagos.entities.Trip;
@@ -75,6 +76,7 @@ public class TripService {
         trip.setYellowWarningDays(dto.yellowWarningDays());
         trip.setFixedFineAmount(dto.fixedFineAmount());
         trip.setRetroactiveActive(dto.retroactiveActive());
+        trip.setCurrency(dto.currency() == null ? Currency.ARS : dto.currency());
         trip.setFirstDueDate(dto.firstDueDate());
         tripRepository.save(trip);
         return toDetailDTO(trip);
@@ -276,7 +278,6 @@ public class TripService {
 
         for (User user : newUsers) {
             trip.getAssignedUsers().add(user);
-            BigDecimal acumuladoRetroactivo = BigDecimal.ZERO;
 
             for (int i = 1; i <= trip.getInstallmentsCount(); i++) {
                 LocalDate rawDueDate = trip.getFirstDueDate().plusMonths(i - 1);
@@ -294,17 +295,15 @@ public class TripService {
                     installment.setInstallmentNumber(i);
                     installment.setDueDate(currentDueDate);
                     installment.setCapitalAmount(installmentCapital);
-                    installment.setRetroactiveAmount(acumuladoRetroactivo);
+                    installment.setRetroactiveAmount(BigDecimal.ZERO);
                     installment.setFineAmount(BigDecimal.ZERO);
                     installment.setStatus(InstallmentStatus.YELLOW);
                     // [A-2] Explicit call so totalDue is correct before batch save
                     installment.recalculateTotalDue();
                     installmentsToSave.add(installment);
-                    // Reset accumulator — only the first future quota receives the retroactive amount
-                    acumuladoRetroactivo = BigDecimal.ZERO;
                 } else if (trip.getRetroactiveActive()) {
                     // ── [Eje-1] Retroactividad activa: persistir la cuota pasada con status RETROACTIVE
-                    // para trazabilidad completa del historial, y acumular su capital en la primera futura.
+                    // para trazabilidad completa del historial.
                     Installment retroInstallment = new Installment();
                     retroInstallment.setTrip(trip);
                     retroInstallment.setUser(user);
@@ -316,8 +315,6 @@ public class TripService {
                     retroInstallment.setStatus(InstallmentStatus.RETROACTIVE);
                     retroInstallment.recalculateTotalDue();
                     installmentsToSave.add(retroInstallment);
-                    // Accumulate for the first upcoming installment
-                    acumuladoRetroactivo = acumuladoRetroactivo.add(installmentCapital);
                 } else {
                     // ── Retroactividad inactiva: persistir la cuota pasada en RED con multa ──
                     Installment installment = new Installment();
@@ -367,6 +364,7 @@ public class TripService {
                 trip.getId(),
                 trip.getName(),
                 trip.getTotalAmount(),
+            trip.getCurrency(),
                 trip.getInstallmentsCount(),
                 trip.getAssignedUsers().size()
         );
@@ -382,6 +380,7 @@ public class TripService {
                 trip.getYellowWarningDays(),
                 trip.getFixedFineAmount(),
                 trip.getRetroactiveActive(),
+                trip.getCurrency(),
                 trip.getFirstDueDate(),
                 trip.getAssignedUsers().size()
         );
@@ -404,6 +403,7 @@ public class TripService {
                 installment.getRetroactiveAmount(),
                 installment.getFineAmount(),
                 installment.getTotalDue(),
+                installment.getPaidAmount(),
                 effectiveStatus
         );
     }

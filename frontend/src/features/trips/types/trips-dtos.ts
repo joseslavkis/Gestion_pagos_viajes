@@ -12,6 +12,8 @@ const MoneySchema = z.union([z.string(), z.number()])
     message: "Monto excede la precisión segura de JavaScript",
   });
 
+export const CurrencySchema = z.enum(["ARS", "USD"]);
+
 const FutureOrPresentDateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Formato inválido, use YYYY-MM-DD");
@@ -29,6 +31,7 @@ export const TripDetailDTOSchema = z.object({
   id: z.number(),
   name: z.string(),
   totalAmount: MoneySchema,
+  currency: CurrencySchema,
   installmentsCount: z.number(),
   dueDay: z.number(),
   yellowWarningDays: z.number(),
@@ -44,6 +47,7 @@ export const TripSummaryDTOSchema = z.object({
   id: z.number(),
   name: z.string(),
   totalAmount: MoneySchema,
+  currency: CurrencySchema,
   installmentsCount: z.number(),
   assignedUsersCount: z.number(),
 });
@@ -65,6 +69,7 @@ export type { StatusResponseDTO };
 export const TripCreateDTOSchema = z.object({
   name: z.string().min(2).max(100),
   totalAmount: z.number().positive().max(Number.MAX_SAFE_INTEGER),
+  currency: CurrencySchema.default("ARS"),
   installmentsCount: z.number().min(1).max(60),
   dueDay: z.number().min(1).max(31),
   yellowWarningDays: z.number().min(0).max(30),
@@ -73,7 +78,7 @@ export const TripCreateDTOSchema = z.object({
   firstDueDate: FutureOrPresentDateSchema,
 });
 
-export type TripCreateDTO = z.infer<typeof TripCreateDTOSchema>;
+export type TripCreateDTO = z.input<typeof TripCreateDTOSchema>;
 
 export const TripUpdateDTOSchema = z.object({
   name: z.string().min(2).max(100).optional(),
@@ -107,6 +112,7 @@ export const SpreadsheetRowInstallmentDTOSchema = z.object({
   retroactiveAmount: MoneySchema,
   fineAmount: MoneySchema,
   totalDue: MoneySchema,
+  paidAmount: MoneySchema,
   status: z.enum(["GREEN", "YELLOW", "RED", "RETROACTIVE"]),
 });
 

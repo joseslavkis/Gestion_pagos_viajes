@@ -13,6 +13,7 @@ public record SpreadsheetRowInstallmentDTO(
         BigDecimal retroactiveAmount,
         BigDecimal fineAmount,
         BigDecimal totalDue,
+        BigDecimal paidAmount,
         InstallmentStatus status
 ) {
 }

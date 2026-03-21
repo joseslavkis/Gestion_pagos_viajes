@@ -351,6 +351,16 @@
   font-size: 0.9rem;
 }
 
+.selectField {
+  width: 100%;
+  min-height: 40px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.8);
+  padding: 0.5rem 0.75rem;
+  background: #ffffff;
+  color: #0f2f57;
+}
+
 .idsHelper {
   margin-top: 0.35rem;
   font-size: 0.8rem;

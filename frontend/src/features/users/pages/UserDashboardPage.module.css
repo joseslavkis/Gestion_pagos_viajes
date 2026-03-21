@@ -94,6 +94,12 @@
   font-size: 0.88rem;
 }
 
+.tripGroupActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
 .expandIcon {
   width: 1.55rem;
   height: 1.55rem;

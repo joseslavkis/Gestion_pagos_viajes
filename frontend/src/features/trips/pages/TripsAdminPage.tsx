@@ -6,6 +6,7 @@ import { useLocation } from "wouter";
 import { useAppForm } from "@/config/use-app-form";
 import {
   TripCreateDTOSchema,
+  type TripCreateDTO,
   type TripSummaryDTO,
   UserAssignBulkDTOSchema,
 } from "@/features/trips/types/trips-dtos";
@@ -21,6 +22,11 @@ import styles from "./TripsAdminPage.module.css";
 const currencyFormatter = new Intl.NumberFormat("es-AR", {
   style: "currency",
   currency: "ARS",
+});
+
+const usdFormatter = new Intl.NumberFormat("es-AR", {
+  style: "currency",
+  currency: "USD",
 });
 
 type ModalState =
@@ -148,6 +154,11 @@ function TripCard({ trip, onAssign, onDelete }: TripCardProps) {
   const status = trip.assignedUsersCount > 0 ? "active" : "configuring";
   const isActive = status === "active";
 
+  const tripAmountLabel =
+    trip.currency === "USD"
+      ? `${usdFormatter.format(trip.totalAmount)} USD`
+      : `${currencyFormatter.format(trip.totalAmount)} ARS`;
+
   return (
     <article
       className={`${styles.card} ${isActive ? styles.cardActive : styles.cardConfiguring}`}
@@ -180,7 +191,7 @@ function TripCard({ trip, onAssign, onDelete }: TripCardProps) {
       </div>
       <div className={styles.cardBody}>
         <span className={styles.label}>Monto total</span>
-        <span className={styles.value}>{currencyFormatter.format(trip.totalAmount)}</span>
+        <span className={styles.value}>{tripAmountLabel}</span>
         <span className={styles.label}>Usuarios asignados</span>
         <span className={styles.value}>{trip.assignedUsersCount}</span>
       </div>
@@ -342,18 +353,20 @@ type TripModalCreateProps = {
 
 function TripModalCreate({ onClose }: TripModalCreateProps) {
   const { mutateAsync, error, isPending } = useCreateTrip();
+  const createDefaults: TripCreateDTO = {
+    name: "",
+    totalAmount: 0,
+    currency: "ARS",
+    installmentsCount: 1,
+    dueDay: 1,
+    yellowWarningDays: 0,
+    fixedFineAmount: 0,
+    retroactiveActive: false,
+    firstDueDate: "",
+  };
 
   const formData = useAppForm({
-    defaultValues: {
-      name: "",
-      totalAmount: 0,
-      installmentsCount: 1,
-      dueDay: 1,
-      yellowWarningDays: 0,
-      fixedFineAmount: 0,
-      retroactiveActive: false,
-      firstDueDate: "",
-    },
+    defaultValues: createDefaults,
     validators: {
       onChange: TripCreateDTOSchema,
     },
@@ -389,7 +402,7 @@ function TripModalCreate({ onClose }: TripModalCreateProps) {
                   name="totalAmount"
                   children={(field) => (
                     <field.NumberField
-                      label="Monto total (ARS)"
+                      label="Monto total"
                       placeholder="Ej: 1500000"
                       autoComplete="off"
                       min={0}
@@ -397,6 +410,26 @@ function TripModalCreate({ onClose }: TripModalCreateProps) {
                     />
                   )}
                 />
+                <formData.AppField
+                  name="currency"
+                  children={(field) => (
+                    <label className={styles.fieldGroup}>
+                      <span className={styles.label}>Moneda del viaje</span>
+                      <select
+                        name={field.name}
+                        className={styles.selectField}
+                        value={field.state.value}
+                        onChange={(event) => field.handleChange(event.target.value as "ARS" | "USD")}
+                      >
+                        <option value="ARS">Pesos (ARS)</option>
+                        <option value="USD">Dólares (USD)</option>
+                      </select>
+                    </label>
+                  )}
+                />
+              </div>
+
+              <div className={styles.inlineFields}>
                 <formData.AppField
                   name="installmentsCount"
                   children={(field) => (
@@ -410,9 +443,6 @@ function TripModalCreate({ onClose }: TripModalCreateProps) {
                     />
                   )}
                 />
-              </div>
-
-              <div className={styles.inlineFields}>
                 <formData.AppField
                   name="dueDay"
                   children={(field) => (

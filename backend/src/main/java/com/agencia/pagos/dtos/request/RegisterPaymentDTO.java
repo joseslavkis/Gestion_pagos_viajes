@@ -1,5 +1,6 @@
 package com.agencia.pagos.dtos.request;
 
+import com.agencia.pagos.entities.Currency;
 import com.agencia.pagos.entities.PaymentMethod;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
@@ -11,6 +12,15 @@ public record RegisterPaymentDTO(
         @NotNull Long installmentId,
         @NotNull @Positive BigDecimal reportedAmount,
         @NotNull LocalDate reportedPaymentDate,
+        @NotNull Currency paymentCurrency,
         @NotNull PaymentMethod paymentMethod
 ) {
+        public RegisterPaymentDTO(
+                        Long installmentId,
+                        BigDecimal reportedAmount,
+                        LocalDate reportedPaymentDate,
+                        PaymentMethod paymentMethod
+        ) {
+                this(installmentId, reportedAmount, reportedPaymentDate, Currency.ARS, paymentMethod);
+        }
 }

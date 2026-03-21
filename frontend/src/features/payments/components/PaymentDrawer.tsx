@@ -41,6 +41,13 @@ const dateFormatter = new Intl.DateTimeFormat("es-AR", {
   timeZone: "America/Argentina/Buenos_Aires",
 });
 
+function formatMoneyByCurrency(amount: number, currency: "ARS" | "USD"): string {
+  return new Intl.NumberFormat("es-AR", {
+    style: "currency",
+    currency,
+  }).format(amount);
+}
+
 function formatDate(isoDate: string): string {
   const d = new Date(`${isoDate}T00:00:00`);
   return Number.isNaN(d.getTime()) ? isoDate : dateFormatter.format(d);
@@ -175,6 +182,19 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
                 <div>
                   <span className={styles.strong}>Monto:</span> {currencyFormatter.format(receipt.reportedAmount)}
                 </div>
+                {receipt.exchangeRate != null ? (
+                  <>
+                    <div>
+                      <span className={styles.strong}>Pagó:</span> {formatMoneyByCurrency(receipt.reportedAmount, receipt.paymentCurrency)}
+                    </div>
+                    <div>
+                      <span className={styles.strong}>Tipo de cambio BNA:</span> {formatMoneyByCurrency(receipt.exchangeRate, "ARS")}
+                    </div>
+                    <div>
+                      <span className={styles.strong}>Equivalente:</span> {formatMoneyByCurrency(receipt.amountInTripCurrency, receipt.paymentCurrency === "ARS" ? "USD" : "ARS")} {receipt.paymentCurrency === "ARS" ? "USD" : "ARS"}
+                    </div>
+                  </>
+                ) : null}
                 <div>
                   <span className={styles.strong}>Fecha:</span> {formatDate(receipt.reportedPaymentDate)}
                 </div>

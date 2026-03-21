@@ -4,6 +4,7 @@ import { useLocation } from "wouter";
 import { CommonLayout } from "@/components/CommonLayout/CommonLayout";
 import { RequestState } from "@/components/ui/RequestState/RequestState";
 import { PaymentDrawer } from "@/features/payments/components/PaymentDrawer";
+import { useTrip } from "@/features/trips/services/trips-service";
 import { useSpreadsheet } from "@/features/trips/services/trips-service";
 import type {
   SpreadsheetParams,
@@ -44,6 +45,14 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
   const tableContainerRef = useRef<HTMLDivElement | null>(null);
 
   const { data, isLoading, error } = useSpreadsheet(tripId, params);
+  const { data: tripData } = useTrip(tripId);
+
+  const tripCurrencyFormatter = useMemo(() => {
+    if (tripData?.currency === "USD") {
+      return new Intl.NumberFormat("es-AR", { style: "currency", currency: "USD" });
+    }
+    return currencyFormatter;
+  }, [tripData?.currency]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -145,7 +154,7 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
               <div className={styles.titleBlock}>
                 <h1 className={styles.title}>{data?.tripName ?? "Planilla de viaje"}</h1>
                 <p className={styles.subtitle}>
-                  Vista de cuotas y estados de pago por participante.
+                  Vista de cuotas y estados de pago por participante. Moneda: {tripData?.currency ?? "ARS"}
                 </p>
                 {data ? (
                   <span className={styles.counter}>
@@ -207,7 +216,7 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                     <tr>
                       <th className={`${styles.th} ${styles.userCol}`}>Participante</th>
                       {Array.from({ length: installmentsCount }).map((_, index) => (
-                        <th key={index} className={styles.th}>
+                        <th key={index} className={`${styles.th} ${styles.quotaHeader}`}>
                           Cuota {index + 1}
                         </th>
                       ))}
@@ -227,9 +236,13 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                             ))}
                           </tr>
                         ))
-                      : rows.map((row) => (
-                          <tr key={row.userId}>
-                            <td className={`${styles.td} ${styles.userCell}`}>
+                      : rows.map((row, index) => (
+                          <tr key={row.userId} className={index % 2 === 0 ? styles.rowEven : styles.rowOdd}>
+                            <td
+                              className={`${styles.td} ${styles.userCell} ${
+                                index % 2 === 0 ? styles.userCellEven : styles.userCellOdd
+                              }`}
+                            >
                               <span className={styles.userMain}>
                                 {row.lastname}, {row.name}
                                 {row.userCompleted ? (
@@ -250,13 +263,13 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                                 <span className={styles.userSecondary}>Curso: {row.courseName}</span>
                               ) : null}
                             </td>
-                            {Array.from({ length: installmentsCount }).map((_, index) => {
+                            {Array.from({ length: installmentsCount }).map((_, installmentIndex) => {
                               const installment = row.installments.find(
-                                (item) => item.installmentNumber === index + 1,
+                                (item) => item.installmentNumber === installmentIndex + 1,
                               );
                               if (!installment) {
                                 return (
-                                  <td key={index} className={styles.td}>
+                                  <td key={installmentIndex} className={styles.td}>
                                     -
                                   </td>
                                 );
@@ -267,14 +280,32 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
 
                               return (
                                 <td
-                                  key={index}
+                                  key={installmentIndex}
                                   className={`${styles.td} ${styles.amountCell}`}
                                   onClick={() => setSelected({ row, installment })}
                                 >
-                                  <div>{currencyFormatter.format(installment.totalDue)}</div>
-                                  <div className={`${styles.statusPill} ${statusClass.pill}`}>
-                                    <span className={`${styles.statusDot} ${statusClass.dot}`} />
-                                    <span>{icon}</span>
+                                  <div className={styles.cellContent}>
+                                    <span className={styles.cellAmount}>
+                                      {tripCurrencyFormatter.format(installment.totalDue)}
+                                    </span>
+                                    {installment.paidAmount > 0 &&
+                                    installment.paidAmount < installment.totalDue ? (
+                                      <div className={styles.cellPartial}>
+                                        <span>
+                                          Abonado: {tripCurrencyFormatter.format(installment.paidAmount)}
+                                        </span>
+                                        <span>
+                                          Resta:{" "}
+                                          {tripCurrencyFormatter.format(
+                                            installment.totalDue - installment.paidAmount,
+                                          )}
+                                        </span>
+                                      </div>
+                                    ) : null}
+                                    <span className={`${styles.statusPill} ${statusClass.pill}`}>
+                                      <span className={`${styles.statusDot} ${statusClass.dot}`} />
+                                      <span>{icon}</span>
+                                    </span>
                                   </div>
                                 </td>
                               );

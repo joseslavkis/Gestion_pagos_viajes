@@ -95,6 +95,8 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
     void registerPayment_cuotaYaPagada_devuelve409() throws Exception {
         TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-register-green"));
         Installment installment = createInstallmentWithStatus("register-green", InstallmentStatus.GREEN);
+                installment.setPaidAmount(installment.getTotalDue());
+                installment = installmentRepository.save(installment);
 
         RegisterPaymentDTO dto = new RegisterPaymentDTO(
                 installment.getId(),
@@ -262,6 +264,8 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
     void voidPayment_anulaAprobado_reviertePagaYDevuelve200() throws Exception {
         TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-void-ok"));
         Installment installment = createInstallmentWithStatus("void-ok", InstallmentStatus.GREEN);
+                installment.setPaidAmount(installment.getTotalDue());
+                installment = installmentRepository.save(installment);
 
         PaymentReceipt receipt = paymentReceiptRepository.save(PaymentReceipt.builder()
                 .installment(installment)

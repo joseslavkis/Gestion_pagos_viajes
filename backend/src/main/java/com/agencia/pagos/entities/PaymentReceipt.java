@@ -30,6 +30,16 @@ public class PaymentReceipt {
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal reportedAmount; // El monto que el usuario dice haber pagado
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private Currency paymentCurrency;
+
+    @Column(precision = 10, scale = 2)
+    private BigDecimal exchangeRate;
+
+    @Column(precision = 10, scale = 2)
+    private BigDecimal amountInTripCurrency;
+
     @Column(nullable = false)
     private LocalDate reportedPaymentDate; // Cuándo se realizó la transferencia/pago
 
@@ -47,4 +57,14 @@ public class PaymentReceipt {
 
     @Column(length = 500)
     private String adminObservation; // Explicación en caso de rechazo
+
+    @PrePersist
+    void onPersist() {
+        if (paymentCurrency == null) {
+            paymentCurrency = Currency.ARS;
+        }
+        if (amountInTripCurrency == null) {
+            amountInTripCurrency = reportedAmount;
+        }
+    }
 }
