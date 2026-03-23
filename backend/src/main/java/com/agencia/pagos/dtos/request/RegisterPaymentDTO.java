@@ -13,14 +13,25 @@ public record RegisterPaymentDTO(
         @NotNull @Positive BigDecimal reportedAmount,
         @NotNull LocalDate reportedPaymentDate,
         @NotNull Currency paymentCurrency,
-        @NotNull PaymentMethod paymentMethod
+        @NotNull PaymentMethod paymentMethod,
+        @NotNull Long bankAccountId
 ) {
+        public RegisterPaymentDTO(
+                        Long installmentId,
+                        BigDecimal reportedAmount,
+                        LocalDate reportedPaymentDate,
+                        PaymentMethod paymentMethod,
+                        Long bankAccountId
+        ) {
+                this(installmentId, reportedAmount, reportedPaymentDate, Currency.ARS, paymentMethod, bankAccountId);
+        }
+
         public RegisterPaymentDTO(
                         Long installmentId,
                         BigDecimal reportedAmount,
                         LocalDate reportedPaymentDate,
                         PaymentMethod paymentMethod
         ) {
-                this(installmentId, reportedAmount, reportedPaymentDate, Currency.ARS, paymentMethod);
+                this(installmentId, reportedAmount, reportedPaymentDate, Currency.ARS, paymentMethod, null);
         }
 }

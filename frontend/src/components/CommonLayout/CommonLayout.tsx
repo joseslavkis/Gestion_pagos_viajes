@@ -1,6 +1,7 @@
 import React from "react";
 import { Link } from "wouter";
 
+import { getRoleFromToken } from "@/lib/auth-role";
 import { useToken } from "@/lib/session";
 import logo from "@/assets/logo.png";
 
@@ -79,7 +80,8 @@ const LoggedOutLinks = ({ onNavigate }: { onNavigate: () => void }) => {
 };
 
 const LoggedInLinks = ({ onNavigate }: { onNavigate: () => void }) => {
-  const [, setTokenState] = useToken();
+  const [tokenState, setTokenState] = useToken();
+  const role = tokenState.state === "LOGGED_IN" ? getRoleFromToken(tokenState.accessToken) : null;
 
   const logOut = () => {
     setTokenState({ state: "LOGGED_OUT" });
@@ -89,10 +91,24 @@ const LoggedInLinks = ({ onNavigate }: { onNavigate: () => void }) => {
   return (
     <>
       <li>
-        <Link href="/under-construction" className={styles.navLink} onClick={onNavigate}>
-          Inicio
+        <Link href="/" className={styles.navLink} onClick={onNavigate}>
+          {role === "ADMIN" ? "Viajes" : "Inicio"}
         </Link>
       </li>
+      {role === "ADMIN" ? (
+        <>
+          <li>
+            <Link href="/payments/pending-review" className={styles.navLink} onClick={onNavigate}>
+              Pendientes de revisión
+            </Link>
+          </li>
+          <li>
+            <Link href="/bank-accounts" className={styles.navLink} onClick={onNavigate}>
+              Cuentas bancarias
+            </Link>
+          </li>
+        </>
+      ) : null}
       <li>
         <button className={styles.logoutButton} onClick={logOut}>
           Cerrar sesión

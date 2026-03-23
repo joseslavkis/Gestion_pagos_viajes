@@ -2,8 +2,10 @@ package com.agencia.pagos.services;
 
 import com.agencia.pagos.dtos.request.RegisterPaymentDTO;
 import com.agencia.pagos.dtos.request.ReviewPaymentDTO;
+import com.agencia.pagos.dtos.response.PendingPaymentReviewDTO;
 import com.agencia.pagos.dtos.response.PaymentReceiptDTO;
 import com.agencia.pagos.dtos.response.UserInstallmentDTO;
+import com.agencia.pagos.entities.BankAccount;
 import com.agencia.pagos.entities.Currency;
 import com.agencia.pagos.entities.Installment;
 import com.agencia.pagos.entities.InstallmentStatus;
@@ -12,6 +14,7 @@ import com.agencia.pagos.entities.PaymentReceipt;
 import com.agencia.pagos.entities.Role;
 import com.agencia.pagos.entities.ReceiptStatus;
 import com.agencia.pagos.entities.user.User;
+import com.agencia.pagos.repositories.BankAccountRepository;
 import com.agencia.pagos.repositories.InstallmentRepository;
 import com.agencia.pagos.repositories.PaymentReceiptRepository;
 import com.agencia.pagos.repositories.UserRepository;
@@ -40,6 +43,7 @@ public class PaymentService {
     private final PaymentReceiptRepository paymentReceiptRepository;
     private final InstallmentRepository installmentRepository;
     private final UserRepository userRepository;
+    private final BankAccountRepository bankAccountRepository;
     private final InstallmentStatusResolver installmentStatusResolver;
     private final ExchangeRateService exchangeRateService;
 
@@ -48,12 +52,14 @@ public class PaymentService {
             PaymentReceiptRepository paymentReceiptRepository,
             InstallmentRepository installmentRepository,
             UserRepository userRepository,
+            BankAccountRepository bankAccountRepository,
             InstallmentStatusResolver installmentStatusResolver,
             ExchangeRateService exchangeRateService
     ) {
         this.paymentReceiptRepository = paymentReceiptRepository;
         this.installmentRepository = installmentRepository;
         this.userRepository = userRepository;
+        this.bankAccountRepository = bankAccountRepository;
         this.installmentStatusResolver = installmentStatusResolver;
         this.exchangeRateService = exchangeRateService;
     }
@@ -64,6 +70,7 @@ public class PaymentService {
             LocalDate reportedPaymentDate,
             Currency paymentCurrency,
             PaymentMethod paymentMethod,
+            Long bankAccountId,
             MultipartFile file,
             String email
         ) {
@@ -87,6 +94,21 @@ public class PaymentService {
 
         if (paymentReceiptRepository.existsByInstallmentIdAndStatus(installmentId, ReceiptStatus.PENDING)) {
             throw new IllegalStateException("Ya existe un comprobante pendiente de revisión para esta cuota");
+        }
+
+        if (bankAccountId == null) {
+            throw new IllegalArgumentException("Debe seleccionar una cuenta bancaria para acreditar el pago");
+        }
+
+        BankAccount bankAccount = bankAccountRepository.findById(bankAccountId)
+                .orElseThrow(() -> new EntityNotFoundException("BankAccount not found with id " + bankAccountId));
+
+        if (!bankAccount.isActive()) {
+            throw new IllegalArgumentException("La cuenta bancaria seleccionada no está activa");
+        }
+
+        if (bankAccount.getCurrency() != paymentCurrency) {
+            throw new IllegalArgumentException("La cuenta bancaria seleccionada no coincide con la moneda del pago");
         }
 
         Currency tripCurrency = installment.getTrip().getCurrency();
@@ -133,6 +155,7 @@ public class PaymentService {
 
         PaymentReceipt receipt = PaymentReceipt.builder()
                 .installment(installment)
+                .bankAccount(bankAccount)
                 .reportedAmount(reportedAmount)
                 .paymentCurrency(paymentCurrency)
                 .exchangeRate(exchangeRate)
@@ -155,6 +178,7 @@ public class PaymentService {
                 dto.reportedPaymentDate(),
             dto.paymentCurrency(),
                 dto.paymentMethod(),
+                dto.bankAccountId(),
                 null,
                 email
         );
@@ -301,6 +325,13 @@ public class PaymentService {
     }
 
     @Transactional(readOnly = true)
+    public List<PendingPaymentReviewDTO> getPendingReviewReceipts() {
+        return paymentReceiptRepository.findByStatusWithContext(ReceiptStatus.PENDING).stream()
+                .map(this::toPendingReviewDTO)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
     public List<UserInstallmentDTO> getInstallmentsForCurrentUser(String email) {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new EntityNotFoundException("User not found with email " + email));
@@ -370,7 +401,45 @@ public class PaymentService {
                 receipt.getPaymentMethod(),
                 receipt.getStatus(),
                 receipt.getFileKey(),
-                receipt.getAdminObservation()
+                receipt.getAdminObservation(),
+                receipt.getBankAccount() != null ? receipt.getBankAccount().getId() : null,
+                receipt.getBankAccount() != null ? formatBankAccountDisplay(receipt.getBankAccount()) : null,
+                receipt.getBankAccount() != null ? receipt.getBankAccount().getAlias() : null
         );
+    }
+
+    private PendingPaymentReviewDTO toPendingReviewDTO(PaymentReceipt receipt) {
+        Installment installment = receipt.getInstallment();
+        User user = installment.getUser();
+        return new PendingPaymentReviewDTO(
+                receipt.getId(),
+                receipt.getStatus(),
+                receipt.getReportedAmount(),
+                receipt.getPaymentCurrency(),
+                receipt.getExchangeRate(),
+                receipt.getAmountInTripCurrency(),
+                receipt.getReportedPaymentDate(),
+                receipt.getPaymentMethod(),
+                receipt.getFileKey(),
+                receipt.getBankAccount() != null ? receipt.getBankAccount().getId() : null,
+                receipt.getBankAccount() != null ? formatBankAccountDisplay(receipt.getBankAccount()) : null,
+                receipt.getBankAccount() != null ? receipt.getBankAccount().getAlias() : null,
+                installment.getId(),
+                installment.getInstallmentNumber(),
+                installment.getDueDate(),
+                installment.getTotalDue(),
+                installment.getTrip().getId(),
+                installment.getTrip().getName(),
+                installment.getTrip().getCurrency(),
+                user.getId(),
+                user.getName(),
+                user.getLastname(),
+                user.getEmail(),
+                user.getStudentName()
+        );
+    }
+
+    private String formatBankAccountDisplay(BankAccount bankAccount) {
+        return bankAccount.getBankName() + " - " + bankAccount.getAccountLabel();
     }
 }

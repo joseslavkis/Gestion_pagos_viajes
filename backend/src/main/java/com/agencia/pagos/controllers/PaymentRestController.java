@@ -2,6 +2,7 @@ package com.agencia.pagos.controllers;
 
 import com.agencia.pagos.dtos.request.RegisterPaymentDTO;
 import com.agencia.pagos.dtos.request.ReviewPaymentDTO;
+import com.agencia.pagos.dtos.response.PendingPaymentReviewDTO;
 import com.agencia.pagos.dtos.response.PaymentReceiptDTO;
 import com.agencia.pagos.dtos.response.UserInstallmentDTO;
 import com.agencia.pagos.entities.Currency;
@@ -53,6 +54,7 @@ class PaymentRestController {
             @RequestParam("reportedPaymentDate") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate reportedPaymentDate,
             @RequestParam("paymentCurrency") Currency paymentCurrency,
             @RequestParam("paymentMethod") PaymentMethod paymentMethod,
+            @RequestParam("bankAccountId") Long bankAccountId,
             @RequestParam(value = "file", required = false) MultipartFile file,
             @AuthenticationPrincipal(expression = "username") String email
     ) {
@@ -63,6 +65,7 @@ class PaymentRestController {
                 reportedPaymentDate,
                 paymentCurrency,
                 paymentMethod,
+                bankAccountId,
                 file,
                 email));
     }
@@ -83,6 +86,12 @@ class PaymentRestController {
     @GetMapping(value = "/installment/{installmentId}", produces = "application/json")
     ResponseEntity<List<PaymentReceiptDTO>> getReceiptsForInstallment(@PathVariable Long installmentId) {
         return ResponseEntity.ok(paymentService.getReceiptsForInstallment(installmentId));
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @GetMapping(value = "/pending-review", produces = "application/json")
+    ResponseEntity<List<PendingPaymentReviewDTO>> getPendingReviewReceipts() {
+        return ResponseEntity.ok(paymentService.getPendingReviewReceipts());
     }
 
     @PreAuthorize("hasRole('USER')")

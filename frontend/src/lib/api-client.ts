@@ -79,6 +79,23 @@ export async function apiPatch<T>(
   );
 }
 
+export async function apiPut<T>(
+  endpoint: string,
+  body: JsonRecord,
+  parse: ApiJsonParse<T>,
+  initOverrides?: Omit<RequestInitJson, "body">,
+): Promise<T> {
+  return requestJson<T>(
+    endpoint,
+    {
+      method: "PUT",
+      body,
+      ...(initOverrides ?? {}),
+    },
+    parse,
+  );
+}
+
 export async function apiDelete<T>(
   endpoint: string,
   parse: ApiJsonParse<T>,
@@ -120,4 +137,3 @@ export async function apiDownload(
   anchor.remove();
   URL.revokeObjectURL(url);
 }
-

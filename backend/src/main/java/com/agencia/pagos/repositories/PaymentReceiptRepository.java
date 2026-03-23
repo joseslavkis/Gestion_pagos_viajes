@@ -21,5 +21,17 @@ public interface PaymentReceiptRepository extends JpaRepository<PaymentReceipt, 
     @Query("SELECT p FROM PaymentReceipt p JOIN FETCH p.installment WHERE p.installment.id IN :installmentIds ORDER BY p.id DESC")
     List<PaymentReceipt> findByInstallmentIdIn(@Param("installmentIds") List<Long> installmentIds);
 
+    @Query("""
+        SELECT p
+        FROM PaymentReceipt p
+        JOIN FETCH p.installment i
+        JOIN FETCH i.trip
+        JOIN FETCH i.user
+        LEFT JOIN FETCH p.bankAccount
+        WHERE p.status = :status
+        ORDER BY p.id DESC
+        """)
+    List<PaymentReceipt> findByStatusWithContext(@Param("status") ReceiptStatus status);
+
     boolean existsByInstallmentIdAndStatus(Long installmentId, ReceiptStatus status);
 }

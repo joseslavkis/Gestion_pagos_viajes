@@ -32,6 +32,14 @@ function translateBackendMessage(message: string): string {
       "Se requiere una observación al rechazar un comprobante.",
     "No podés registrar un pago para una cuota que no es tuya":
       "No podés registrar un pago para una cuota que no es tuya.",
+    "Debe seleccionar una cuenta bancaria para acreditar el pago":
+      "Debes seleccionar la cuenta donde acreditaste el pago.",
+    "La cuenta bancaria seleccionada no está activa":
+      "La cuenta bancaria seleccionada no está activa.",
+    "La cuenta bancaria seleccionada no coincide con la moneda del pago":
+      "La cuenta bancaria seleccionada no coincide con la moneda del pago.",
+    "BankAccount not found":
+      "La cuenta bancaria no fue encontrada.",
     "No se puede eliminar el viaje porque hay usuarios con cuotas pendientes de pago.":
       "No se pudo eliminar el viaje.",
     "Trip not found":
@@ -91,7 +99,9 @@ export async function handleApiResponse(response: Response): Promise<never> {
 
   switch (status) {
     case 400:
-      userFriendlyMessage = "Petición inválida. Verifique los datos ingresados.";
+      userFriendlyMessage = rawMessage && rawMessage.trim().length > 0
+        ? translateBackendMessage(rawMessage)
+        : "Petición inválida. Verifique los datos ingresados.";
       break;
     case 401:
       userFriendlyMessage = "Credenciales inválidas o sesión expirada.";

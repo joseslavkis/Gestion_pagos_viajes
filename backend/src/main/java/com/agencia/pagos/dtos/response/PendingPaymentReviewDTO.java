@@ -7,21 +7,30 @@ import com.agencia.pagos.entities.ReceiptStatus;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
-public record PaymentReceiptDTO(
-        Long id,
-        Long installmentId,
-        Integer installmentNumber,
+public record PendingPaymentReviewDTO(
+        Long receiptId,
+        ReceiptStatus status,
         BigDecimal reportedAmount,
         Currency paymentCurrency,
         BigDecimal exchangeRate,
         BigDecimal amountInTripCurrency,
         LocalDate reportedPaymentDate,
         PaymentMethod paymentMethod,
-        ReceiptStatus status,
         String fileKey,
-        String adminObservation,
         Long bankAccountId,
         String bankAccountDisplayName,
-        String bankAccountAlias
+        String bankAccountAlias,
+        Long installmentId,
+        Integer installmentNumber,
+        LocalDate installmentDueDate,
+        BigDecimal installmentTotalDue,
+        Long tripId,
+        String tripName,
+        Currency tripCurrency,
+        Long userId,
+        String userName,
+        String userLastname,
+        String userEmail,
+        String studentName
 ) {
 }

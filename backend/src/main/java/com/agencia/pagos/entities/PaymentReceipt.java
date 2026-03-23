@@ -27,6 +27,10 @@ public class PaymentReceipt {
     @JoinColumn(name = "installment_id", nullable = false)
     private Installment installment; // La cuota a la que pertenece este pago
 
+    @ManyToOne
+    @JoinColumn(name = "bank_account_id")
+    private BankAccount bankAccount;
+
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal reportedAmount; // El monto que el usuario dice haber pagado
 

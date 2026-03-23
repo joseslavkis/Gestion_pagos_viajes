@@ -1,12 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type {
+  PendingPaymentReviewDTO,
   PaymentReceiptDTO,
   RegisterPaymentFormData,
   ReviewPaymentDTO,
   UserInstallmentDTO,
 } from "@/features/payments/types/payments-dtos";
 import {
+  PendingPaymentReviewDTOSchema,
   PaymentReceiptDTOSchema,
   UserInstallmentDTOSchema,
 } from "@/features/payments/types/payments-dtos";
@@ -26,6 +28,7 @@ export function useRegisterPayment() {
       formData.append("reportedPaymentDate", payload.reportedPaymentDate);
       formData.append("paymentCurrency", payload.paymentCurrency);
       formData.append("paymentMethod", payload.paymentMethod);
+      formData.append("bankAccountId", String(payload.bankAccountId));
       if (payload.file) {
         formData.append("file", payload.file);
       }
@@ -54,6 +57,7 @@ export function useRegisterPayment() {
         queryClient.invalidateQueries({ queryKey: ["installments", variables.installmentId] }),
         queryClient.invalidateQueries({ queryKey: ["spreadsheet"] }),
         queryClient.invalidateQueries({ queryKey: ["payments", "my", "installments"] }),
+        queryClient.invalidateQueries({ queryKey: ["payments", "pending-review"] }),
       ]);
     },
   });
@@ -83,6 +87,8 @@ export function useReviewPayment() {
         queryClient.invalidateQueries({
           queryKey: ["payments", "installment", variables.installmentId],
         }),
+        queryClient.invalidateQueries({ queryKey: ["payments", "pending-review"] }),
+        queryClient.invalidateQueries({ queryKey: ["spreadsheet"] }),
       ]);
     },
   });
@@ -108,6 +114,7 @@ export function useVoidPayment() {
         queryClient.invalidateQueries({
           queryKey: ["payments", "installment", variables.installmentId],
         }),
+        queryClient.invalidateQueries({ queryKey: ["spreadsheet"] }),
       ]);
     },
   });
@@ -146,6 +153,28 @@ export function useMyInstallments() {
       apiGet(
         "/api/v1/payments/my/installments",
         (json) => UserInstallmentDTOSchema.array().parse(json),
+        {
+          headers:
+            tokenState.state === "LOGGED_IN"
+              ? {
+                  Authorization: `Bearer ${tokenState.accessToken}`,
+                }
+              : undefined,
+        },
+      ),
+  });
+}
+
+export function usePendingReviewPayments() {
+  const [tokenState] = useToken();
+
+  return useQuery<PendingPaymentReviewDTO[], ApiError>({
+    queryKey: ["payments", "pending-review"],
+    staleTime: 0,
+    queryFn: async () =>
+      apiGet(
+        "/api/v1/payments/pending-review",
+        (json) => PendingPaymentReviewDTOSchema.array().parse(json),
         {
           headers:
             tokenState.state === "LOGGED_IN"

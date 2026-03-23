@@ -2,6 +2,7 @@ import { z } from "zod";
 
 const MoneySchema = z.union([z.string(), z.number()]).transform((value) => Number(value));
 export const CurrencySchema = z.enum(["ARS", "USD"]);
+export type Currency = z.infer<typeof CurrencySchema>;
 
 export const PaymentMethodSchema = z.enum(["BANK_TRANSFER", "CASH", "CARD", "OTHER"]);
 export type PaymentMethod = z.infer<typeof PaymentMethodSchema>;
@@ -22,6 +23,9 @@ export const PaymentReceiptDTOSchema = z.object({
   status: ReceiptStatusSchema,
   fileKey: z.string(),
   adminObservation: z.string().nullable(),
+  bankAccountId: z.number().nullable(),
+  bankAccountDisplayName: z.string().nullable(),
+  bankAccountAlias: z.string().nullable(),
 });
 
 export type PaymentReceiptDTO = z.infer<typeof PaymentReceiptDTOSchema>;
@@ -49,6 +53,7 @@ export const RegisterPaymentDTOSchema = z.object({
   reportedPaymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   paymentCurrency: CurrencySchema,
   paymentMethod: PaymentMethodSchema,
+  bankAccountId: z.number().int().positive(),
 });
 
 export type RegisterPaymentDTO = z.infer<typeof RegisterPaymentDTOSchema>;
@@ -59,6 +64,7 @@ export type RegisterPaymentFormData = {
   reportedPaymentDate: string;
   paymentCurrency: z.infer<typeof CurrencySchema>;
   paymentMethod: PaymentMethod;
+  bankAccountId: number;
   file?: File | null;
 };
 
@@ -68,3 +74,32 @@ export const ReviewPaymentDTOSchema = z.object({
 });
 
 export type ReviewPaymentDTO = z.infer<typeof ReviewPaymentDTOSchema>;
+
+export const PendingPaymentReviewDTOSchema = z.object({
+  receiptId: z.number(),
+  status: ReceiptStatusSchema,
+  reportedAmount: MoneySchema,
+  paymentCurrency: CurrencySchema,
+  exchangeRate: MoneySchema.nullable(),
+  amountInTripCurrency: MoneySchema,
+  reportedPaymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  paymentMethod: PaymentMethodSchema,
+  fileKey: z.string(),
+  bankAccountId: z.number().nullable(),
+  bankAccountDisplayName: z.string().nullable(),
+  bankAccountAlias: z.string().nullable(),
+  installmentId: z.number(),
+  installmentNumber: z.number(),
+  installmentDueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  installmentTotalDue: MoneySchema,
+  tripId: z.number(),
+  tripName: z.string(),
+  tripCurrency: CurrencySchema,
+  userId: z.number(),
+  userName: z.string(),
+  userLastname: z.string(),
+  userEmail: z.string(),
+  studentName: z.string().nullable(),
+});
+
+export type PendingPaymentReviewDTO = z.infer<typeof PendingPaymentReviewDTOSchema>;

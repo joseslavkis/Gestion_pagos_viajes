@@ -203,6 +203,11 @@ export function PaymentDrawer({ installment, row, yellowWarningDays, onClose }: 
                 <div>
                   <span className={styles.strong}>Método:</span> {paymentMethodLabels[receipt.paymentMethod] ?? receipt.paymentMethod}
                 </div>
+                <div>
+                  <span className={styles.strong}>Cuenta acreditada:</span>{" "}
+                  {receipt.bankAccountDisplayName ?? "Cuenta no informada"}
+                  {receipt.bankAccountAlias ? ` · ${receipt.bankAccountAlias}` : ""}
+                </div>
                 {receipt.adminObservation ? (
                   <div>
                     <span className={styles.strong}>Observación:</span> {receipt.adminObservation}

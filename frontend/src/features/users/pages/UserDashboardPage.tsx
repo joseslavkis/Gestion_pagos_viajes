@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { CommonLayout } from "@/components/CommonLayout/CommonLayout";
+import { useBankAccounts } from "@/features/bank-accounts/services/bank-accounts-service";
+import type { BankAccountDTO } from "@/features/bank-accounts/types/bank-accounts-dtos";
 import { Folder } from "@/features/payments/components/Folder";
 import {
   useMyInstallments,
@@ -165,10 +167,19 @@ function formatInstallmentAmount(installment: Pick<UserInstallmentDTO, "tripCurr
   return installment.tripCurrency === "USD" ? usdFormatter.format(amount) : currencyFormatter.format(amount);
 }
 
+function formatBankAccountTitle(account: BankAccountDTO): string {
+  return `${account.bankName} - ${account.accountLabel}`;
+}
+
 export function UserDashboardPage() {
   const queryClient = useQueryClient();
   const registerPayment = useRegisterPayment();
   const { data: installments, isLoading, error } = useMyInstallments();
+  const {
+    data: bankAccounts,
+    isLoading: isBankAccountsLoading,
+    error: bankAccountsError,
+  } = useBankAccounts();
 
   const [expandedTripIndexes, setExpandedTripIndexes] = useState<number[]>([]);
   const [selectedTripIndex, setSelectedTripIndex] = useState<number | null>(null);
@@ -177,6 +188,7 @@ export function UserDashboardPage() {
   const [reportedPaymentDate, setReportedPaymentDate] = useState(getTodayDate);
   const [paymentCurrency, setPaymentCurrency] = useState<"ARS" | "USD">("ARS");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("BANK_TRANSFER");
+  const [selectedBankAccountId, setSelectedBankAccountId] = useState<number | null>(null);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [receiptPreviewUrl, setReceiptPreviewUrl] = useState<string | null>(null);
   const [closeFolderSignal, setCloseFolderSignal] = useState(false);
@@ -205,6 +217,7 @@ export function UserDashboardPage() {
   }, [receiptPreviewUrl]);
 
   const installmentItems = useMemo(() => installments ?? [], [installments]);
+  const bankAccountItems = useMemo(() => bankAccounts ?? [], [bankAccounts]);
   const groups = useMemo(() => buildInstallmentGroups(installmentItems), [installmentItems]);
   const completedGroups = useMemo(
     () => groups.filter((g) => g.installments.every((i) => i.userCompletedTrip)),
@@ -238,6 +251,26 @@ export function UserDashboardPage() {
   const selectedTripHasPending =
     selectedGroup != null ? findPendingInstallment(selectedGroup) != null : false;
 
+  const availableBankAccounts = useMemo(
+    () => bankAccountItems.filter((account) => account.currency === paymentCurrency),
+    [bankAccountItems, paymentCurrency],
+  );
+
+  const groupedBankAccounts = useMemo(
+    () => ({
+      ARS: bankAccountItems.filter((account) => account.currency === "ARS"),
+      USD: bankAccountItems.filter((account) => account.currency === "USD"),
+    }),
+    [bankAccountItems],
+  );
+
+  const canSubmitPayment =
+    selectedTripHasPending &&
+    !registerPayment.isPending &&
+    !isBankAccountsLoading &&
+    availableBankAccounts.length > 0 &&
+    selectedBankAccountId != null;
+
   useEffect(() => {
     if (groups.length === 0) {
       setExpandedTripIndexes([]);
@@ -254,6 +287,20 @@ export function UserDashboardPage() {
       return filtered.length > 0 ? filtered : [groups[0].tripIndex];
     });
   }, [groups]);
+
+  useEffect(() => {
+    if (availableBankAccounts.length === 0) {
+      setSelectedBankAccountId(null);
+      return;
+    }
+
+    setSelectedBankAccountId((current) => {
+      if (current != null && availableBankAccounts.some((account) => account.id === current)) {
+        return current;
+      }
+      return availableBankAccounts[0]?.id ?? null;
+    });
+  }, [availableBankAccounts]);
 
   useEffect(() => {
     if (selectedTripIndex == null) {
@@ -311,24 +358,16 @@ export function UserDashboardPage() {
       return;
     }
 
+    if (selectedBankAccountId == null) {
+      setSubmitError("Selecciona la cuenta donde acreditaste el pago.");
+      return;
+    }
+
     const parsedAmount = Number(reportedAmount);
 
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
       setSubmitError("Ingresá un monto válido mayor a 0.");
       return;
-    }
-
-    if (selectedInstallment) {
-      const remainingAmount = getInstallmentRemainingAmount(selectedInstallment);
-      if (parsedAmount > remainingAmount) {
-        setSubmitError(
-          `El monto supera el saldo restante de esta cuota (${formatInstallmentAmount(
-            selectedInstallment,
-            remainingAmount,
-          )}).`,
-        );
-        return;
-      }
     }
 
     try {
@@ -338,6 +377,7 @@ export function UserDashboardPage() {
         reportedPaymentDate,
         paymentCurrency,
         paymentMethod,
+        bankAccountId: selectedBankAccountId,
         file: receiptFile,
       });
 
@@ -347,6 +387,7 @@ export function UserDashboardPage() {
       setReportedPaymentDate(getTodayDate());
       setPaymentCurrency("ARS");
       setPaymentMethod("BANK_TRANSFER");
+      setSelectedBankAccountId(null);
       setReceiptFile(null);
       if (receiptPreviewUrl) URL.revokeObjectURL(receiptPreviewUrl);
       setReceiptPreviewUrl(null);
@@ -487,22 +528,29 @@ export function UserDashboardPage() {
             <h2 className={styles.sectionTitle}>Reportar un pago</h2>
 
             <div className={styles.bankDetailsContainer}>
-              <div className={styles.bankCard}>
-                <h3 className={styles.bankCardTitle}>Banco ICBC – CUENTA EN PESOS</h3>
-                <div>Titular: <strong>Proyecto VA SRL</strong></div>
-                <div>Cta. Cte. En $: <strong>0849/02102577/27</strong></div>
-                <div>CUIT: <strong>30-71131646-5</strong></div>
-                <div>CBU: <strong>0150 8497 0200 0102 5772 71</strong></div>
-                <div>Alias: <strong>CUERVO.J23</strong></div>
-              </div>
-              <div className={styles.bankCard}>
-                <h3 className={styles.bankCardTitle}>Banco Galicia – CUENTA EN DOLARES</h3>
-                <div>Titular: <strong>Proyecto VA SRL</strong></div>
-                <div>Cta. Cte. U$: <strong>9750147-1 367-1</strong></div>
-                <div>CUIT: <strong>30-71131646-5</strong></div>
-                <div>CBU: <strong>0070 3671 3100 9750 1471 15</strong></div>
-                <div>Alias: <strong>PROYECTO.VA.DOLAR</strong></div>
-              </div>
+              {isBankAccountsLoading ? <p className={styles.helperText}>Cargando cuentas bancarias...</p> : null}
+              {bankAccountsError ? <p className={styles.errorText}>{bankAccountsError.message}</p> : null}
+              {!isBankAccountsLoading && !bankAccountsError && bankAccountItems.length === 0 ? (
+                <p className={styles.helperWarning}>Todavía no hay cuentas bancarias activas para mostrar.</p>
+              ) : null}
+              {(["ARS", "USD"] as const).map((currency) => {
+                const accountsForCurrency = groupedBankAccounts[currency];
+                if (accountsForCurrency.length === 0) {
+                  return null;
+                }
+
+                return accountsForCurrency.map((account) => (
+                  <div key={account.id} className={styles.bankCard}>
+                    <h3 className={styles.bankCardTitle}>{formatBankAccountTitle(account)}</h3>
+                    <div>Moneda: <strong>{currency === "USD" ? "Dólares (USD)" : "Pesos (ARS)"}</strong></div>
+                    <div>Titular: <strong>{account.accountHolder}</strong></div>
+                    <div>Cuenta: <strong>{account.accountNumber}</strong></div>
+                    <div>CUIT: <strong>{account.taxId}</strong></div>
+                    <div>CBU: <strong>{account.cbu}</strong></div>
+                    <div>Alias: <strong>{account.alias}</strong></div>
+                  </div>
+                ));
+              })}
             </div>
 
             <form className={styles.form} onSubmit={handleSubmit}>
@@ -580,7 +628,6 @@ export function UserDashboardPage() {
                   onChange={(event) => setReportedAmount(event.target.value)}
                   className={styles.input}
                   disabled={!selectedTripHasPending}
-                  max={selectedInstallment ? selectedInstallmentRemaining.toFixed(2) : undefined}
                   required
                 />
               </label>
@@ -588,6 +635,7 @@ export function UserDashboardPage() {
                 <p className={styles.helperText}>
                   Saldo restante sugerido:{" "}
                   {formatInstallmentAmount(selectedInstallment, selectedInstallmentRemaining)}
+                  {" "}· Si pagás más, el excedente se aplica en cascada a cuotas siguientes.
                 </p>
               ) : null}
 
@@ -623,6 +671,29 @@ export function UserDashboardPage() {
               ) : null}
 
               <label className={styles.formField}>
+                <span className={styles.label}>Cuenta donde acreditaste el pago</span>
+                <select
+                  value={selectedBankAccountId ?? ""}
+                  onChange={(event) => setSelectedBankAccountId(event.target.value === "" ? null : Number(event.target.value))}
+                  className={styles.select}
+                  disabled={!selectedTripHasPending || isBankAccountsLoading || availableBankAccounts.length === 0}
+                >
+                  <option value="">Elegí una cuenta</option>
+                  {availableBankAccounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {formatBankAccountTitle(account)} · {account.alias}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {selectedTripHasPending && !isBankAccountsLoading && availableBankAccounts.length === 0 ? (
+                <p className={styles.helperWarning}>
+                  No hay cuentas activas disponibles para la moneda seleccionada.
+                </p>
+              ) : null}
+
+              <label className={styles.formField}>
                 <span className={styles.label}>Método de pago</span>
                 <select
                   value={paymentMethod}
@@ -640,7 +711,7 @@ export function UserDashboardPage() {
               <button
                 type="submit"
                 className={styles.submitButton}
-                disabled={registerPayment.isPending || !selectedTripHasPending}
+                disabled={!canSubmitPayment}
               >
                 {registerPayment.isPending ? "Enviando..." : "Enviar comprobante"}
               </button>

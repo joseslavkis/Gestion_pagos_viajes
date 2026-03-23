@@ -1,10 +1,14 @@
 package com.agencia.pagos.controllers;
 
 import com.agencia.pagos.TestcontainersConfiguration;
+import com.agencia.pagos.dtos.request.BankAccountActiveDTO;
+import com.agencia.pagos.dtos.request.BankAccountCreateDTO;
+import com.agencia.pagos.dtos.request.BankAccountUpdateDTO;
 import com.agencia.pagos.dtos.request.RegisterPaymentDTO;
 import com.agencia.pagos.dtos.request.ReviewPaymentDTO;
 import com.agencia.pagos.dtos.request.UserCreateDTO;
 import com.agencia.pagos.dtos.response.TokenDTO;
+import com.agencia.pagos.entities.BankAccount;
 import com.agencia.pagos.entities.Currency;
 import com.agencia.pagos.entities.Installment;
 import com.agencia.pagos.entities.InstallmentStatus;
@@ -12,6 +16,7 @@ import com.agencia.pagos.entities.PaymentMethod;
 import com.agencia.pagos.entities.PaymentReceipt;
 import com.agencia.pagos.entities.ReceiptStatus;
 import com.agencia.pagos.entities.Trip;
+import com.agencia.pagos.repositories.BankAccountRepository;
 import com.agencia.pagos.entities.user.User;
 import com.agencia.pagos.repositories.InstallmentRepository;
 import com.agencia.pagos.repositories.PaymentReceiptRepository;
@@ -32,11 +37,13 @@ import java.time.LocalDate;
 import java.util.List;
 
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.containsString;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -63,9 +70,13 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
     @Autowired
     private PaymentReceiptRepository paymentReceiptRepository;
 
+    @Autowired
+    private BankAccountRepository bankAccountRepository;
+
     @AfterEach
     void cleanUpPayments() {
         paymentReceiptRepository.deleteAll();
+        bankAccountRepository.deleteAll();
         installmentRepository.deleteAll();
         tripRepository.deleteAll();
     }
@@ -79,7 +90,8 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 installment.getId(),
                 BigDecimal.valueOf(10000),
                 LocalDate.now(),
-                PaymentMethod.BANK_TRANSFER
+                PaymentMethod.BANK_TRANSFER,
+                createBankAccount(Currency.ARS).getId()
         );
 
         mockMvc.perform(post("/api/v1/payments")
@@ -103,7 +115,8 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 installment.getId(),
                 BigDecimal.valueOf(10000),
                 LocalDate.now(),
-                PaymentMethod.CARD
+                PaymentMethod.CARD,
+                createBankAccount(Currency.ARS).getId()
         );
 
         mockMvc.perform(post("/api/v1/payments")
@@ -132,7 +145,8 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 installment.getId(),
                 BigDecimal.valueOf(10000),
                 LocalDate.now(),
-                PaymentMethod.BANK_TRANSFER
+                PaymentMethod.BANK_TRANSFER,
+                createBankAccount(Currency.ARS).getId()
         );
 
         mockMvc.perform(post("/api/v1/payments")
@@ -150,7 +164,8 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 999999L,
                 BigDecimal.valueOf(10000),
                 LocalDate.now(),
-                PaymentMethod.OTHER
+                PaymentMethod.OTHER,
+                createBankAccount(Currency.ARS).getId()
         );
 
         mockMvc.perform(post("/api/v1/payments")
@@ -383,6 +398,216 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 .andExpect(jsonPath("$[0].installmentStatus").value("YELLOW"));
     }
 
+    @Test
+    void registerPayment_cuentaInactiva_devuelve400() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-register-bank-inactive"));
+        Installment installment = createInstallmentWithStatus("register-bank-inactive", InstallmentStatus.YELLOW);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+        bankAccount.setActive(false);
+        bankAccount = bankAccountRepository.save(bankAccount);
+
+        RegisterPaymentDTO dto = new RegisterPaymentDTO(
+                installment.getId(),
+                BigDecimal.valueOf(10000),
+                LocalDate.now(),
+                PaymentMethod.BANK_TRANSFER,
+                bankAccount.getId()
+        );
+
+        mockMvc.perform(post("/api/v1/payments")
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void registerPayment_cuentaConMonedaDistinta_devuelve400() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-register-bank-currency"));
+        Installment installment = createInstallmentWithStatus("register-bank-currency", InstallmentStatus.YELLOW);
+
+        RegisterPaymentDTO dto = new RegisterPaymentDTO(
+                installment.getId(),
+                BigDecimal.valueOf(10000),
+                LocalDate.now(),
+                Currency.USD,
+                PaymentMethod.BANK_TRANSFER,
+                createBankAccount(Currency.ARS).getId()
+        );
+
+        mockMvc.perform(post("/api/v1/payments")
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void registerPayment_persisteCuentaBancariaSeleccionada() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-register-bank-ok"));
+        Installment installment = createInstallmentWithStatus("register-bank-ok", InstallmentStatus.YELLOW);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+
+        RegisterPaymentDTO dto = new RegisterPaymentDTO(
+                installment.getId(),
+                BigDecimal.valueOf(10000),
+                LocalDate.now(),
+                PaymentMethod.BANK_TRANSFER,
+                bankAccount.getId()
+        );
+
+        mockMvc.perform(post("/api/v1/payments")
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.bankAccountId").value(bankAccount.getId()))
+                .andExpect(jsonPath("$.bankAccountAlias").value(bankAccount.getAlias()));
+    }
+
+    @Test
+    void getPendingReview_siendoAdmin_devuelveSoloPendientesConContexto() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-pending-review"));
+        Installment installment = createInstallmentWithStatus("pending-review", InstallmentStatus.YELLOW);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+
+        paymentReceiptRepository.save(PaymentReceipt.builder()
+                .installment(installment)
+                .bankAccount(bankAccount)
+                .reportedAmount(BigDecimal.valueOf(9000))
+                .reportedPaymentDate(LocalDate.now().minusDays(1))
+                .paymentMethod(PaymentMethod.CASH)
+                .status(ReceiptStatus.REJECTED)
+                .fileKey("")
+                .build());
+
+        PaymentReceipt pendingReceipt = paymentReceiptRepository.save(PaymentReceipt.builder()
+                .installment(installment)
+                .bankAccount(bankAccount)
+                .reportedAmount(BigDecimal.valueOf(10000))
+                .reportedPaymentDate(LocalDate.now())
+                .paymentMethod(PaymentMethod.BANK_TRANSFER)
+                .status(ReceiptStatus.PENDING)
+                .fileKey("")
+                .build());
+
+        mockMvc.perform(get("/api/v1/payments/pending-review")
+                        .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].receiptId").value(pendingReceipt.getId()))
+                .andExpect(jsonPath("$[0].tripName").value(installment.getTrip().getName()))
+                .andExpect(jsonPath("$[0].installmentNumber").value(installment.getInstallmentNumber()))
+                .andExpect(jsonPath("$[0].userEmail").value(installment.getUser().getEmail()))
+                .andExpect(jsonPath("$[0].bankAccountId").value(bankAccount.getId()))
+                .andExpect(jsonPath("$[0].bankAccountAlias").value(bankAccount.getAlias()));
+    }
+
+    @Test
+    void getPendingReview_sinAutenticacion_devuelve401() throws Exception {
+        mockMvc.perform(get("/api/v1/payments/pending-review"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void getPendingReview_siendoUserNormal_devuelve403() throws Exception {
+        TokenDTO userTokens = signUp(buildValidUser("user-pending-review-forbidden"));
+
+        mockMvc.perform(get("/api/v1/payments/pending-review")
+                        .header("Authorization", "Bearer " + userTokens.accessToken()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void createBankAccount_siendoAdmin_devuelve201() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-bank-account-create"));
+
+        BankAccountCreateDTO dto = new BankAccountCreateDTO(
+                "Banco ICBC",
+                "Cuenta en pesos",
+                "Proyecto VA SRL",
+                "0849/02102577/27",
+                "30-71131646-5",
+                "0150849702000102577271",
+                "CUERVO.J23",
+                Currency.ARS,
+                1
+        );
+
+        mockMvc.perform(post("/api/v1/bank-accounts")
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.bankName").value("Banco ICBC"))
+                .andExpect(jsonPath("$.currency").value("ARS"))
+                .andExpect(jsonPath("$.active").value(true));
+    }
+
+    @Test
+    void updateBankAccount_siendoAdmin_devuelve200() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-bank-account-update"));
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+
+        BankAccountUpdateDTO dto = new BankAccountUpdateDTO(
+                "Banco Galicia",
+                "Cuenta corriente",
+                "Proyecto VA SRL",
+                "9750147-1367-1",
+                "30-71131646-5",
+                "0070367131009750147115",
+                "PROYECTO.VA.DOLAR",
+                Currency.USD,
+                4
+        );
+
+        mockMvc.perform(put("/api/v1/bank-accounts/{id}", bankAccount.getId())
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bankName").value("Banco Galicia"))
+                .andExpect(jsonPath("$.currency").value("USD"))
+                .andExpect(jsonPath("$.displayOrder").value(4));
+    }
+
+    @Test
+    void updateBankAccountActive_siendoAdmin_devuelve200() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-bank-account-active"));
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+
+        mockMvc.perform(patch("/api/v1/bank-accounts/{id}/active", bankAccount.getId())
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new BankAccountActiveDTO(false))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.active").value(false));
+    }
+
+    @Test
+    void getBankAccounts_filtraActivasPorMoneda() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-bank-account-list"));
+        BankAccount arsActive = createBankAccount(Currency.ARS);
+        BankAccount usdActive = createBankAccount(Currency.USD);
+        BankAccount arsInactive = createBankAccount(Currency.ARS);
+        arsInactive.setActive(false);
+        bankAccountRepository.save(arsInactive);
+
+        mockMvc.perform(get("/api/v1/bank-accounts")
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .param("currency", "ARS"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].id").value(arsActive.getId()))
+                .andExpect(jsonPath("$[0].currency").value("ARS"));
+
+        mockMvc.perform(get("/api/v1/bank-accounts/admin")
+                        .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(3)))
+                .andExpect(jsonPath("$[?(@.id == " + usdActive.getId() + ")]").exists());
+    }
+
     private Installment createInstallmentWithStatus(String prefix, InstallmentStatus status) throws Exception {
         UserCreateDTO participantDto = buildValidUser("payment-user-" + prefix);
         signUp(participantDto);
@@ -411,5 +636,20 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
         installment.setStatus(status);
         installment.recalculateTotalDue();
         return installmentRepository.save(installment);
+    }
+
+    private BankAccount createBankAccount(Currency currency) {
+        return bankAccountRepository.save(BankAccount.builder()
+                .bankName(currency == Currency.USD ? "Banco Galicia" : "Banco ICBC")
+                .accountLabel(currency == Currency.USD ? "Cuenta en dolares" : "Cuenta en pesos")
+                .accountHolder("Proyecto VA SRL")
+                .accountNumber("0001-" + System.nanoTime())
+                .taxId("30-71131646-5")
+                .cbu(String.valueOf(System.nanoTime()))
+                .alias("ALIAS." + System.nanoTime())
+                .currency(currency)
+                .active(true)
+                .displayOrder(1)
+                .build());
     }
 }
