@@ -3,25 +3,21 @@ import { useLocation } from "wouter";
 
 import { CommonLayout } from "@/components/CommonLayout/CommonLayout";
 import { RequestState } from "@/components/ui/RequestState/RequestState";
-import { useSpreadsheet } from "@/features/trips/services/trips-service";
+import { PaymentDrawer } from "@/features/payments/components/PaymentDrawer";
+import { downloadSpreadsheetExcel, useSpreadsheet, useTrip } from "@/features/trips/services/trips-service";
 import type {
   SpreadsheetParams,
   SpreadsheetRowDTO,
   SpreadsheetRowInstallmentDTO,
 } from "@/features/trips/types/trips-dtos";
+import { ApiError } from "@/lib/api-error";
+import { useToken } from "@/lib/session";
 
 import styles from "./SpreadsheetPage.module.css";
 
 const currencyFormatter = new Intl.NumberFormat("es-AR", {
   style: "currency",
   currency: "ARS",
-});
-
-const dateFormatter = new Intl.DateTimeFormat("es-AR", {
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric",
-  timeZone: "America/Argentina/Buenos_Aires",
 });
 
 type SpreadsheetPageProps = {
@@ -35,6 +31,7 @@ type SelectedInstallment = {
 
 export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
   const [, setLocation] = useLocation();
+  const [tokenState] = useToken();
 
   const [params, setParams] = useState<SpreadsheetParams>({
     page: 0,
@@ -47,9 +44,19 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
   const [rawSearch, setRawSearch] = useState("");
   const [hasScrolledHorizontally, setHasScrolledHorizontally] = useState(false);
   const [selected, setSelected] = useState<SelectedInstallment | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const tableContainerRef = useRef<HTMLDivElement | null>(null);
 
   const { data, isLoading, error } = useSpreadsheet(tripId, params);
+  const { data: tripData } = useTrip(tripId);
+
+  const tripCurrencyFormatter = useMemo(() => {
+    if (tripData?.currency === "USD") {
+      return new Intl.NumberFormat("es-AR", { style: "currency", currency: "USD" });
+    }
+    return currencyFormatter;
+  }, [tripData?.currency]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -132,9 +139,26 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
     }));
   };
 
+  const handleExport = async () => {
+    if (tokenState.state !== "LOGGED_IN") return;
+    setIsExporting(true);
+    setExportError(null);
+    try {
+      await downloadSpreadsheetExcel(
+        tripId,
+        data?.tripName ?? String(tripId),
+        tokenState.accessToken,
+      );
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "No se pudo descargar el archivo.";
+      setExportError(message);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const rows = data?.rows ?? [];
   const installmentsCount = data?.installmentsCount ?? 0;
-
   return (
     <CommonLayout>
       <section className={styles.page}>
@@ -148,10 +172,26 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
               >
                 ← Volver a viajes
               </button>
+              <div className={styles.exportWrapper}>
+                <button
+                  type="button"
+                  className={styles.exportButton}
+                  onClick={handleExport}
+                  disabled={isExporting || !data}
+                  aria-label="Exportar planilla como archivo Excel"
+                >
+                  {isExporting ? "Descargando..." : "⬇ Exportar Excel"}
+                </button>
+                {exportError ? (
+                  <p className={styles.exportError} role="alert">
+                    {exportError}
+                  </p>
+                ) : null}
+              </div>
               <div className={styles.titleBlock}>
                 <h1 className={styles.title}>{data?.tripName ?? "Planilla de viaje"}</h1>
                 <p className={styles.subtitle}>
-                  Vista de cuotas y estados de pago por participante.
+                  Vista de cuotas y estados de pago por participante. Moneda: {tripData?.currency ?? "ARS"}
                 </p>
                 {data ? (
                   <span className={styles.counter}>
@@ -175,10 +215,10 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                 onChange={(event) => handleStatusChange(event.target.value)}
               >
                 <option value="">Todos los estados</option>
-                <option value="GREEN">Verde (al día)</option>
-                <option value="YELLOW">Amarillo (aviso)</option>
-                <option value="RED">Rojo (mora)</option>
-                <option value="RETROACTIVE">Retroactivo</option>
+                <option value="GREEN">Verde — Pagada</option>
+                <option value="YELLOW">Amarillo — Vence pronto</option>
+                <option value="RED">Rojo — Vencida</option>
+                <option value="RETROACTIVE">Rojo — Deuda retroactiva</option>
               </select>
               <select
                 className={styles.select}
@@ -213,7 +253,7 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                     <tr>
                       <th className={`${styles.th} ${styles.userCol}`}>Participante</th>
                       {Array.from({ length: installmentsCount }).map((_, index) => (
-                        <th key={index} className={styles.th}>
+                        <th key={index} className={`${styles.th} ${styles.quotaHeader}`}>
                           Cuota {index + 1}
                         </th>
                       ))}
@@ -233,11 +273,18 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                             ))}
                           </tr>
                         ))
-                      : rows.map((row) => (
-                          <tr key={row.userId}>
-                            <td className={`${styles.td} ${styles.userCell}`}>
+                      : rows.map((row, index) => (
+                          <tr key={row.userId} className={index % 2 === 0 ? styles.rowEven : styles.rowOdd}>
+                            <td
+                              className={`${styles.td} ${styles.userCell} ${
+                                index % 2 === 0 ? styles.userCellEven : styles.userCellOdd
+                              }`}
+                            >
                               <span className={styles.userMain}>
                                 {row.lastname}, {row.name}
+                                {row.userCompleted ? (
+                                  <span className={styles.completedBadge}>✓ Completado</span>
+                                ) : null}
                               </span>
                               <span className={styles.userSecondary}>{row.email}</span>
                               {row.phone ? (
@@ -253,31 +300,49 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                                 <span className={styles.userSecondary}>Curso: {row.courseName}</span>
                               ) : null}
                             </td>
-                            {Array.from({ length: installmentsCount }).map((_, index) => {
+                            {Array.from({ length: installmentsCount }).map((_, installmentIndex) => {
                               const installment = row.installments.find(
-                                (item) => item.installmentNumber === index + 1,
+                                (item) => item.installmentNumber === installmentIndex + 1,
                               );
                               if (!installment) {
                                 return (
-                                  <td key={index} className={styles.td}>
+                                  <td key={installmentIndex} className={styles.td}>
                                     -
                                   </td>
                                 );
                               }
 
-                              const statusClass = getStatusClass(installment.status);
-                              const icon = getStatusIcon(installment.status);
+                              const statusClass = getStatusClass(installment.uiStatusTone);
+                              const icon = installment.uiStatusLabel;
 
                               return (
                                 <td
-                                  key={index}
+                                  key={installmentIndex}
                                   className={`${styles.td} ${styles.amountCell}`}
                                   onClick={() => setSelected({ row, installment })}
                                 >
-                                  <div>{currencyFormatter.format(installment.totalDue)}</div>
-                                  <div className={`${styles.statusPill} ${statusClass.pill}`}>
-                                    <span className={`${styles.statusDot} ${statusClass.dot}`} />
-                                    <span>{icon}</span>
+                                  <div className={styles.cellContent}>
+                                    <span className={styles.cellAmount}>
+                                      {tripCurrencyFormatter.format(installment.totalDue)}
+                                    </span>
+                                    {installment.paidAmount > 0 &&
+                                    installment.paidAmount < installment.totalDue ? (
+                                      <div className={styles.cellPartial}>
+                                        <span>
+                                          Abonado: {tripCurrencyFormatter.format(installment.paidAmount)}
+                                        </span>
+                                        <span>
+                                          Resta:{" "}
+                                          {tripCurrencyFormatter.format(
+                                            installment.totalDue - installment.paidAmount,
+                                          )}
+                                        </span>
+                                      </div>
+                                    ) : null}
+                                    <span className={`${styles.statusPill} ${statusClass.pill}`}>
+                                      <span className={`${styles.statusDot} ${statusClass.dot}`} />
+                                      <span>{icon}</span>
+                                    </span>
                                   </div>
                                 </td>
                               );
@@ -328,7 +393,11 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
           </RequestState>
 
           {selected ? (
-            <InstallmentDrawer selected={selected} onClose={() => setSelected(null)} />
+            <PaymentDrawer
+              installment={selected.installment}
+              row={selected.row}
+              onClose={() => setSelected(null)}
+            />
           ) : null}
         </div>
       </section>
@@ -336,161 +405,17 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
   );
 }
 
-type InstallmentDrawerProps = {
-  selected: SelectedInstallment;
-  onClose: () => void;
-};
-
-function InstallmentDrawer({ selected, onClose }: InstallmentDrawerProps) {
-  const { row, installment } = selected;
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
-
-  return (
-    <div
-      className={styles.drawerOverlay}
-      role="presentation"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) {
-          onClose();
-        }
-      }}
-    >
-      <aside
-        className={styles.drawer}
-        role="complementary"
-        aria-label="Detalle de cuota"
-      >
-        <header className={styles.drawerHeader}>
-          <h2 className={styles.drawerTitle}>
-            Cuota {installment.installmentNumber} · {currencyFormatter.format(installment.totalDue)}
-          </h2>
-          <button
-            type="button"
-            className={styles.drawerCloseButton}
-            onClick={onClose}
-          >
-            Cerrar
-          </button>
-        </header>
-        <div className={styles.drawerBody}>
-          <section className={styles.drawerSection}>
-            <div className={styles.drawerLabel}>Participante</div>
-            <div>
-              <span className={styles.strong}>
-                {row.lastname}, {row.name}
-              </span>
-              <div>{row.email}</div>
-              {row.phone ? <div>Tel: {row.phone}</div> : null}
-            </div>
-          </section>
-
-          <section className={styles.drawerSection}>
-            <div className={styles.drawerLabel}>Detalle de importes</div>
-            <div>
-              <div>
-                Capital base:{" "}
-                <span className={styles.strong}>
-                  {currencyFormatter.format(installment.capitalAmount)}
-                </span>
-              </div>
-              <div>
-                Retroactivo acumulado:{" "}
-                <span className={styles.highlightPositive}>
-                  {currencyFormatter.format(installment.retroactiveAmount)}
-                </span>
-              </div>
-              <div>
-                Recargo por mora:{" "}
-                <span className={styles.highlightDanger}>
-                  {currencyFormatter.format(installment.fineAmount)}
-                </span>
-              </div>
-              <div>
-                Total exigible:{" "}
-                <span className={styles.strong}>
-                  {currencyFormatter.format(installment.totalDue)}
-                </span>
-              </div>
-            </div>
-          </section>
-
-          <section className={styles.drawerSection}>
-            <div className={styles.drawerLabel}>Estado</div>
-            <div>
-              <StatusBadge status={installment.status} />
-            </div>
-          </section>
-
-          <section className={styles.drawerSection}>
-            <div className={styles.drawerLabel}>Fecha de vencimiento</div>
-            <div>{formatDateDisplay(installment.dueDate)}</div>
-          </section>
-        </div>
-      </aside>
-    </div>
-  );
-}
-
-function getStatusClass(status: SpreadsheetRowInstallmentDTO["status"]): { pill: string; dot: string } {
-  switch (status) {
-    case "GREEN":
+function getStatusClass(
+  tone: SpreadsheetRowInstallmentDTO["uiStatusTone"],
+): { pill: string; dot: string } {
+  switch (tone) {
+    case "green":
       return { pill: styles.statusGreen, dot: styles.statusGreenDot };
-    case "YELLOW":
+    case "yellow":
       return { pill: styles.statusYellow, dot: styles.statusYellowDot };
-    case "RED":
+    case "red":
       return { pill: styles.statusRed, dot: styles.statusRedDot };
-    case "RETROACTIVE":
-      return { pill: styles.statusRetro, dot: styles.statusRetroDot };
     default:
       return { pill: "", dot: "" };
   }
 }
-
-function getStatusIcon(status: SpreadsheetRowInstallmentDTO["status"]): string {
-  switch (status) {
-    case "GREEN":
-      return "✓";
-    case "YELLOW":
-      return "•";
-    case "RED":
-      return "⚠";
-    case "RETROACTIVE":
-      return "↩";
-    default:
-      return "";
-  }
-}
-
-type StatusBadgeProps = {
-  status: SpreadsheetRowInstallmentDTO["status"];
-};
-
-function StatusBadge({ status }: StatusBadgeProps) {
-  const classes = getStatusClass(status);
-  const icon = getStatusIcon(status);
-
-  return (
-    <span className={`${styles.statusPill} ${classes.pill}`}>
-      <span className={`${styles.statusDot} ${classes.dot}`} />
-      <span>{icon}</span>
-      <span>{status}</span>
-    </span>
-  );
-}
-
-function formatDateDisplay(isoDate: string): string {
-  const date = new Date(`${isoDate}T00:00:00`);
-  return Number.isNaN(date.getTime()) ? isoDate : dateFormatter.format(date);
-}
-

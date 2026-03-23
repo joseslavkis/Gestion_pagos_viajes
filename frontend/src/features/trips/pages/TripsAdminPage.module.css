@@ -351,6 +351,16 @@
   font-size: 0.9rem;
 }
 
+.selectField {
+  width: 100%;
+  min-height: 40px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.8);
+  padding: 0.5rem 0.75rem;
+  background: #ffffff;
+  color: #0f2f57;
+}
+
 .idsHelper {
   margin-top: 0.35rem;
   font-size: 0.8rem;
@@ -372,6 +382,17 @@
   color: #991b1b;
   font-size: 0.82rem;
   line-height: 1.35;
+}
+
+.warningBox {
+  margin-bottom: 0.85rem;
+  padding: 0.8rem 0.9rem;
+  border-radius: 0.9rem;
+  background: rgba(255, 247, 237, 0.98);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #9a3412;
+  font-size: 0.84rem;
+  line-height: 1.45;
 }
 
 .tooltipWrapper {
@@ -418,4 +439,3 @@
     background-position: 200% 0;
   }
 }
-

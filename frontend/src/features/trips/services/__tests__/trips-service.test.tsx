@@ -53,7 +53,7 @@ describe("trips-service hooks", () => {
   describe("useTrips", () => {
     it("devuelve lista de viajes cuando la API responde 200", async () => {
       const trips = [
-        { id: 1, name: "Viaje 1", totalAmount: 1000, installmentsCount: 10, assignedUsersCount: 0 },
+        { id: 1, name: "Viaje 1", totalAmount: 1000, currency: "ARS", installmentsCount: 10, assignedUsersCount: 0 },
       ];
 
       globalThis.fetch = vi.fn().mockResolvedValue(
@@ -120,6 +120,7 @@ describe("trips-service hooks", () => {
         new Response(
           JSON.stringify({
             ...baseTrip,
+            currency: "ARS",
             id: 1,
             assignedUsersCount: 0,
           }),
@@ -172,7 +173,7 @@ describe("trips-service hooks", () => {
       const error = result.current.error as ApiError;
       expect(error).toBeInstanceOf(ApiError);
       expect(error.status).toBe(400);
-      expect(error.message).toBe("Petición inválida. Verifique los datos ingresados.");
+      expect(error.message).toBe("name: size must be between 2 and 100");
     });
   });
 
@@ -186,6 +187,7 @@ describe("trips-service hooks", () => {
             id: 3,
             name: "Nuevo nombre",
             totalAmount: 500,
+            currency: "ARS",
             installmentsCount: 5,
             dueDay: 10,
             yellowWarningDays: 3,
@@ -234,6 +236,7 @@ describe("trips-service hooks", () => {
             id: 3,
             name: "Nombre actualizado",
             totalAmount: 500,
+            currency: "ARS",
             installmentsCount: 5,
             dueDay: 10,
             yellowWarningDays: 3,
@@ -455,6 +458,7 @@ describe("trips-service hooks", () => {
             studentName: null,
             schoolName: null,
             courseName: null,
+            userCompleted: false,
             installments: [
               {
                 id: 101,
@@ -464,7 +468,11 @@ describe("trips-service hooks", () => {
                 retroactiveAmount: 0,
                 fineAmount: 0,
                 totalDue: 100,
+                paidAmount: 100,
                 status: "GREEN",
+                uiStatusCode: "PAID",
+                uiStatusLabel: "Pagada",
+                uiStatusTone: "green",
               },
             ],
           },
@@ -539,4 +547,3 @@ describe("trips-service hooks", () => {
     });
   });
 });
-

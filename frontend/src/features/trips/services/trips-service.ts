@@ -19,7 +19,7 @@ import {
   TripSummaryDTOSchema,
 } from "@/features/trips/types/trips-dtos";
 import { ApiError } from "@/lib/api-error";
-import { apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api-client";
+import { apiDelete, apiDownload, apiGet, apiPatch, apiPost } from "@/lib/api-client";
 import { useToken } from "@/lib/session";
 
 export function useTrips() {
@@ -194,4 +194,24 @@ export function useSpreadsheet(tripId: number, params: SpreadsheetParams) {
   });
 }
 
+export async function downloadSpreadsheetExcel(
+  tripId: number,
+  tripName: string,
+  accessToken: string,
+): Promise<void> {
+  const safeFilename = tripName
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .toLowerCase()
+    .slice(0, 50);
+
+  const filename = `planilla-${safeFilename || tripId}.xlsx`;
+
+  await apiDownload(`/api/v1/trips/${tripId}/spreadsheet/export`, filename, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+}
 

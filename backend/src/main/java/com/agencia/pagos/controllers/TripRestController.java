@@ -16,6 +16,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -71,9 +72,8 @@ class TripRestController {
 
     @PreAuthorize("hasRole('ADMIN')")
     @DeleteMapping(value = "/{id}", produces = "application/json")
-    @Operation(summary = "Delete a trip with no assigned users (admin only)")
+    @Operation(summary = "Delete a trip and all its assigned installments (admin only)")
     @ApiResponse(responseCode = "404", description = "Trip not found", content = @Content)
-    @ApiResponse(responseCode = "409", description = "Trip has assigned users", content = @Content)
     ResponseEntity<StatusResponseDTO> deleteTrip(@PathVariable Long id) {
         tripService.deleteTrip(id);
         return ResponseEntity.ok(new StatusResponseDTO("success", "Trip deleted"));
@@ -115,5 +115,18 @@ class TripRestController {
                         status
                 )
         );
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @GetMapping(value = "/{id}/spreadsheet/export", produces = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    @Operation(summary = "Export trip spreadsheet as Excel file (admin only)")
+    @ApiResponse(responseCode = "404", description = "Trip not found", content = @Content)
+    ResponseEntity<byte[]> exportSpreadsheet(@PathVariable Long id) {
+        byte[] excelBytes = tripService.exportSpreadsheetAsExcel(id);
+        String filename = "planilla-viaje-" + id + ".xlsx";
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .header(HttpHeaders.CONTENT_TYPE, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                .body(excelBytes);
     }
 }

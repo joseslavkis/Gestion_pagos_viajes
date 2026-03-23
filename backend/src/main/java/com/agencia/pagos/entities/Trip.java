@@ -4,6 +4,8 @@ import com.agencia.pagos.entities.user.User;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -50,6 +52,10 @@ public class Trip {
 
 	@Column(name = "first_due_date", nullable = false)
 	private LocalDate firstDueDate;
+
+	@Enumerated(EnumType.STRING)
+	@Column(nullable = false)
+	private Currency currency = Currency.ARS;
 
 	@ManyToMany
 	@JoinTable(
@@ -132,6 +138,14 @@ public class Trip {
 
 	public void setFirstDueDate(LocalDate firstDueDate) {
 		this.firstDueDate = firstDueDate;
+	}
+
+	public Currency getCurrency() {
+		return currency;
+	}
+
+	public void setCurrency(Currency currency) {
+		this.currency = currency;
 	}
 
 	public List<User> getAssignedUsers() {

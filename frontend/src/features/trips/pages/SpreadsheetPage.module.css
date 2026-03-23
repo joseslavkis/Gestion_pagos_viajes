@@ -44,6 +44,47 @@
   font-weight: 600;
 }
 
+.exportWrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+}
+
+.exportButton {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.6rem 1rem;
+  border-radius: 999px;
+  border: 1px solid rgba(22, 163, 74, 0.45);
+  background: rgba(22, 163, 74, 0.08);
+  color: #14532d;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 180ms ease, transform 180ms ease;
+}
+
+.exportButton:hover:not(:disabled) {
+  background: rgba(22, 163, 74, 0.15);
+  transform: translateY(-1px);
+}
+
+.exportButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.exportError {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #b91c1c;
+  max-width: 220px;
+}
+
 .titleBlock {
   display: flex;
   flex-direction: column;
@@ -119,7 +160,7 @@
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  table-layout: fixed;
+  table-layout: auto;
   font-size: 0.8rem;
 }
 
@@ -132,6 +173,11 @@
   border-bottom: 1px solid rgba(226, 232, 240, 0.8);
   border-right: 1px solid rgba(226, 232, 240, 0.8);
   padding: 0.4rem 0.5rem;
+  white-space: nowrap;
+}
+
+.td {
+  height: 1px;
 }
 
 .th:last-child,
@@ -143,7 +189,9 @@
   position: sticky;
   top: 0;
   z-index: 5;
-  text-align: left;
+  min-width: 110px;
+  max-width: 140px;
+  text-align: center;
   font-weight: 600;
   color: #0f2f57;
   background: rgba(248, 250, 252, 0.96);
@@ -154,7 +202,8 @@
   left: 0;
   z-index: 4;
   background: rgba(248, 250, 252, 0.98);
-  min-width: 180px;
+  min-width: 200px;
+  max-width: 220px;
 }
 
 .userCell {
@@ -162,12 +211,18 @@
   left: 0;
   z-index: 3;
   background: #ffffff;
-  min-width: 180px;
+  min-width: 200px;
+  max-width: 220px;
 }
 
 .userMain {
+  display: block;
   font-weight: 600;
   color: #0f2f57;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 190px;
 }
 
 .userSecondary {
@@ -177,12 +232,54 @@
 }
 
 .amountCell {
-  font-variant-numeric: tabular-nums;
+  display: table-cell;
+  vertical-align: top;
+  min-width: 110px;
+  max-width: 140px;
   cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding: 0.4rem 0.5rem;
+  transition: background 0.1s;
+}
+
+.amountCell:hover {
+  background: rgba(11, 119, 213, 0.06);
+}
+
+.cellContent {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  align-items: flex-start;
+}
+
+.cellAmount {
+  display: block;
+  font-weight: 600;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.cellPartial {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-top: 0.2rem;
+  font-size: 0.72rem;
+  color: #526883;
+  gap: 0.14rem;
+  line-height: 1.25;
+}
+
+.cellPartial span {
+  display: block;
+  white-space: nowrap;
 }
 
 .statusPill {
   display: inline-flex;
+  margin-top: 0.25rem;
   align-items: center;
   gap: 0.25rem;
   padding: 0.15rem 0.35rem;
@@ -191,6 +288,7 @@
   border-style: solid;
   font-size: 0.7rem;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .statusDot {
@@ -237,6 +335,30 @@
 
 .statusRetroDot {
   background: #64748b;
+}
+
+.rowEven {
+  background: #ffffff;
+}
+
+.rowOdd {
+  background: rgba(248, 250, 252, 0.7);
+}
+
+.userCellEven {
+  background: #ffffff;
+}
+
+.userCellOdd {
+  background: rgba(248, 250, 252, 0.97);
+}
+
+.quotaHeader {
+  text-align: center;
+  font-size: 0.75rem;
+  color: #475569;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .skeletonRow {
@@ -370,6 +492,16 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .titleBlock {
+    order: 2;
+    width: 100%;
+  }
+
+  .exportWrapper {
+    order: 3;
+    width: 100%;
+  }
+
   .userCol,
   .userCell {
     min-width: 160px;
@@ -389,5 +521,27 @@
   .skeletonBlock {
     animation: none;
   }
+
+  .exportButton {
+    transition: none;
+  }
+
+  .exportButton:hover:not(:disabled) {
+    transform: none;
+  }
 }
 
+
+.completedBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: rgba(22, 163, 74, 0.12);
+  border: 1px solid rgba(22, 163, 74, 0.4);
+  color: #166534;
+}

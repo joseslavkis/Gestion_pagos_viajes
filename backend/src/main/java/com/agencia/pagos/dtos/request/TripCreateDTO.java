@@ -1,5 +1,6 @@
 package com.agencia.pagos.dtos.request;
 
+import com.agencia.pagos.entities.Currency;
 import jakarta.validation.constraints.*;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -12,5 +13,19 @@ public record TripCreateDTO(
         @NotNull @Min(0) @Max(30) Integer yellowWarningDays,
         @NotNull @PositiveOrZero BigDecimal fixedFineAmount,
         @NotNull Boolean retroactiveActive,
-        @NotNull @FutureOrPresent(message = "firstDueDate must be today or in the future") LocalDate firstDueDate
-) {}
+        @NotNull Currency currency,
+        @NotNull LocalDate firstDueDate
+) {
+        public TripCreateDTO(
+                        String name,
+                        BigDecimal totalAmount,
+                        Integer installmentsCount,
+                        Integer dueDay,
+                        Integer yellowWarningDays,
+                        BigDecimal fixedFineAmount,
+                        Boolean retroactiveActive,
+                        LocalDate firstDueDate
+        ) {
+                this(name, totalAmount, installmentsCount, dueDay, yellowWarningDays, fixedFineAmount, retroactiveActive, Currency.ARS, firstDueDate);
+        }
+}

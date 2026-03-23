@@ -29,6 +29,7 @@ public class SecurityConfig {
 
     public static final String[] PUBLIC_ENDPOINTS = {
         "/api/v1/auth/**",
+        "/api/v1/contact/send",
     };
 
     public static final String[] ADMIN_ENDPOINTS = {
@@ -79,7 +80,11 @@ public class SecurityConfig {
 
     @Bean
     UrlBasedCorsConfigurationSource corsConfigurationSource() {
-        String allowedOriginsRaw = System.getenv().getOrDefault("CORS_ALLOWED_ORIGINS", "*");
+        String allowedOriginsRaw = System.getenv().getOrDefault("CORS_ALLOWED_ORIGINS", "");
+        if (allowedOriginsRaw.isBlank()) {
+            // En local sin la variable, permitir localhost de desarrollo
+            allowedOriginsRaw = "http://localhost:30005,http://localhost:5173";
+        }
         List<String> allowedOrigins = Arrays.stream(allowedOriginsRaw.split(","))
             .map(String::trim)
             .filter(origin -> !origin.isEmpty())

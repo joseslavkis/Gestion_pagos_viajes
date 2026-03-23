@@ -9,11 +9,15 @@ import com.agencia.pagos.dtos.response.SpreadsheetRowDTO;
 import com.agencia.pagos.dtos.response.SpreadsheetRowInstallmentDTO;
 import com.agencia.pagos.dtos.response.TripDetailDTO;
 import com.agencia.pagos.dtos.response.TripSummaryDTO;
+import com.agencia.pagos.entities.Currency;
 import com.agencia.pagos.entities.Installment;
 import com.agencia.pagos.entities.InstallmentStatus;
+import com.agencia.pagos.entities.PaymentReceipt;
 import com.agencia.pagos.entities.Trip;
 import com.agencia.pagos.entities.user.User;
 import com.agencia.pagos.repositories.InstallmentRepository;
+import com.agencia.pagos.repositories.InstallmentReminderNotificationRepository;
+import com.agencia.pagos.repositories.PaymentReceiptRepository;
 import com.agencia.pagos.repositories.TripRepository;
 import com.agencia.pagos.repositories.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -30,8 +34,8 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.Locale;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
@@ -44,12 +48,49 @@ public class TripService {
     private final TripRepository tripRepository;
     private final UserRepository userRepository;
     private final InstallmentRepository installmentRepository;
+    private final PaymentReceiptRepository paymentReceiptRepository;
+    private final InstallmentReminderNotificationRepository installmentReminderNotificationRepository;
+    private final InstallmentStatusResolver installmentStatusResolver;
+    private final InstallmentUiStatusResolver installmentUiStatusResolver;
+    private final TripExcelExporter tripExcelExporter;
 
     @Autowired
-    public TripService(TripRepository tripRepository, UserRepository userRepository, InstallmentRepository installmentRepository) {
+    public TripService(
+            TripRepository tripRepository,
+            UserRepository userRepository,
+            InstallmentRepository installmentRepository,
+            PaymentReceiptRepository paymentReceiptRepository,
+            InstallmentReminderNotificationRepository installmentReminderNotificationRepository,
+            InstallmentStatusResolver installmentStatusResolver,
+            InstallmentUiStatusResolver installmentUiStatusResolver,
+            TripExcelExporter tripExcelExporter
+    ) {
         this.tripRepository = tripRepository;
         this.userRepository = userRepository;
         this.installmentRepository = installmentRepository;
+        this.paymentReceiptRepository = paymentReceiptRepository;
+        this.installmentReminderNotificationRepository = installmentReminderNotificationRepository;
+        this.installmentStatusResolver = installmentStatusResolver;
+        this.installmentUiStatusResolver = installmentUiStatusResolver;
+        this.tripExcelExporter = tripExcelExporter;
+    }
+
+    // Backward-compatible constructor for tests that still instantiate TripService with 3 args.
+    public TripService(
+            TripRepository tripRepository,
+            UserRepository userRepository,
+            InstallmentRepository installmentRepository
+    ) {
+        this(
+                tripRepository,
+                userRepository,
+                installmentRepository,
+                null,
+                null,
+                new InstallmentStatusResolver(),
+                new InstallmentUiStatusResolver(),
+                new TripExcelExporter()
+        );
     }
 
     public TripDetailDTO createTrip(TripCreateDTO dto) {
@@ -61,6 +102,7 @@ public class TripService {
         trip.setYellowWarningDays(dto.yellowWarningDays());
         trip.setFixedFineAmount(dto.fixedFineAmount());
         trip.setRetroactiveActive(dto.retroactiveActive());
+        trip.setCurrency(dto.currency() == null ? Currency.ARS : dto.currency());
         trip.setFirstDueDate(dto.firstDueDate());
         tripRepository.save(trip);
         return toDetailDTO(trip);
@@ -109,9 +151,15 @@ public class TripService {
         Trip trip = tripRepository.findByIdWithUsers(id)
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + id));
 
-        if (!trip.getAssignedUsers().isEmpty()) {
-            throw new IllegalStateException("Cannot delete a trip with assigned users");
+        if (paymentReceiptRepository != null) {
+            paymentReceiptRepository.deleteByInstallmentTripId(trip.getId());
         }
+        if (installmentReminderNotificationRepository != null) {
+            installmentReminderNotificationRepository.deleteByInstallmentTripId(trip.getId());
+        }
+        installmentRepository.deleteByTripId(trip.getId());
+
+        trip.getAssignedUsers().clear();
 
         tripRepository.delete(trip);
     }
@@ -126,83 +174,16 @@ public class TripService {
             String order,
             InstallmentStatus status
     ) {
-        if (size > 100) {
-            throw new IllegalArgumentException("Page size cannot exceed 100");
-        }
+        return buildSpreadsheet(tripId, page, size, search, sortBy, order, status, true);
+    }
 
-        Trip trip = tripRepository.findByIdWithUsers(tripId)
+    @Transactional(readOnly = true)
+    public byte[] exportSpreadsheetAsExcel(Long tripId) {
+        Trip trip = tripRepository.findById(tripId)
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + tripId));
 
-        List<Installment> installments = installmentRepository.findByTripIdWithUsers(tripId);
-
-        Map<Long, List<Installment>> installmentsByUserId = installments.stream()
-                .collect(Collectors.groupingBy(i -> i.getUser().getId()));
-
-        List<SpreadsheetRowDTO> rows = trip.getAssignedUsers().stream()
-                .map(user -> {
-                    List<SpreadsheetRowInstallmentDTO> rowInstallments = installmentsByUserId
-                            .getOrDefault(user.getId(), List.of())
-                            .stream()
-                            .sorted(Comparator.comparing(Installment::getInstallmentNumber))
-                            .map(this::toSpreadsheetInstallmentDTO)
-                            .toList();
-
-                    return new SpreadsheetRowDTO(
-                            user.getId(),
-                            user.getName(),
-                            user.getLastname(),
-                            user.getPhone(),
-                            user.getEmail(),
-                            user.getStudentName(),
-                            user.getSchoolName(),
-                            user.getCourseName(),
-                            rowInstallments
-                    );
-                })
-                .toList();
-
-        String normalizedSearch = search == null ? "" : search.trim().toLowerCase(Locale.ROOT);
-        if (!normalizedSearch.isEmpty()) {
-            rows = rows.stream()
-                    .filter(row -> containsIgnoreCase(row.name(), normalizedSearch)
-                            || containsIgnoreCase(row.lastname(), normalizedSearch)
-                            || containsIgnoreCase(row.email(), normalizedSearch))
-                    .toList();
-        }
-
-        if (status != null) {
-            rows = rows.stream()
-                    .filter(row -> row.installments().stream().anyMatch(i -> i.status() == status))
-                    .toList();
-        }
-
-        Comparator<SpreadsheetRowDTO> comparator;
-        if ("name".equalsIgnoreCase(sortBy)) {
-            comparator = Comparator.comparing(row -> safeLower(row.name()));
-        } else if ("email".equalsIgnoreCase(sortBy)) {
-            comparator = Comparator.comparing(row -> safeLower(row.email()));
-        } else {
-            comparator = Comparator.comparing(row -> safeLower(row.lastname()));
-        }
-
-        if ("desc".equalsIgnoreCase(order)) {
-            comparator = comparator.reversed();
-        }
-        rows = rows.stream().sorted(comparator).toList();
-
-        int safeSize = Math.max(1, size);
-        int safePage = Math.max(0, page);
-        int fromIndex = Math.min(safePage * safeSize, rows.size());
-        int toIndex = Math.min(fromIndex + safeSize, rows.size());
-        List<SpreadsheetRowDTO> paginatedRows = rows.subList(fromIndex, toIndex);
-
-        return new SpreadsheetDTO(
-                trip.getName(),
-                trip.getInstallmentsCount(),
-                safePage,
-                (long) rows.size(),
-                paginatedRows
-        );
+        SpreadsheetDTO data = getSpreadsheetUnpaged(tripId);
+        return tripExcelExporter.export(data, trip.getCurrency().name());
     }
 
     // [C-2, A-1] Uses pessimistic lock + Argentina timezone
@@ -245,7 +226,6 @@ public class TripService {
 
         for (User user : newUsers) {
             trip.getAssignedUsers().add(user);
-            BigDecimal acumuladoRetroactivo = BigDecimal.ZERO;
 
             for (int i = 1; i <= trip.getInstallmentsCount(); i++) {
                 LocalDate rawDueDate = trip.getFirstDueDate().plusMonths(i - 1);
@@ -263,17 +243,15 @@ public class TripService {
                     installment.setInstallmentNumber(i);
                     installment.setDueDate(currentDueDate);
                     installment.setCapitalAmount(installmentCapital);
-                    installment.setRetroactiveAmount(acumuladoRetroactivo);
+                    installment.setRetroactiveAmount(BigDecimal.ZERO);
                     installment.setFineAmount(BigDecimal.ZERO);
                     installment.setStatus(InstallmentStatus.YELLOW);
                     // [A-2] Explicit call so totalDue is correct before batch save
                     installment.recalculateTotalDue();
                     installmentsToSave.add(installment);
-                    // Reset accumulator — only the first future quota receives the retroactive amount
-                    acumuladoRetroactivo = BigDecimal.ZERO;
                 } else if (trip.getRetroactiveActive()) {
                     // ── [Eje-1] Retroactividad activa: persistir la cuota pasada con status RETROACTIVE
-                    // para trazabilidad completa del historial, y acumular su capital en la primera futura.
+                    // para trazabilidad completa del historial.
                     Installment retroInstallment = new Installment();
                     retroInstallment.setTrip(trip);
                     retroInstallment.setUser(user);
@@ -285,8 +263,6 @@ public class TripService {
                     retroInstallment.setStatus(InstallmentStatus.RETROACTIVE);
                     retroInstallment.recalculateTotalDue();
                     installmentsToSave.add(retroInstallment);
-                    // Accumulate for the first upcoming installment
-                    acumuladoRetroactivo = acumuladoRetroactivo.add(installmentCapital);
                 } else {
                     // ── Retroactividad inactiva: persistir la cuota pasada en RED con multa ──
                     Installment installment = new Installment();
@@ -336,6 +312,7 @@ public class TripService {
                 trip.getId(),
                 trip.getName(),
                 trip.getTotalAmount(),
+            trip.getCurrency(),
                 trip.getInstallmentsCount(),
                 trip.getAssignedUsers().size()
         );
@@ -351,18 +328,30 @@ public class TripService {
                 trip.getYellowWarningDays(),
                 trip.getFixedFineAmount(),
                 trip.getRetroactiveActive(),
+                trip.getCurrency(),
                 trip.getFirstDueDate(),
                 trip.getAssignedUsers().size()
         );
     }
 
-    private SpreadsheetRowInstallmentDTO toSpreadsheetInstallmentDTO(Installment installment) {
+    private SpreadsheetRowInstallmentDTO toSpreadsheetInstallmentDTO(
+            Installment installment,
+            PaymentReceipt latestReceipt
+    ) {
         Trip trip = installment.getTrip();
         int yellowWarningDays = trip.getYellowWarningDays() == null ? 0 : trip.getYellowWarningDays();
         InstallmentStatus effectiveStatus = computeEffectiveStatus(
                 installment.getStatus(),
                 installment.getDueDate(),
                 yellowWarningDays
+        );
+        InstallmentUiStatus uiStatus = installmentUiStatusResolver.resolve(
+                effectiveStatus,
+                latestReceipt != null ? latestReceipt.getStatus() : null,
+                installment.getDueDate(),
+                yellowWarningDays,
+                installment.getPaidAmount(),
+                installment.getTotalDue()
         );
 
         return new SpreadsheetRowInstallmentDTO(
@@ -373,7 +362,11 @@ public class TripService {
                 installment.getRetroactiveAmount(),
                 installment.getFineAmount(),
                 installment.getTotalDue(),
-                effectiveStatus
+                installment.getPaidAmount(),
+                effectiveStatus,
+                uiStatus.code(),
+                uiStatus.label(),
+                uiStatus.tone()
         );
     }
 
@@ -382,30 +375,137 @@ public class TripService {
             LocalDate dueDate,
             int yellowWarningDays
     ) {
-        if (storedStatus == InstallmentStatus.RETROACTIVE) {
-            return InstallmentStatus.RETROACTIVE;
-        }
-
-        LocalDate today = LocalDate.now(ZoneId.of("America/Argentina/Buenos_Aires"));
-        if (dueDate.isBefore(today)) {
-            return InstallmentStatus.RED;
-        }
-
-        long daysUntilDue = dueDate.toEpochDay() - today.toEpochDay();
-        int safeYellowWarningDays = Math.max(0, yellowWarningDays);
-        if (daysUntilDue <= safeYellowWarningDays) {
-            return InstallmentStatus.YELLOW;
-        }
-
-        // Future payment states (for example, PAID) should be resolved here before date-based fallback.
-        return InstallmentStatus.GREEN;
+        return installmentStatusResolver.computeEffective(storedStatus, dueDate, yellowWarningDays);
     }
 
-    private static boolean containsIgnoreCase(String value, String search) {
-        return value != null && value.toLowerCase(Locale.ROOT).contains(search);
+    private static String normalizeSortBy(String sortBy) {
+        if ("name".equalsIgnoreCase(sortBy)) {
+            return "name";
+        }
+        if ("email".equalsIgnoreCase(sortBy)) {
+            return "email";
+        }
+        return "lastname";
     }
 
-    private static String safeLower(String value) {
-        return value == null ? "" : value.toLowerCase(Locale.ROOT);
+    private static String normalizeOrder(String order) {
+        return "desc".equalsIgnoreCase(order) ? "desc" : "asc";
+    }
+
+    private SpreadsheetDTO getSpreadsheetUnpaged(Long tripId) {
+        return buildSpreadsheet(tripId, 0, Integer.MAX_VALUE, null, "lastname", "asc", null, false);
+    }
+
+    private SpreadsheetDTO buildSpreadsheet(
+            Long tripId,
+            int page,
+            int size,
+            String search,
+            String sortBy,
+            String order,
+            InstallmentStatus status,
+            boolean enforceMaxPageSize
+    ) {
+        if (enforceMaxPageSize && size > 100) {
+            throw new IllegalArgumentException("Page size cannot exceed 100");
+        }
+
+        Trip trip = tripRepository.findById(tripId)
+                .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + tripId));
+
+        int safePage = Math.max(0, page);
+        long totalElements = installmentRepository.countFilteredUsersForSpreadsheet(tripId, search);
+        int safeSize;
+        int offset;
+        if (enforceMaxPageSize) {
+            safeSize = Math.max(1, size);
+            offset = safePage * safeSize;
+        } else {
+            safeSize = totalElements > Integer.MAX_VALUE ? Integer.MAX_VALUE : Math.max(1, (int) totalElements);
+            offset = 0;
+        }
+
+        String normalizedSortBy = normalizeSortBy(sortBy);
+        String normalizedOrder = normalizeOrder(order);
+
+        List<Object[]> pagedUsers = installmentRepository.findPagedUsersForSpreadsheet(
+                tripId,
+                search,
+                normalizedSortBy,
+                normalizedOrder,
+                safeSize,
+                offset
+        );
+
+        List<Long> userIds = pagedUsers.stream()
+                .map(row -> ((Number) row[0]).longValue())
+                .toList();
+
+        Map<Long, List<Installment>> installmentsByUserId = userIds.isEmpty()
+                ? Map.of()
+                : installmentRepository.findInstallmentsByTripAndUserIds(tripId, userIds).stream()
+                .collect(Collectors.groupingBy(i -> i.getUser().getId()));
+
+        List<Long> installmentIds = installmentsByUserId.values().stream()
+                .flatMap(List::stream)
+                .map(Installment::getId)
+                .toList();
+
+        Map<Long, PaymentReceipt> latestReceiptByInstallmentId = installmentIds.isEmpty() || paymentReceiptRepository == null
+                ? Map.of()
+                : paymentReceiptRepository.findByInstallmentIdIn(installmentIds).stream()
+                .collect(Collectors.toMap(
+                        receipt -> receipt.getInstallment().getId(),
+                        Function.identity(),
+                        (existing, ignored) -> existing
+                ));
+
+        List<SpreadsheetRowDTO> rows = pagedUsers.stream()
+                .map(row -> {
+                    Long userId = ((Number) row[0]).longValue();
+
+                    List<Installment> userInstallments = installmentsByUserId
+                            .getOrDefault(userId, List.of());
+
+                    boolean userCompleted = !userInstallments.isEmpty() && userInstallments.stream()
+                            .allMatch(i -> i.getStatus() == InstallmentStatus.GREEN);
+
+                    List<SpreadsheetRowInstallmentDTO> rowInstallments = userInstallments
+                            .stream()
+                            .sorted(Comparator.comparing(Installment::getInstallmentNumber))
+                            .map(installment -> toSpreadsheetInstallmentDTO(
+                                    installment,
+                                    latestReceiptByInstallmentId.get(installment.getId())
+                            ))
+                            .toList();
+
+                    return new SpreadsheetRowDTO(
+                            userId,
+                            row[1] == null ? null : row[1].toString(),
+                            row[2] == null ? null : row[2].toString(),
+                            row[3] == null ? null : row[3].toString(),
+                            row[4] == null ? null : row[4].toString(),
+                            row[5] == null ? null : row[5].toString(),
+                            row[6] == null ? null : row[6].toString(),
+                            row[7] == null ? null : row[7].toString(),
+                            userCompleted,
+                            rowInstallments
+                    );
+                })
+                .toList();
+
+        if (status != null) {
+            rows = rows.stream()
+                    .filter(row -> row.installments().stream().anyMatch(i -> i.status() == status))
+                    .toList();
+        }
+
+        return new SpreadsheetDTO(
+                trip.getName(),
+                trip.getInstallmentsCount(),
+                safePage,
+                totalElements,
+                rows
+        );
     }
 }

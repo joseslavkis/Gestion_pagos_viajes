@@ -2,41 +2,31 @@ import { z } from "zod";
 import { StatusResponseDTOSchema } from "@/lib/backend-dtos";
 import type { StatusResponseDTO } from "@/lib/backend-dtos";
 
-const MoneySchema = z.union([z.number(), z.string()]).transform((value, ctx) => {
-  const parsed = typeof value === "number" ? value : Number(value);
+const MoneySchema = z.union([z.string(), z.number()])
+  .transform((val) => {
+    const n = Number(val);
+    if (isNaN(n)) throw new Error(`Valor monetario inválido: ${String(val)}`);
+    return n;
+  })
+  .refine((n) => n <= Number.MAX_SAFE_INTEGER, {
+    message: "Monto excede la precisión segura de JavaScript",
+  });
 
-  if (!Number.isFinite(parsed)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "Monto inválido recibido del backend",
-    });
-    return z.NEVER;
-  }
-
-  if (Math.abs(parsed) > Number.MAX_SAFE_INTEGER) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "Monto fuera del rango seguro de JavaScript",
-    });
-    return z.NEVER;
-  }
-
-  return parsed;
-});
+export const CurrencySchema = z.enum(["ARS", "USD"]);
+export const InstallmentUiStatusCodeSchema = z.enum([
+  "PAID",
+  "UP_TO_DATE",
+  "UNDER_REVIEW",
+  "DUE_SOON",
+  "OVERDUE",
+  "RECEIPT_REJECTED",
+  "RETROACTIVE_DEBT",
+]);
+export const InstallmentUiStatusToneSchema = z.enum(["green", "yellow", "red"]);
 
 const FutureOrPresentDateSchema = z
   .string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, "Formato inválido, use YYYY-MM-DD")
-  .refine((value) => {
-    const candidate = new Date(`${value}T00:00:00`);
-    if (Number.isNaN(candidate.getTime())) {
-      return false;
-    }
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    return candidate >= today;
-  }, { message: "La primera fecha de vencimiento no puede ser en el pasado" });
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Formato inválido, use YYYY-MM-DD");
 
 // Backend DTOs:
 // - backend/src/main/java/com/agencia/pagos/dtos/response/TripDetailDTO.java
@@ -51,6 +41,7 @@ export const TripDetailDTOSchema = z.object({
   id: z.number(),
   name: z.string(),
   totalAmount: MoneySchema,
+  currency: CurrencySchema,
   installmentsCount: z.number(),
   dueDay: z.number(),
   yellowWarningDays: z.number(),
@@ -66,6 +57,7 @@ export const TripSummaryDTOSchema = z.object({
   id: z.number(),
   name: z.string(),
   totalAmount: MoneySchema,
+  currency: CurrencySchema,
   installmentsCount: z.number(),
   assignedUsersCount: z.number(),
 });
@@ -87,6 +79,7 @@ export type { StatusResponseDTO };
 export const TripCreateDTOSchema = z.object({
   name: z.string().min(2).max(100),
   totalAmount: z.number().positive().max(Number.MAX_SAFE_INTEGER),
+  currency: CurrencySchema.default("ARS"),
   installmentsCount: z.number().min(1).max(60),
   dueDay: z.number().min(1).max(31),
   yellowWarningDays: z.number().min(0).max(30),
@@ -95,7 +88,7 @@ export const TripCreateDTOSchema = z.object({
   firstDueDate: FutureOrPresentDateSchema,
 });
 
-export type TripCreateDTO = z.infer<typeof TripCreateDTOSchema>;
+export type TripCreateDTO = z.input<typeof TripCreateDTOSchema>;
 
 export const TripUpdateDTOSchema = z.object({
   name: z.string().min(2).max(100).optional(),
@@ -129,7 +122,11 @@ export const SpreadsheetRowInstallmentDTOSchema = z.object({
   retroactiveAmount: MoneySchema,
   fineAmount: MoneySchema,
   totalDue: MoneySchema,
+  paidAmount: MoneySchema,
   status: z.enum(["GREEN", "YELLOW", "RED", "RETROACTIVE"]),
+  uiStatusCode: InstallmentUiStatusCodeSchema,
+  uiStatusLabel: z.string(),
+  uiStatusTone: InstallmentUiStatusToneSchema,
 });
 
 export type SpreadsheetRowInstallmentDTO = z.infer<typeof SpreadsheetRowInstallmentDTOSchema>;
@@ -143,6 +140,7 @@ export const SpreadsheetRowDTOSchema = z.object({
   studentName: z.string().nullable(),
   schoolName: z.string().nullable(),
   courseName: z.string().nullable(),
+  userCompleted: z.boolean(),
   installments: SpreadsheetRowInstallmentDTOSchema.array(),
 });
 
@@ -169,5 +167,4 @@ export const SpreadsheetParamsSchema = z.object({
 });
 
 export type SpreadsheetParams = z.infer<typeof SpreadsheetParamsSchema>;
-
 

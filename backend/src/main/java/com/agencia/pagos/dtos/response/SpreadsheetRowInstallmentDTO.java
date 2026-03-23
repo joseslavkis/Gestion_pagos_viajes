@@ -1,6 +1,7 @@
 package com.agencia.pagos.dtos.response;
 
 import com.agencia.pagos.entities.InstallmentStatus;
+import com.agencia.pagos.entities.InstallmentUiStatusCode;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -13,7 +14,10 @@ public record SpreadsheetRowInstallmentDTO(
         BigDecimal retroactiveAmount,
         BigDecimal fineAmount,
         BigDecimal totalDue,
-        InstallmentStatus status
+        BigDecimal paidAmount,
+        InstallmentStatus status,
+        InstallmentUiStatusCode uiStatusCode,
+        String uiStatusLabel,
+        String uiStatusTone
 ) {
 }
-

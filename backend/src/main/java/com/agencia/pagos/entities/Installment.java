@@ -60,6 +60,9 @@ public class Installment {
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal totalDue = BigDecimal.ZERO;
 
+    @Column(nullable = false, precision = 10, scale = 2)
+    private BigDecimal paidAmount = BigDecimal.ZERO;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private InstallmentStatus status = InstallmentStatus.YELLOW;
@@ -72,9 +75,11 @@ public class Installment {
 
     public void recalculateTotalDue() {
         BigDecimal capital = capitalAmount == null ? BigDecimal.ZERO : capitalAmount;
-        BigDecimal retroactive = retroactiveAmount == null ? BigDecimal.ZERO : retroactiveAmount;
         BigDecimal fine = fineAmount == null ? BigDecimal.ZERO : fineAmount;
-        totalDue = capital.add(retroactive).add(fine);
+        // retroactiveAmount NO se suma al totalDue — es solo informativo.
+        // Cada cuota RETROACTIVE tiene su propio totalDue = su capitalAmount.
+        // La cascada de pagos las cubre individualmente en orden.
+        totalDue = capital.add(fine);
     }
 
     public Installment() {}
@@ -105,6 +110,9 @@ public class Installment {
 
     public BigDecimal getTotalDue() { return totalDue; }
     public void setTotalDue(BigDecimal totalDue) { this.totalDue = totalDue; }
+
+    public BigDecimal getPaidAmount() { return paidAmount; }
+    public void setPaidAmount(BigDecimal paidAmount) { this.paidAmount = paidAmount; }
 
     public InstallmentStatus getStatus() { return status; }
     public void setStatus(InstallmentStatus status) { this.status = status; }

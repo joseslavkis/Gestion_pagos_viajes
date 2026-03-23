@@ -16,7 +16,7 @@ class TripServiceComputeEffectiveStatusTest {
     private final TripService tripService = new TripService(null, null, null);
 
     @Test
-    void futuroLejano_esGreen() {
+    void futuroLejano_esYellow() {
         LocalDate today = LocalDate.now(BUSINESS_ZONE);
 
         InstallmentStatus result = invokeComputeEffectiveStatus(
@@ -25,7 +25,7 @@ class TripServiceComputeEffectiveStatusTest {
                 10
         );
 
-        assertEquals(InstallmentStatus.GREEN, result);
+        assertEquals(InstallmentStatus.YELLOW, result);
     }
 
     @Test
@@ -100,7 +100,7 @@ class TripServiceComputeEffectiveStatusTest {
                 0
         );
 
-        assertEquals(InstallmentStatus.GREEN, tomorrowResult);
+        assertEquals(InstallmentStatus.YELLOW, tomorrowResult);
         assertEquals(InstallmentStatus.YELLOW, todayResult);
         assertEquals(InstallmentStatus.RED, yesterdayResult);
     }
