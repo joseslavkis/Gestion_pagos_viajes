@@ -45,6 +45,7 @@ public class PaymentService {
     private final UserRepository userRepository;
     private final BankAccountRepository bankAccountRepository;
     private final InstallmentStatusResolver installmentStatusResolver;
+    private final InstallmentUiStatusResolver installmentUiStatusResolver;
     private final ExchangeRateService exchangeRateService;
 
     @Autowired
@@ -54,6 +55,7 @@ public class PaymentService {
             UserRepository userRepository,
             BankAccountRepository bankAccountRepository,
             InstallmentStatusResolver installmentStatusResolver,
+            InstallmentUiStatusResolver installmentUiStatusResolver,
             ExchangeRateService exchangeRateService
     ) {
         this.paymentReceiptRepository = paymentReceiptRepository;
@@ -61,6 +63,7 @@ public class PaymentService {
         this.userRepository = userRepository;
         this.bankAccountRepository = bankAccountRepository;
         this.installmentStatusResolver = installmentStatusResolver;
+        this.installmentUiStatusResolver = installmentUiStatusResolver;
         this.exchangeRateService = exchangeRateService;
     }
 
@@ -361,6 +364,17 @@ public class PaymentService {
                     int yellowDays = installment.getTrip().getYellowWarningDays() == null
                             ? 0
                             : installment.getTrip().getYellowWarningDays();
+
+                    InstallmentStatus effectiveStatus = installmentStatusResolver.computeEffective(
+                            installment.getStatus(), installment.getDueDate(), yellowDays);
+                    InstallmentUiStatus uiStatus = installmentUiStatusResolver.resolve(
+                            effectiveStatus,
+                            latestReceipt != null ? latestReceipt.getStatus() : null,
+                            installment.getDueDate(),
+                            yellowDays,
+                            installment.getPaidAmount(),
+                            installment.getTotalDue()
+                    );
                             
                     List<Installment> tripGroup = installmentsByTripId.get(installment.getTrip().getId());
                     boolean userCompletedTrip = tripGroup.stream()
@@ -375,9 +389,11 @@ public class PaymentService {
                             installment.getPaidAmount(),
                             yellowDays,
                             installment.getTrip().getCurrency(),
-                            installmentStatusResolver.computeEffective(
-                                installment.getStatus(), installment.getDueDate(), yellowDays),
+                            effectiveStatus,
                             latestReceipt != null ? latestReceipt.getStatus() : null,
+                            uiStatus.code(),
+                            uiStatus.label(),
+                            uiStatus.tone(),
                             latestReceipt != null ? latestReceipt.getAdminObservation() : null,
                             userCompletedTrip
                     );

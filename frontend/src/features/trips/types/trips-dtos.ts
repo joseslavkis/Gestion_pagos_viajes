@@ -13,6 +13,16 @@ const MoneySchema = z.union([z.string(), z.number()])
   });
 
 export const CurrencySchema = z.enum(["ARS", "USD"]);
+export const InstallmentUiStatusCodeSchema = z.enum([
+  "PAID",
+  "UP_TO_DATE",
+  "UNDER_REVIEW",
+  "DUE_SOON",
+  "OVERDUE",
+  "RECEIPT_REJECTED",
+  "RETROACTIVE_DEBT",
+]);
+export const InstallmentUiStatusToneSchema = z.enum(["green", "yellow", "red"]);
 
 const FutureOrPresentDateSchema = z
   .string()
@@ -114,6 +124,9 @@ export const SpreadsheetRowInstallmentDTOSchema = z.object({
   totalDue: MoneySchema,
   paidAmount: MoneySchema,
   status: z.enum(["GREEN", "YELLOW", "RED", "RETROACTIVE"]),
+  uiStatusCode: InstallmentUiStatusCodeSchema,
+  uiStatusLabel: z.string(),
+  uiStatusTone: InstallmentUiStatusToneSchema,
 });
 
 export type SpreadsheetRowInstallmentDTO = z.infer<typeof SpreadsheetRowInstallmentDTOSchema>;
@@ -154,5 +167,4 @@ export const SpreadsheetParamsSchema = z.object({
 });
 
 export type SpreadsheetParams = z.infer<typeof SpreadsheetParamsSchema>;
-
 

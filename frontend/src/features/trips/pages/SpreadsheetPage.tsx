@@ -11,7 +11,6 @@ import type {
   SpreadsheetRowInstallmentDTO,
 } from "@/features/trips/types/trips-dtos";
 import { ApiError } from "@/lib/api-error";
-import { resolveInstallmentBaseDisplay } from "@/lib/installment-status";
 import { useToken } from "@/lib/session";
 
 import styles from "./SpreadsheetPage.module.css";
@@ -160,8 +159,6 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
 
   const rows = data?.rows ?? [];
   const installmentsCount = data?.installmentsCount ?? 0;
-  const yellowWarningDays = tripData?.yellowWarningDays ?? 0;
-
   return (
     <CommonLayout>
       <section className={styles.page}>
@@ -315,16 +312,8 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                                 );
                               }
 
-                              const statusClass = getStatusClass(
-                                installment.status,
-                                installment.dueDate,
-                                yellowWarningDays,
-                              );
-                              const icon = getStatusIcon(
-                                installment.status,
-                                installment.dueDate,
-                                yellowWarningDays,
-                              );
+                              const statusClass = getStatusClass(installment.uiStatusTone);
+                              const icon = installment.uiStatusLabel;
 
                               return (
                                 <td
@@ -407,7 +396,6 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
             <PaymentDrawer
               installment={selected.installment}
               row={selected.row}
-              yellowWarningDays={yellowWarningDays}
               onClose={() => setSelected(null)}
             />
           ) : null}
@@ -418,30 +406,16 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
 }
 
 function getStatusClass(
-  status: SpreadsheetRowInstallmentDTO["status"],
-  dueDate: string,
-  yellowWarningDays: number,
+  tone: SpreadsheetRowInstallmentDTO["uiStatusTone"],
 ): { pill: string; dot: string } {
-  const display = resolveInstallmentBaseDisplay(status, dueDate, yellowWarningDays);
-
-  switch (display.tone) {
+  switch (tone) {
     case "green":
       return { pill: styles.statusGreen, dot: styles.statusGreenDot };
     case "yellow":
       return { pill: styles.statusYellow, dot: styles.statusYellowDot };
     case "red":
       return { pill: styles.statusRed, dot: styles.statusRedDot };
-    case "retro":
-      return { pill: styles.statusRetro, dot: styles.statusRetroDot };
     default:
       return { pill: "", dot: "" };
   }
-}
-
-function getStatusIcon(
-  status: SpreadsheetRowInstallmentDTO["status"],
-  dueDate: string,
-  yellowWarningDays: number,
-): string {
-  return resolveInstallmentBaseDisplay(status, dueDate, yellowWarningDays).label;
 }

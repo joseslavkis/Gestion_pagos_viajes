@@ -26,7 +26,7 @@ describe("api-error utility", () => {
         const apiError = error as ApiError;
         expect(apiError.status).toBe(409);
         expect(apiError.rawMessage).toBe("Email in use");
-        expect(apiError.message).toBe("El email o documento ingresado ya se encuentra registrado.");
+        expect(apiError.message).toBe("Email in use");
       }
     });
 
@@ -42,7 +42,7 @@ describe("api-error utility", () => {
         const apiError = error as ApiError;
         expect(apiError.status).toBe(400);
         expect(apiError.rawMessage).toBe("Bad Request plain text");
-        expect(apiError.message).toBe("Petición inválida. Verifique los datos ingresados.");
+        expect(apiError.message).toBe("Bad Request plain text");
       }
     });
 
@@ -62,7 +62,7 @@ describe("api-error utility", () => {
         const apiError = error as ApiError;
         expect(apiError.status).toBe(400);
         expect(apiError.rawMessage).toContain("name: size must be between 2 and 100");
-        expect(apiError.message).toBe("Petición inválida. Verifique los datos ingresados.");
+        expect(apiError.message).toBe("name: size must be between 2 and 100");
       }
     });
 

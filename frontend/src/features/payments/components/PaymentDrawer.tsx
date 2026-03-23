@@ -13,7 +13,6 @@ import type {
   SpreadsheetRowDTO,
   SpreadsheetRowInstallmentDTO,
 } from "@/features/trips/types/trips-dtos";
-import { resolveInstallmentBaseDisplay } from "@/lib/installment-status";
 
 import styles from "@/features/trips/pages/SpreadsheetPage.module.css";
 
@@ -57,11 +56,10 @@ function formatDate(isoDate: string): string {
 type PaymentDrawerProps = {
   installment: SpreadsheetRowInstallmentDTO;
   row: SpreadsheetRowDTO;
-  yellowWarningDays: number;
   onClose: () => void;
 };
 
-export function PaymentDrawer({ installment, row, yellowWarningDays, onClose }: PaymentDrawerProps) {
+export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps) {
   const {
     data: receipts,
     isLoading: isReceiptsLoading,
@@ -166,7 +164,7 @@ export function PaymentDrawer({ installment, row, yellowWarningDays, onClose }: 
                 Vencimiento: <span className={styles.strong}>{formatDate(installment.dueDate)}</span>
               </div>
               <div>
-                Estado: <StatusBadge status={installment.status} dueDate={installment.dueDate} yellowWarningDays={yellowWarningDays} />
+                Estado: <StatusBadge tone={installment.uiStatusTone} label={installment.uiStatusLabel} />
               </div>
             </div>
           </section>
@@ -301,14 +299,12 @@ export function PaymentDrawer({ installment, row, yellowWarningDays, onClose }: 
 }
 
 type StatusBadgeProps = {
-  status: SpreadsheetRowInstallmentDTO["status"];
-  dueDate: string;
-  yellowWarningDays: number;
+  tone: SpreadsheetRowInstallmentDTO["uiStatusTone"];
+  label: SpreadsheetRowInstallmentDTO["uiStatusLabel"];
 };
 
-function StatusBadge({ status, dueDate, yellowWarningDays }: StatusBadgeProps) {
-  const classes = getStatusClass(status, dueDate, yellowWarningDays);
-  const label = getStatusIcon(status, dueDate, yellowWarningDays);
+function StatusBadge({ tone, label }: StatusBadgeProps) {
+  const classes = getStatusClass(tone);
 
   return (
     <span className={`${styles.statusPill} ${classes.pill}`}>
@@ -319,30 +315,16 @@ function StatusBadge({ status, dueDate, yellowWarningDays }: StatusBadgeProps) {
 }
 
 function getStatusClass(
-  status: SpreadsheetRowInstallmentDTO["status"],
-  dueDate: string,
-  yellowWarningDays: number,
+  tone: SpreadsheetRowInstallmentDTO["uiStatusTone"],
 ): { pill: string; dot: string } {
-  const display = resolveInstallmentBaseDisplay(status, dueDate, yellowWarningDays);
-
-  switch (display.tone) {
+  switch (tone) {
     case "green":
       return { pill: styles.statusGreen, dot: styles.statusGreenDot };
     case "yellow":
       return { pill: styles.statusYellow, dot: styles.statusYellowDot };
     case "red":
       return { pill: styles.statusRed, dot: styles.statusRedDot };
-    case "retro":
-      return { pill: styles.statusRetro, dot: styles.statusRetroDot };
     default:
       return { pill: "", dot: "" };
   }
-}
-
-function getStatusIcon(
-  status: SpreadsheetRowInstallmentDTO["status"],
-  dueDate: string,
-  yellowWarningDays: number,
-): string {
-  return resolveInstallmentBaseDisplay(status, dueDate, yellowWarningDays).label;
 }

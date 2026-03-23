@@ -10,6 +10,20 @@ export type PaymentMethod = z.infer<typeof PaymentMethodSchema>;
 export const ReceiptStatusSchema = z.enum(["PENDING", "APPROVED", "REJECTED"]);
 export type ReceiptStatus = z.infer<typeof ReceiptStatusSchema>;
 
+export const InstallmentUiStatusCodeSchema = z.enum([
+  "PAID",
+  "UP_TO_DATE",
+  "UNDER_REVIEW",
+  "DUE_SOON",
+  "OVERDUE",
+  "RECEIPT_REJECTED",
+  "RETROACTIVE_DEBT",
+]);
+export type InstallmentUiStatusCode = z.infer<typeof InstallmentUiStatusCodeSchema>;
+
+export const InstallmentUiStatusToneSchema = z.enum(["green", "yellow", "red"]);
+export type InstallmentUiStatusTone = z.infer<typeof InstallmentUiStatusToneSchema>;
+
 export const PaymentReceiptDTOSchema = z.object({
   id: z.number(),
   installmentId: z.number(),
@@ -39,8 +53,9 @@ export const UserInstallmentDTOSchema = z.object({
   paidAmount: MoneySchema,
   yellowWarningDays: z.number().int().nonnegative(),
   tripCurrency: CurrencySchema,
-  installmentStatus: z.enum(["GREEN", "YELLOW", "RED", "RETROACTIVE"]),
-  latestReceiptStatus: ReceiptStatusSchema.nullable(),
+  uiStatusCode: InstallmentUiStatusCodeSchema,
+  uiStatusLabel: z.string(),
+  uiStatusTone: InstallmentUiStatusToneSchema,
   latestReceiptObservation: z.string().nullable(),
   userCompletedTrip: z.boolean(),
 });

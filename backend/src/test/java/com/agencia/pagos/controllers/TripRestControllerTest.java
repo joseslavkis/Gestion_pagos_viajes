@@ -734,6 +734,9 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                     .header("Authorization", "Bearer " + adminTokens.accessToken()))
                 .andExpect(status().isOk())
             .andExpect(jsonPath("$.rows[0].installments[0].status").value("YELLOW"))
+            .andExpect(jsonPath("$.rows[0].installments[0].uiStatusCode").value("UP_TO_DATE"))
+            .andExpect(jsonPath("$.rows[0].installments[0].uiStatusLabel").value("Al día"))
+            .andExpect(jsonPath("$.rows[0].installments[0].uiStatusTone").value("green"))
             .andExpect(jsonPath("$.rows[0].installments[1].status").value("YELLOW"))
             .andExpect(jsonPath("$.rows[0].installments[2].status").value("YELLOW"));    }
 
@@ -766,7 +769,58 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             mockMvc.perform(get("/api/v1/trips/{id}/spreadsheet", trip.getId())
                     .header("Authorization", "Bearer " + adminTokens.accessToken()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.rows[0].installments[0].status").value("RED"));
+                .andExpect(jsonPath("$.rows[0].installments[0].status").value("RED"))
+                .andExpect(jsonPath("$.rows[0].installments[0].uiStatusCode").value("OVERDUE"))
+                .andExpect(jsonPath("$.rows[0].installments[0].uiStatusLabel").value("Vencida"))
+                .andExpect(jsonPath("$.rows[0].installments[0].uiStatusTone").value("red"));
+            }
+
+            @Test
+            void getSpreadsheet_conComprobantePendiente_devuelveUiStatusUnderReview() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-spreadsheet-under-review"));
+
+            UserCreateDTO userDto = buildValidUser("user-spreadsheet-under-review");
+            signUp(userDto);
+            User user = userRepository.findByEmail(userDto.email()).orElseThrow();
+
+            Trip trip = buildTripForBulk(
+                "Trip Spreadsheet Under Review",
+                BigDecimal.valueOf(4000),
+                1,
+                10,
+                BigDecimal.valueOf(100),
+                false,
+                LocalDate.now().plusDays(2)
+            );
+
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(user.getId()));
+
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                    .header("Authorization", "Bearer " + adminTokens.accessToken())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assignedCount").value(1));
+
+            Installment installment = installmentRepository.findByTripIdWithUsers(trip.getId()).stream()
+                    .findFirst()
+                    .orElseThrow();
+
+            paymentReceiptRepository.save(PaymentReceipt.builder()
+                    .installment(installment)
+                    .reportedAmount(BigDecimal.valueOf(4000))
+                    .reportedPaymentDate(LocalDate.now())
+                    .paymentMethod(PaymentMethod.BANK_TRANSFER)
+                    .status(com.agencia.pagos.entities.ReceiptStatus.PENDING)
+                    .fileKey("")
+                    .build());
+
+            mockMvc.perform(get("/api/v1/trips/{id}/spreadsheet", trip.getId())
+                    .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rows[0].installments[0].uiStatusCode").value("UNDER_REVIEW"))
+                .andExpect(jsonPath("$.rows[0].installments[0].uiStatusLabel").value("En revisión"))
+                .andExpect(jsonPath("$.rows[0].installments[0].uiStatusTone").value("yellow"));
             }
 
             @Test

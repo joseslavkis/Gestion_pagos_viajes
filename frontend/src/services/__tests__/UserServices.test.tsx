@@ -63,7 +63,7 @@ describe("UserServices Hook Error Handling", () => {
       const error = result.current.error as ApiError;
       expect(error).toBeInstanceOf(ApiError);
       expect(error.status).toBe(409);
-      expect(error.message).toBe("El email o documento ingresado ya se encuentra registrado.");
+      expect(error.message).toBe("Email already taken");
     });
   });
 

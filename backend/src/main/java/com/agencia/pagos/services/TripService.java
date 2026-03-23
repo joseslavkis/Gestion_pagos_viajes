@@ -12,6 +12,7 @@ import com.agencia.pagos.dtos.response.TripSummaryDTO;
 import com.agencia.pagos.entities.Currency;
 import com.agencia.pagos.entities.Installment;
 import com.agencia.pagos.entities.InstallmentStatus;
+import com.agencia.pagos.entities.PaymentReceipt;
 import com.agencia.pagos.entities.Trip;
 import com.agencia.pagos.entities.user.User;
 import com.agencia.pagos.repositories.InstallmentRepository;
@@ -30,9 +31,11 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
@@ -48,6 +51,7 @@ public class TripService {
     private final PaymentReceiptRepository paymentReceiptRepository;
     private final InstallmentReminderNotificationRepository installmentReminderNotificationRepository;
     private final InstallmentStatusResolver installmentStatusResolver;
+    private final InstallmentUiStatusResolver installmentUiStatusResolver;
     private final TripExcelExporter tripExcelExporter;
 
     @Autowired
@@ -58,6 +62,7 @@ public class TripService {
             PaymentReceiptRepository paymentReceiptRepository,
             InstallmentReminderNotificationRepository installmentReminderNotificationRepository,
             InstallmentStatusResolver installmentStatusResolver,
+            InstallmentUiStatusResolver installmentUiStatusResolver,
             TripExcelExporter tripExcelExporter
     ) {
         this.tripRepository = tripRepository;
@@ -66,6 +71,7 @@ public class TripService {
         this.paymentReceiptRepository = paymentReceiptRepository;
         this.installmentReminderNotificationRepository = installmentReminderNotificationRepository;
         this.installmentStatusResolver = installmentStatusResolver;
+        this.installmentUiStatusResolver = installmentUiStatusResolver;
         this.tripExcelExporter = tripExcelExporter;
     }
 
@@ -82,6 +88,7 @@ public class TripService {
                 null,
                 null,
                 new InstallmentStatusResolver(),
+                new InstallmentUiStatusResolver(),
                 new TripExcelExporter()
         );
     }
@@ -327,13 +334,24 @@ public class TripService {
         );
     }
 
-    private SpreadsheetRowInstallmentDTO toSpreadsheetInstallmentDTO(Installment installment) {
+    private SpreadsheetRowInstallmentDTO toSpreadsheetInstallmentDTO(
+            Installment installment,
+            PaymentReceipt latestReceipt
+    ) {
         Trip trip = installment.getTrip();
         int yellowWarningDays = trip.getYellowWarningDays() == null ? 0 : trip.getYellowWarningDays();
         InstallmentStatus effectiveStatus = computeEffectiveStatus(
                 installment.getStatus(),
                 installment.getDueDate(),
                 yellowWarningDays
+        );
+        InstallmentUiStatus uiStatus = installmentUiStatusResolver.resolve(
+                effectiveStatus,
+                latestReceipt != null ? latestReceipt.getStatus() : null,
+                installment.getDueDate(),
+                yellowWarningDays,
+                installment.getPaidAmount(),
+                installment.getTotalDue()
         );
 
         return new SpreadsheetRowInstallmentDTO(
@@ -345,7 +363,10 @@ public class TripService {
                 installment.getFineAmount(),
                 installment.getTotalDue(),
                 installment.getPaidAmount(),
-                effectiveStatus
+                effectiveStatus,
+                uiStatus.code(),
+                uiStatus.label(),
+                uiStatus.tone()
         );
     }
 
@@ -425,6 +446,20 @@ public class TripService {
                 : installmentRepository.findInstallmentsByTripAndUserIds(tripId, userIds).stream()
                 .collect(Collectors.groupingBy(i -> i.getUser().getId()));
 
+        List<Long> installmentIds = installmentsByUserId.values().stream()
+                .flatMap(List::stream)
+                .map(Installment::getId)
+                .toList();
+
+        Map<Long, PaymentReceipt> latestReceiptByInstallmentId = installmentIds.isEmpty() || paymentReceiptRepository == null
+                ? Map.of()
+                : paymentReceiptRepository.findByInstallmentIdIn(installmentIds).stream()
+                .collect(Collectors.toMap(
+                        receipt -> receipt.getInstallment().getId(),
+                        Function.identity(),
+                        (existing, ignored) -> existing
+                ));
+
         List<SpreadsheetRowDTO> rows = pagedUsers.stream()
                 .map(row -> {
                     Long userId = ((Number) row[0]).longValue();
@@ -437,8 +472,11 @@ public class TripService {
 
                     List<SpreadsheetRowInstallmentDTO> rowInstallments = userInstallments
                             .stream()
-                            .sorted((a, b) -> Integer.compare(a.getInstallmentNumber(), b.getInstallmentNumber()))
-                            .map(this::toSpreadsheetInstallmentDTO)
+                            .sorted(Comparator.comparing(Installment::getInstallmentNumber))
+                            .map(installment -> toSpreadsheetInstallmentDTO(
+                                    installment,
+                                    latestReceiptByInstallmentId.get(installment.getId())
+                            ))
                             .toList();
 
                     return new SpreadsheetRowDTO(

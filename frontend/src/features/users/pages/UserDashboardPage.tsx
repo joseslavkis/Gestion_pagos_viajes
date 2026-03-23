@@ -14,7 +14,6 @@ import type {
   PaymentMethod,
   UserInstallmentDTO,
 } from "@/features/payments/types/payments-dtos";
-import { resolveInstallmentBaseDisplay } from "@/lib/installment-status";
 
 import styles from "./UserDashboardPage.module.css";
 
@@ -51,38 +50,9 @@ function resolveInstallmentDisplay(dto: UserInstallmentDTO): {
   color: "green" | "yellow" | "red";
   label: string;
 } {
-  if (dto.latestReceiptStatus === "REJECTED") {
-    return { color: "red", label: "Comprobante rechazado" };
-  }
-
-  if (dto.latestReceiptStatus === "PENDING") {
-    return { color: "yellow", label: "En revisión" };
-  }
-
-  if (dto.installmentStatus === "RETROACTIVE") {
-    return { color: "red", label: "Deuda retroactiva" };
-  }
-
-  if (dto.installmentStatus === "RED") {
-    return { color: "red", label: "Vencida" };
-  }
-
-  if (dto.installmentStatus === "GREEN") {
-    if (dto.latestReceiptStatus === "APPROVED") {
-      return { color: "green", label: "Pagada" };
-    }
-    return { color: "green", label: "Al día" };
-  }
-
-  const display = resolveInstallmentBaseDisplay(
-    dto.installmentStatus,
-    dto.dueDate,
-    dto.yellowWarningDays,
-  );
-
   return {
-    color: display.tone === "retro" ? "red" : display.tone,
-    label: display.label,
+    color: dto.uiStatusTone,
+    label: dto.uiStatusLabel,
   };
 }
 
@@ -110,7 +80,7 @@ function buildInstallmentGroups(installments: UserInstallmentDTO[]): Installment
 }
 
 function getGroupBadgeColor(group: InstallmentGroup): "green" | "yellow" | "red" {
-  const colors = group.installments.map((installment) => resolveInstallmentDisplay(installment).color);
+  const colors = group.installments.map((installment) => installment.uiStatusTone);
   if (colors.includes("red")) {
     return "red";
   }
@@ -124,9 +94,9 @@ function getGroupBadgeColor(group: InstallmentGroup): "green" | "yellow" | "red"
 
 function findNextDueDate(group: InstallmentGroup): string | null {
   const pending = group.installments.filter(
-    (i) =>
-      i.latestReceiptStatus !== "APPROVED" &&
-      i.installmentStatus !== "GREEN",
+    (installment) =>
+      installment.uiStatusCode !== "PAID" &&
+      !(installment.uiStatusCode === "UP_TO_DATE" && installment.paidAmount >= installment.totalDue),
   );
   if (pending.length === 0) {
     return group.installments[group.installments.length - 1]?.dueDate ?? null;
@@ -140,9 +110,8 @@ function findPendingInstallment(group: InstallmentGroup): UserInstallmentDTO | n
   const pending = group.installments
     .filter(
       (installment) =>
-        installment.installmentStatus !== "GREEN" &&
-        installment.latestReceiptStatus !== "APPROVED" &&
-        installment.latestReceiptStatus !== "PENDING",
+        installment.uiStatusCode !== "PAID" &&
+        installment.uiStatusCode !== "UNDER_REVIEW",
     )
     .sort((a, b) => {
       if (a.dueDate === b.dueDate) {
@@ -467,7 +436,9 @@ export function UserDashboardPage() {
                                 </div>
 
                                 <p className={styles.chipMeta}>{currencyFormatter.format(installment.totalDue)}</p>
-                                {installment.paidAmount > 0 && installment.installmentStatus !== "GREEN" ? (
+                                {installment.paidAmount > 0 &&
+                                installment.uiStatusCode !== "PAID" &&
+                                getInstallmentRemainingAmount(installment) > 0 ? (
                                   <p className={styles.chipMeta}>
                                     Abonado: {formatInstallmentAmount(installment, installment.paidAmount)} · Resta:{" "}
                                     {formatInstallmentAmount(
@@ -480,14 +451,14 @@ export function UserDashboardPage() {
                                   Vence: {formatReportedDate(installment.dueDate)}
                                 </p>
 
-                                {installment.latestReceiptStatus === "REJECTED" &&
+                                {installment.uiStatusCode === "RECEIPT_REJECTED" &&
                                 installment.latestReceiptObservation ? (
                                   <p className={styles.rejectedObservation}>
                                     ⚠ {installment.latestReceiptObservation}
                                   </p>
                                 ) : null}
 
-                                {installment.latestReceiptStatus === "PENDING" ? (
+                                {installment.uiStatusCode === "UNDER_REVIEW" ? (
                                   <p className={styles.pendingObservation}>
                                     Tu comprobante está siendo revisado por el administrador
                                   </p>

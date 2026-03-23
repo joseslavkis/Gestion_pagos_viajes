@@ -13,6 +13,14 @@ import java.time.format.DateTimeFormatter;
 @Service
 public class ExchangeRateService {
 
+    private final RestClient restClient;
+    private final ObjectMapper objectMapper;
+
+    public ExchangeRateService() {
+        this.restClient = RestClient.create();
+        this.objectMapper = new ObjectMapper();
+    }
+
     public BigDecimal getOfficialRateForDate(LocalDate date) {
         try {
             LocalDate today = LocalDate.now(ZoneId.of("America/Argentina/Buenos_Aires"));
@@ -25,14 +33,12 @@ public class ExchangeRateService {
                 url = "https://dolarapi.com/v1/historico/dolares/oficial/" + formatted;
             }
 
-            RestClient restClient = RestClient.create();
             String response = restClient.get()
                     .uri(url)
                     .retrieve()
                     .body(String.class);
 
-            ObjectMapper mapper = new ObjectMapper();
-            JsonNode node = mapper.readTree(response);
+            JsonNode node = objectMapper.readTree(response);
 
             BigDecimal venta;
             if (node.isArray()) {

@@ -3,7 +3,7 @@ package com.agencia.pagos.services;
 import com.agencia.pagos.dtos.response.SpreadsheetDTO;
 import com.agencia.pagos.dtos.response.SpreadsheetRowDTO;
 import com.agencia.pagos.dtos.response.SpreadsheetRowInstallmentDTO;
-import com.agencia.pagos.entities.InstallmentStatus;
+import com.agencia.pagos.entities.InstallmentUiStatusCode;
 import org.apache.poi.ss.usermodel.BorderStyle;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellStyle;
@@ -47,9 +47,7 @@ public class TripExcelExporter {
             CellStyle completedOddStyle = createDataRowStyle(workbook, "#d4edda");
             CellStyle amountEvenStyle = createAmountStyle(workbook, "#ffffff", currencyCode);
             CellStyle amountOddStyle = createAmountStyle(workbook, "#f0f7ff", currencyCode);
-
-            Map<InstallmentStatus, CellStyle> evenStatusStyles = createStatusStyles(workbook, true);
-            Map<InstallmentStatus, CellStyle> oddStatusStyles = createStatusStyles(workbook, false);
+            Map<InstallmentUiStatusCode, CellStyle> statusStyles = createStatusStyles(workbook);
 
             var row0 = sheet.createRow(0);
             var row1 = sheet.createRow(1);
@@ -111,7 +109,6 @@ public class TripExcelExporter {
                 CellStyle baseStyle = odd ? rowOddStyle : rowEvenStyle;
                 CellStyle completedStyle = odd ? completedOddStyle : completedEvenStyle;
                 CellStyle amountStyle = odd ? amountOddStyle : amountEvenStyle;
-                Map<InstallmentStatus, CellStyle> statusStyles = odd ? oddStatusStyles : evenStatusStyles;
 
                 var row = sheet.createRow(rowIndex);
 
@@ -139,8 +136,8 @@ public class TripExcelExporter {
                     String dueDate = installment.dueDate() == null ? "" : installment.dueDate().format(DATE_FORMATTER);
                     writeTextCell(row, baseCol, dueDate, baseStyle);
                     writeNumberCell(row, baseCol + 1, installment.totalDue(), amountStyle);
-                    writeTextCell(row, baseCol + 2, toStatusLabel(installment.status()),
-                            statusStyles.getOrDefault(installment.status(), baseStyle));
+                    writeTextCell(row, baseCol + 2, installment.uiStatusLabel(),
+                            statusStyles.getOrDefault(installment.uiStatusCode(), baseStyle));
                 }
 
                 rowIndex++;
@@ -243,18 +240,20 @@ public class TripExcelExporter {
 
     private static CellStyle createAmountStyle(XSSFWorkbook workbook, String backgroundHex, String currencyCode) {
         XSSFCellStyle style = (XSSFCellStyle) createDataRowStyle(workbook, backgroundHex);
-        String format = "USD".equalsIgnoreCase(currencyCode) ? "#,##0.00" : "#,##0.00";
+        String format = "#,##0.00";
         style.setDataFormat(workbook.createDataFormat().getFormat(format));
         return style;
     }
 
-    private static Map<InstallmentStatus, CellStyle> createStatusStyles(XSSFWorkbook workbook, boolean evenRow) {
-        Map<InstallmentStatus, CellStyle> styles = new HashMap<>();
-        String fallback = evenRow ? "#ffffff" : "#f0f7ff";
-        styles.put(InstallmentStatus.GREEN, createStatusStyle(workbook, "#d4edda", "#155724"));
-        styles.put(InstallmentStatus.YELLOW, createStatusStyle(workbook, "#fff3cd", "#856404"));
-        styles.put(InstallmentStatus.RED, createStatusStyle(workbook, "#f8d7da", "#721c24"));
-        styles.put(InstallmentStatus.RETROACTIVE, createStatusStyle(workbook, "#e2e8f0", "#334155"));
+    private static Map<InstallmentUiStatusCode, CellStyle> createStatusStyles(XSSFWorkbook workbook) {
+        Map<InstallmentUiStatusCode, CellStyle> styles = new HashMap<>();
+        styles.put(InstallmentUiStatusCode.PAID, createStatusStyle(workbook, "#d4edda", "#155724"));
+        styles.put(InstallmentUiStatusCode.UP_TO_DATE, createStatusStyle(workbook, "#d4edda", "#155724"));
+        styles.put(InstallmentUiStatusCode.UNDER_REVIEW, createStatusStyle(workbook, "#fff3cd", "#856404"));
+        styles.put(InstallmentUiStatusCode.DUE_SOON, createStatusStyle(workbook, "#fff3cd", "#856404"));
+        styles.put(InstallmentUiStatusCode.OVERDUE, createStatusStyle(workbook, "#f8d7da", "#721c24"));
+        styles.put(InstallmentUiStatusCode.RECEIPT_REJECTED, createStatusStyle(workbook, "#f8d7da", "#721c24"));
+        styles.put(InstallmentUiStatusCode.RETROACTIVE_DEBT, createStatusStyle(workbook, "#e2e8f0", "#334155"));
         return styles;
     }
 
@@ -266,18 +265,6 @@ public class TripExcelExporter {
         style.setFont(font);
         style.setAlignment(HorizontalAlignment.CENTER);
         return style;
-    }
-
-    private static String toStatusLabel(InstallmentStatus status) {
-        if (status == null) {
-            return "";
-        }
-        return switch (status) {
-            case GREEN -> "Pagada";
-            case YELLOW -> "Pendiente";
-            case RED -> "Vencida";
-            case RETROACTIVE -> "Retroactiva";
-        };
     }
 
     private static String safeSheetName(String tripName) {
