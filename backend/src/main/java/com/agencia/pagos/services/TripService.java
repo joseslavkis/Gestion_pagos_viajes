@@ -13,11 +13,13 @@ import com.agencia.pagos.entities.Currency;
 import com.agencia.pagos.entities.Installment;
 import com.agencia.pagos.entities.InstallmentStatus;
 import com.agencia.pagos.entities.PaymentReceipt;
+import com.agencia.pagos.entities.Student;
 import com.agencia.pagos.entities.Trip;
 import com.agencia.pagos.entities.user.User;
 import com.agencia.pagos.repositories.InstallmentRepository;
 import com.agencia.pagos.repositories.InstallmentReminderNotificationRepository;
 import com.agencia.pagos.repositories.PaymentReceiptRepository;
+import com.agencia.pagos.repositories.StudentRepository;
 import com.agencia.pagos.repositories.TripRepository;
 import com.agencia.pagos.repositories.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -32,6 +34,7 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -42,11 +45,14 @@ import java.util.stream.Collectors;
 @Transactional
 public class TripService {
 
+    private record SpreadsheetParticipantKey(Long userId, Long studentId) {}
+
     // [A-1] Use Argentina's business timezone for all "today" comparisons
     private static final ZoneId BUSINESS_ZONE = ZoneId.of("America/Argentina/Buenos_Aires");
 
     private final TripRepository tripRepository;
     private final UserRepository userRepository;
+    private final StudentRepository studentRepository;
     private final InstallmentRepository installmentRepository;
     private final PaymentReceiptRepository paymentReceiptRepository;
     private final InstallmentReminderNotificationRepository installmentReminderNotificationRepository;
@@ -58,6 +64,7 @@ public class TripService {
     public TripService(
             TripRepository tripRepository,
             UserRepository userRepository,
+            StudentRepository studentRepository,
             InstallmentRepository installmentRepository,
             PaymentReceiptRepository paymentReceiptRepository,
             InstallmentReminderNotificationRepository installmentReminderNotificationRepository,
@@ -67,6 +74,7 @@ public class TripService {
     ) {
         this.tripRepository = tripRepository;
         this.userRepository = userRepository;
+        this.studentRepository = studentRepository;
         this.installmentRepository = installmentRepository;
         this.paymentReceiptRepository = paymentReceiptRepository;
         this.installmentReminderNotificationRepository = installmentReminderNotificationRepository;
@@ -84,6 +92,7 @@ public class TripService {
         this(
                 tripRepository,
                 userRepository,
+                null,
                 installmentRepository,
                 null,
                 null,
@@ -188,73 +197,76 @@ public class TripService {
 
     // [C-2, A-1] Uses pessimistic lock + Argentina timezone
     public BulkAssignResultDTO assignUsersInBulk(Long tripId, UserAssignBulkDTO dto) {
-        // [C-2] Pessimistic lock to avoid race conditions on concurrent bulk assignments
         Trip trip = tripRepository.findByIdForUpdate(tripId)
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found"));
 
-        // [Eje-3] Batch load: recover all users in a single WHERE id IN (...) query
-        Set<Long> alreadyAssignedIds = trip.getAssignedUsers().stream()
-                .map(User::getId)
-                .collect(Collectors.toSet());
-
-        List<Long> candidateIds = dto.userIds().stream()
-                .filter(id -> !alreadyAssignedIds.contains(id))
-                .collect(Collectors.toList());
-
-        if (candidateIds.isEmpty()) {
-            return new BulkAssignResultDTO("success", "All users were already assigned", 0);
+        if (studentRepository == null) {
+            throw new IllegalStateException("StudentRepository is not available");
         }
 
-        Map<Long, User> foundUsersById = userRepository.findAllByIdIn(candidateIds).stream()
-                .collect(Collectors.toMap(User::getId, u -> u));
+        List<String> requestedDnis = dto.studentDnis().stream()
+                .map(String::trim)
+                .toList();
 
-        // Validate that every requested user exists
-        for (Long requestedId : candidateIds) {
-            if (!foundUsersById.containsKey(requestedId)) {
-                throw new EntityNotFoundException("User not found: " + requestedId);
+        Map<String, Student> studentsByDni = studentRepository.findByDniIn(requestedDnis).stream()
+                .collect(Collectors.toMap(Student::getDni, Function.identity()));
+
+        for (String requestedDni : requestedDnis) {
+            if (!studentsByDni.containsKey(requestedDni)) {
+                throw new EntityNotFoundException("Alumno no encontrado con DNI: " + requestedDni);
             }
         }
 
-        List<User> newUsers = new ArrayList<>(foundUsersById.values());
+        Set<Long> alreadyAssignedParentIds = trip.getAssignedUsers().stream()
+                .map(User::getId)
+                .collect(Collectors.toSet());
+        Set<Long> alreadyAssignedStudentIds = new HashSet<>(installmentRepository.findAssignedStudentIdsByTripId(tripId));
 
-        // [C-1] Distribute total amount to avoid losing cents (last installment absorbs remainder)
+        List<Student> studentsToAssign = requestedDnis.stream()
+                .map(studentsByDni::get)
+                .filter(student -> !alreadyAssignedStudentIds.contains(student.getId()))
+                .toList();
+
+        if (studentsToAssign.isEmpty()) {
+            return new BulkAssignResultDTO("success", "All students were already assigned", 0);
+        }
+
         List<BigDecimal> amounts = splitAmount(trip.getTotalAmount(), trip.getInstallmentsCount());
 
         List<Installment> installmentsToSave = new ArrayList<>();
-        // [A-1] Use Argentina timezone for "today"
         LocalDate now = LocalDate.now(BUSINESS_ZONE);
 
-        for (User user : newUsers) {
-            trip.getAssignedUsers().add(user);
+        for (Student student : studentsToAssign) {
+            User user = student.getParent();
+            if (!alreadyAssignedParentIds.contains(user.getId())) {
+                trip.getAssignedUsers().add(user);
+                alreadyAssignedParentIds.add(user.getId());
+            }
 
             for (int i = 1; i <= trip.getInstallmentsCount(); i++) {
                 LocalDate rawDueDate = trip.getFirstDueDate().plusMonths(i - 1);
                 int validDay = Math.min(trip.getDueDay(), rawDueDate.lengthOfMonth());
                 LocalDate currentDueDate = rawDueDate.withDayOfMonth(validDay);
-
-                // [C-1] Per-installment amount from the pre-split list
                 BigDecimal installmentCapital = amounts.get(i - 1);
 
                 if (!currentDueDate.isBefore(now)) {
-                    // ── Cuota presente o futura ────────────────────────────────────────────
                     Installment installment = new Installment();
                     installment.setTrip(trip);
                     installment.setUser(user);
+                    installment.setStudent(student);
                     installment.setInstallmentNumber(i);
                     installment.setDueDate(currentDueDate);
                     installment.setCapitalAmount(installmentCapital);
                     installment.setRetroactiveAmount(BigDecimal.ZERO);
                     installment.setFineAmount(BigDecimal.ZERO);
                     installment.setStatus(InstallmentStatus.YELLOW);
-                    // [A-2] Explicit call so totalDue is correct before batch save
                     installment.recalculateTotalDue();
                     installmentsToSave.add(installment);
                 } else if (trip.getRetroactiveActive()) {
-                    // ── [Eje-1] Retroactividad activa: persistir la cuota pasada con status RETROACTIVE
-                    // para trazabilidad completa del historial.
                     Installment retroInstallment = new Installment();
                     retroInstallment.setTrip(trip);
                     retroInstallment.setUser(user);
+                    retroInstallment.setStudent(student);
                     retroInstallment.setInstallmentNumber(i);
                     retroInstallment.setDueDate(currentDueDate);
                     retroInstallment.setCapitalAmount(installmentCapital);
@@ -264,17 +276,16 @@ public class TripService {
                     retroInstallment.recalculateTotalDue();
                     installmentsToSave.add(retroInstallment);
                 } else {
-                    // ── Retroactividad inactiva: persistir la cuota pasada en RED con multa ──
                     Installment installment = new Installment();
                     installment.setTrip(trip);
                     installment.setUser(user);
+                    installment.setStudent(student);
                     installment.setInstallmentNumber(i);
                     installment.setDueDate(currentDueDate);
                     installment.setCapitalAmount(installmentCapital);
                     installment.setRetroactiveAmount(BigDecimal.ZERO);
                     installment.setFineAmount(trip.getFixedFineAmount());
                     installment.setStatus(InstallmentStatus.RED);
-                    // [A-2] Explicit call so totalDue is correct before batch save
                     installment.recalculateTotalDue();
                     installmentsToSave.add(installment);
                 }
@@ -284,8 +295,7 @@ public class TripService {
         installmentRepository.saveAll(installmentsToSave);
         tripRepository.save(trip);
 
-        // [M-2] Return strongly-typed DTO instead of raw Map
-        return new BulkAssignResultDTO("success", "Users assigned successfully", newUsers.size());
+        return new BulkAssignResultDTO("success", "Students assigned successfully", studentsToAssign.size());
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
@@ -308,17 +318,20 @@ public class TripService {
     // ── Mappers ─────────────────────────────────────────────────────────────
 
     private TripSummaryDTO toSummaryDTO(Trip trip) {
+        int assignedParticipantsCount = getAssignedParticipantsCount(trip.getId());
         return new TripSummaryDTO(
                 trip.getId(),
                 trip.getName(),
                 trip.getTotalAmount(),
-            trip.getCurrency(),
+                trip.getCurrency(),
                 trip.getInstallmentsCount(),
-                trip.getAssignedUsers().size()
+                trip.getAssignedUsers().size(),
+                assignedParticipantsCount
         );
     }
 
     private TripDetailDTO toDetailDTO(Trip trip) {
+        int assignedParticipantsCount = getAssignedParticipantsCount(trip.getId());
         return new TripDetailDTO(
                 trip.getId(),
                 trip.getName(),
@@ -330,7 +343,8 @@ public class TripService {
                 trip.getRetroactiveActive(),
                 trip.getCurrency(),
                 trip.getFirstDueDate(),
-                trip.getAssignedUsers().size()
+                trip.getAssignedUsers().size(),
+                assignedParticipantsCount
         );
     }
 
@@ -392,6 +406,54 @@ public class TripService {
         return "desc".equalsIgnoreCase(order) ? "desc" : "asc";
     }
 
+    private int getAssignedParticipantsCount(Long tripId) {
+        return tripId == null ? 0 : Math.toIntExact(installmentRepository.countDistinctStudentsByTripId(tripId));
+    }
+
+    private static boolean rowMatchesSearch(SpreadsheetRowDTO row, String search) {
+        if (search == null || search.isBlank()) {
+            return true;
+        }
+
+        String haystack = String.join(
+                " ",
+                row.name() == null ? "" : row.name(),
+                row.lastname() == null ? "" : row.lastname(),
+                row.email() == null ? "" : row.email(),
+                row.phone() == null ? "" : row.phone(),
+                row.studentName() == null ? "" : row.studentName(),
+                row.studentDni() == null ? "" : row.studentDni(),
+                row.schoolName() == null ? "" : row.schoolName(),
+                row.courseName() == null ? "" : row.courseName()
+        ).toLowerCase();
+
+        return haystack.contains(search.trim().toLowerCase());
+    }
+
+    private static Comparator<SpreadsheetRowDTO> buildSpreadsheetComparator(String sortBy, String order) {
+        Comparator<String> textComparator = Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER);
+        Comparator<SpreadsheetRowDTO> comparator;
+
+        if ("name".equals(sortBy)) {
+            comparator = Comparator.comparing(SpreadsheetRowDTO::name, textComparator)
+                    .thenComparing(SpreadsheetRowDTO::lastname, textComparator);
+        } else if ("email".equals(sortBy)) {
+            comparator = Comparator.comparing(SpreadsheetRowDTO::email, textComparator)
+                    .thenComparing(SpreadsheetRowDTO::lastname, textComparator);
+        } else {
+            comparator = Comparator.comparing(SpreadsheetRowDTO::lastname, textComparator)
+                    .thenComparing(SpreadsheetRowDTO::name, textComparator);
+        }
+
+        comparator = comparator
+                .thenComparing(SpreadsheetRowDTO::studentName, textComparator)
+                .thenComparing(SpreadsheetRowDTO::studentDni, textComparator)
+                .thenComparing(SpreadsheetRowDTO::userId, Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(SpreadsheetRowDTO::studentId, Comparator.nullsLast(Comparator.naturalOrder()));
+
+        return "desc".equals(order) ? comparator.reversed() : comparator;
+    }
+
     private SpreadsheetDTO getSpreadsheetUnpaged(Long tripId) {
         return buildSpreadsheet(tripId, 0, Integer.MAX_VALUE, null, "lastname", "asc", null, false);
     }
@@ -413,41 +475,20 @@ public class TripService {
         Trip trip = tripRepository.findById(tripId)
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + tripId));
 
-        int safePage = Math.max(0, page);
-        long totalElements = installmentRepository.countFilteredUsersForSpreadsheet(tripId, search);
-        int safeSize;
-        int offset;
-        if (enforceMaxPageSize) {
-            safeSize = Math.max(1, size);
-            offset = safePage * safeSize;
-        } else {
-            safeSize = totalElements > Integer.MAX_VALUE ? Integer.MAX_VALUE : Math.max(1, (int) totalElements);
-            offset = 0;
-        }
-
         String normalizedSortBy = normalizeSortBy(sortBy);
         String normalizedOrder = normalizeOrder(order);
 
-        List<Object[]> pagedUsers = installmentRepository.findPagedUsersForSpreadsheet(
-                tripId,
-                search,
-                normalizedSortBy,
-                normalizedOrder,
-                safeSize,
-                offset
-        );
-
-        List<Long> userIds = pagedUsers.stream()
-                .map(row -> ((Number) row[0]).longValue())
-                .toList();
-
-        Map<Long, List<Installment>> installmentsByUserId = userIds.isEmpty()
+        List<Installment> tripInstallments = installmentRepository.findByTripIdWithUsers(tripId);
+        Map<SpreadsheetParticipantKey, List<Installment>> installmentsByParticipant = tripInstallments.isEmpty()
                 ? Map.of()
-                : installmentRepository.findInstallmentsByTripAndUserIds(tripId, userIds).stream()
-                .collect(Collectors.groupingBy(i -> i.getUser().getId()));
+                : tripInstallments.stream().collect(Collectors.groupingBy(
+                        installment -> new SpreadsheetParticipantKey(
+                                installment.getUser().getId(),
+                                installment.getStudent() != null ? installment.getStudent().getId() : null
+                        )
+                ));
 
-        List<Long> installmentIds = installmentsByUserId.values().stream()
-                .flatMap(List::stream)
+        List<Long> installmentIds = tripInstallments.stream()
                 .map(Installment::getId)
                 .toList();
 
@@ -460,18 +501,16 @@ public class TripService {
                         (existing, ignored) -> existing
                 ));
 
-        List<SpreadsheetRowDTO> rows = pagedUsers.stream()
-                .map(row -> {
-                    Long userId = ((Number) row[0]).longValue();
+        List<SpreadsheetRowDTO> rows = installmentsByParticipant.values().stream()
+                .map(participantInstallments -> {
+                    Installment firstInstallment = participantInstallments.get(0);
+                    User user = firstInstallment.getUser();
+                    Student student = firstInstallment.getStudent();
 
-                    List<Installment> userInstallments = installmentsByUserId
-                            .getOrDefault(userId, List.of());
-
-                    boolean userCompleted = !userInstallments.isEmpty() && userInstallments.stream()
+                    boolean userCompleted = participantInstallments.stream()
                             .allMatch(i -> i.getStatus() == InstallmentStatus.GREEN);
 
-                    List<SpreadsheetRowInstallmentDTO> rowInstallments = userInstallments
-                            .stream()
+                    List<SpreadsheetRowInstallmentDTO> rowInstallments = participantInstallments.stream()
                             .sorted(Comparator.comparing(Installment::getInstallmentNumber))
                             .map(installment -> toSpreadsheetInstallmentDTO(
                                     installment,
@@ -480,32 +519,48 @@ public class TripService {
                             .toList();
 
                     return new SpreadsheetRowDTO(
-                            userId,
-                            row[1] == null ? null : row[1].toString(),
-                            row[2] == null ? null : row[2].toString(),
-                            row[3] == null ? null : row[3].toString(),
-                            row[4] == null ? null : row[4].toString(),
-                            row[5] == null ? null : row[5].toString(),
-                            row[6] == null ? null : row[6].toString(),
-                            row[7] == null ? null : row[7].toString(),
+                            user.getId(),
+                            student != null ? student.getId() : null,
+                            user.getName(),
+                            user.getLastname(),
+                            user.getPhone(),
+                            user.getEmail(),
+                            student != null ? student.getName() : null,
+                            student != null ? student.getDni() : null,
+                            student != null ? student.getSchoolName() : null,
+                            student != null ? student.getCourseName() : null,
                             userCompleted,
                             rowInstallments
                     );
                 })
+                .filter(row -> rowMatchesSearch(row, search))
+                .filter(row -> status == null || row.installments().stream().anyMatch(i -> i.status() == status))
+                .sorted(buildSpreadsheetComparator(normalizedSortBy, normalizedOrder))
                 .toList();
 
-        if (status != null) {
-            rows = rows.stream()
-                    .filter(row -> row.installments().stream().anyMatch(i -> i.status() == status))
-                    .toList();
+        long totalElements = rows.size();
+        int safePage = Math.max(0, page);
+        int safeSize;
+        int offset;
+        if (enforceMaxPageSize) {
+            safeSize = Math.max(1, size);
+            offset = safePage * safeSize;
+        } else {
+            safeSize = totalElements > Integer.MAX_VALUE ? Integer.MAX_VALUE : Math.max(1, (int) totalElements);
+            offset = 0;
         }
+
+        List<SpreadsheetRowDTO> pagedRows = rows.stream()
+                .skip(offset)
+                .limit(safeSize)
+                .toList();
 
         return new SpreadsheetDTO(
                 trip.getName(),
                 trip.getInstallmentsCount(),
                 safePage,
                 totalElements,
-                rows
+                pagedRows
         );
     }
 }

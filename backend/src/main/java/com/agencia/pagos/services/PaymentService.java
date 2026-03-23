@@ -13,6 +13,7 @@ import com.agencia.pagos.entities.PaymentMethod;
 import com.agencia.pagos.entities.PaymentReceipt;
 import com.agencia.pagos.entities.Role;
 import com.agencia.pagos.entities.ReceiptStatus;
+import com.agencia.pagos.entities.Student;
 import com.agencia.pagos.entities.user.User;
 import com.agencia.pagos.repositories.BankAccountRepository;
 import com.agencia.pagos.repositories.InstallmentRepository;
@@ -39,6 +40,8 @@ import java.util.stream.Collectors;
 @Service
 @Transactional
 public class PaymentService {
+
+    private record UserInstallmentGroupKey(Long tripId, Long studentId) {}
 
     private final PaymentReceiptRepository paymentReceiptRepository;
     private final InstallmentRepository installmentRepository;
@@ -210,11 +213,15 @@ public class PaymentService {
             receipt.setStatus(ReceiptStatus.APPROVED);
             receipt.setAdminObservation(null);
 
-                BigDecimal remaining = receipt.getAmountInTripCurrency() == null
+            BigDecimal remaining = receipt.getAmountInTripCurrency() == null
                     ? receipt.getReportedAmount()
                     : receipt.getAmountInTripCurrency();
             List<Installment> pendingInstallments = installmentRepository
-                    .findByTripIdAndUserId(installment.getTrip().getId(), installment.getUser().getId())
+                    .findByTripIdAndUserIdAndStudentId(
+                            installment.getTrip().getId(),
+                            installment.getUser().getId(),
+                            installment.getStudent() != null ? installment.getStudent().getId() : null
+                    )
                     .stream()
                     .filter(i -> i.getStatus() != InstallmentStatus.GREEN)
                     .sorted(Comparator.comparing(Installment::getInstallmentNumber))
@@ -267,9 +274,10 @@ public class PaymentService {
         // Obtener todas las cuotas del usuario en el viaje ordenadas por número
         Installment directInstallment = receipt.getInstallment();
         List<Installment> allInstallments = installmentRepository
-                .findByTripIdAndUserId(
+                .findByTripIdAndUserIdAndStudentId(
                         directInstallment.getTrip().getId(),
-                        directInstallment.getUser().getId())
+                        directInstallment.getUser().getId(),
+                        directInstallment.getStudent() != null ? directInstallment.getStudent().getId() : null)
                 .stream()
                 .sorted(Comparator.comparing(Installment::getInstallmentNumber))
                 .toList();
@@ -354,12 +362,16 @@ public class PaymentService {
                     (existing, ignored) -> existing
                 ));
 
-        Map<Long, List<Installment>> installmentsByTripId = installments.stream()
-                .collect(Collectors.groupingBy(i -> i.getTrip().getId()));
+        Map<UserInstallmentGroupKey, List<Installment>> installmentsByTripId = installments.stream()
+                .collect(Collectors.groupingBy(i -> new UserInstallmentGroupKey(
+                        i.getTrip().getId(),
+                        i.getStudent() != null ? i.getStudent().getId() : null
+                )));
 
         return installments.stream()
                 .map((installment) -> {
                     PaymentReceipt latestReceipt = latestReceiptByInstallmentId.get(installment.getId());
+                    Student student = installment.getStudent();
 
                     int yellowDays = installment.getTrip().getYellowWarningDays() == null
                             ? 0
@@ -375,13 +387,23 @@ public class PaymentService {
                             installment.getPaidAmount(),
                             installment.getTotalDue()
                     );
-                            
-                    List<Installment> tripGroup = installmentsByTripId.get(installment.getTrip().getId());
+
+                    List<Installment> tripGroup = installmentsByTripId.get(
+                            new UserInstallmentGroupKey(
+                                    installment.getTrip().getId(),
+                                    student != null ? student.getId() : null
+                            )
+                    );
                     boolean userCompletedTrip = tripGroup.stream()
                             .allMatch(i -> i.getStatus() == InstallmentStatus.GREEN);
 
                     return new UserInstallmentDTO(
                             installment.getTrip().getId(),
+                            student != null ? student.getId() : null,
+                            student != null ? student.getName() : null,
+                            student != null ? student.getDni() : null,
+                            student != null ? student.getSchoolName() : null,
+                            student != null ? student.getCourseName() : null,
                             installment.getId(),
                             installment.getInstallmentNumber(),
                             installment.getDueDate(),
@@ -400,6 +422,10 @@ public class PaymentService {
                 })
                 .sorted(Comparator
                     .comparing(UserInstallmentDTO::tripId)
+                    .thenComparing(
+                            UserInstallmentDTO::studentId,
+                            Comparator.nullsFirst(Comparator.naturalOrder())
+                    )
                     .thenComparing(UserInstallmentDTO::installmentNumber))
                 .toList();
     }
@@ -427,6 +453,7 @@ public class PaymentService {
     private PendingPaymentReviewDTO toPendingReviewDTO(PaymentReceipt receipt) {
         Installment installment = receipt.getInstallment();
         User user = installment.getUser();
+        Student student = installment.getStudent();
         return new PendingPaymentReviewDTO(
                 receipt.getId(),
                 receipt.getStatus(),
@@ -451,7 +478,8 @@ public class PaymentService {
                 user.getName(),
                 user.getLastname(),
                 user.getEmail(),
-                user.getStudentName()
+                student != null ? student.getName() : null,
+                student != null ? student.getDni() : null
         );
     }
 

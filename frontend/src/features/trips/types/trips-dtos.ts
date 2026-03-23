@@ -49,6 +49,7 @@ export const TripDetailDTOSchema = z.object({
   retroactiveActive: z.boolean(),
   firstDueDate: z.string(), // LocalDate serialized as "YYYY-MM-DD"
   assignedUsersCount: z.number(),
+  assignedParticipantsCount: z.number(),
 });
 
 export type TripDetailDTO = z.infer<typeof TripDetailDTOSchema>;
@@ -60,6 +61,7 @@ export const TripSummaryDTOSchema = z.object({
   currency: CurrencySchema,
   installmentsCount: z.number(),
   assignedUsersCount: z.number(),
+  assignedParticipantsCount: z.number(),
 });
 
 export type TripSummaryDTO = z.infer<typeof TripSummaryDTOSchema>;
@@ -102,11 +104,12 @@ export const TripUpdateDTOSchema = z.object({
 export type TripUpdateDTO = z.infer<typeof TripUpdateDTOSchema>;
 
 export const UserAssignBulkDTOSchema = z.object({
-  userIds: z
-    .array(z.number().int().nonnegative())
+  studentDnis: z
+    .array(z.string().regex(/^\d{7,8}$/, "DNI inválido"))
+    .min(1)
     .max(500)
-    .refine((ids) => new Set(ids).size === ids.length, {
-      message: "Los IDs de usuario no deben repetirse",
+    .refine((dnis) => new Set(dnis).size === dnis.length, {
+      message: "Los DNIs no deben repetirse",
     }),
 });
 
@@ -133,11 +136,13 @@ export type SpreadsheetRowInstallmentDTO = z.infer<typeof SpreadsheetRowInstallm
 
 export const SpreadsheetRowDTOSchema = z.object({
   userId: z.number(),
+  studentId: z.number().nullable(),
   name: z.string(),
   lastname: z.string(),
   phone: z.string().nullable(),
   email: z.string(),
   studentName: z.string().nullable(),
+  studentDni: z.string().nullable(),
   schoolName: z.string().nullable(),
   courseName: z.string().nullable(),
   userCompleted: z.boolean(),
@@ -167,4 +172,3 @@ export const SpreadsheetParamsSchema = z.object({
 });
 
 export type SpreadsheetParams = z.infer<typeof SpreadsheetParamsSchema>;
-

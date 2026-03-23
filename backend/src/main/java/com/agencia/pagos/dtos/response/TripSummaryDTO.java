@@ -10,5 +10,6 @@ public record TripSummaryDTO(
         BigDecimal totalAmount,
         Currency currency,
         Integer installmentsCount,
-        Integer assignedUsersCount
+        Integer assignedUsersCount,
+        Integer assignedParticipantsCount
 ) {}

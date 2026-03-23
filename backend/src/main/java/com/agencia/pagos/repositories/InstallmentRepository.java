@@ -17,86 +17,40 @@ public interface InstallmentRepository extends JpaRepository<Installment, Long> 
     @Query("SELECT i FROM Installment i JOIN FETCH i.trip WHERE i.id = :id")
     Optional<Installment> findByIdWithTrip(@Param("id") Long id);
 
-    @Query("SELECT i FROM Installment i JOIN FETCH i.trip WHERE i.user.id = :userId")
+    @Query("SELECT i FROM Installment i JOIN FETCH i.trip LEFT JOIN FETCH i.student WHERE i.user.id = :userId")
     List<Installment> findByUserIdWithTrip(@Param("userId") Long userId);
 
-    @Query("SELECT i FROM Installment i WHERE i.trip.id = :tripId AND i.user.id = :userId")
-    List<Installment> findByTripIdAndUserId(
-        @Param("tripId") Long tripId,
-        @Param("userId") Long userId);
-
-    @Query(value = """
-        SELECT
-        u.id AS user_id,
-        u.name,
-        u.lastname,
-        u.phone,
-        u.email,
-        u.student_name,
-        u.school_name,
-        u.course_name
-        FROM trip_user tu
-        JOIN users u ON u.id = tu.user_id
-        WHERE tu.trip_id = :tripId
-          AND u.active = true
+    @Query("""
+        SELECT i
+        FROM Installment i
+        WHERE i.trip.id = :tripId
+          AND i.user.id = :userId
           AND (
-            :search IS NULL
-            OR TRIM(:search) = ''
-            OR LOWER(u.name) LIKE LOWER('%' || :search || '%')
-            OR LOWER(u.lastname) LIKE LOWER('%' || :search || '%')
-            OR LOWER(u.email) LIKE LOWER('%' || :search || '%')
+            (:studentId IS NULL AND i.student IS NULL)
+            OR i.student.id = :studentId
           )
-        ORDER BY
-        CASE WHEN :order = 'asc' AND :sortBy = 'name' THEN u.name END ASC,
-        CASE WHEN :order = 'asc' AND :sortBy = 'email' THEN u.email END ASC,
-        CASE WHEN :order = 'asc' AND (:sortBy = 'lastname' OR :sortBy IS NULL OR TRIM(:sortBy) = '') THEN u.lastname END ASC,
-        CASE WHEN :order = 'desc' AND :sortBy = 'name' THEN u.name END DESC,
-        CASE WHEN :order = 'desc' AND :sortBy = 'email' THEN u.email END DESC,
-        CASE WHEN :order = 'desc' AND (:sortBy = 'lastname' OR :sortBy IS NULL OR TRIM(:sortBy) = '') THEN u.lastname END DESC,
-        u.id ASC
-        LIMIT :size OFFSET :offset
-        """, nativeQuery = true)
-    List<Object[]> findPagedUsersForSpreadsheet(
+        """)
+    List<Installment> findByTripIdAndUserIdAndStudentId(
         @Param("tripId") Long tripId,
-        @Param("search") String search,
-        @Param("sortBy") String sortBy,
-        @Param("order") String order,
-        @Param("size") int size,
-        @Param("offset") int offset
-    );
-
-    @Query(value = """
-        SELECT COUNT(*)
-        FROM trip_user tu
-        JOIN users u ON u.id = tu.user_id
-        WHERE tu.trip_id = :tripId
-          AND u.active = true
-          AND (
-            :search IS NULL
-            OR TRIM(:search) = ''
-            OR LOWER(u.name) LIKE LOWER('%' || :search || '%')
-            OR LOWER(u.lastname) LIKE LOWER('%' || :search || '%')
-            OR LOWER(u.email) LIKE LOWER('%' || :search || '%')
-          )
-        """, nativeQuery = true)
-    long countFilteredUsersForSpreadsheet(
-        @Param("tripId") Long tripId,
-        @Param("search") String search
-    );
-
-    @Query("SELECT i FROM Installment i JOIN FETCH i.user WHERE i.trip.id = :tripId AND i.user.id IN :userIds")
-    List<Installment> findInstallmentsByTripAndUserIds(
-        @Param("tripId") Long tripId,
-        @Param("userIds") List<Long> userIds
+        @Param("userId") Long userId,
+        @Param("studentId") Long studentId
     );
 
     /**
      * Recupera todas las cuotas de un viaje con su {@code user} ya inicializado via JOIN FETCH,
      * evitando el problema N+1 al generar reportes/plantillas pesadas.
      */
-    @Query("SELECT i FROM Installment i JOIN FETCH i.user WHERE i.trip.id = :tripId")
+    @Query("SELECT i FROM Installment i JOIN FETCH i.user LEFT JOIN FETCH i.student JOIN FETCH i.trip WHERE i.trip.id = :tripId")
     List<Installment> findByTripIdWithUsers(@Param("tripId") Long tripId);
 
-    @Query("SELECT i FROM Installment i JOIN FETCH i.user JOIN FETCH i.trip")
+    @Query("SELECT i FROM Installment i JOIN FETCH i.user LEFT JOIN FETCH i.student JOIN FETCH i.trip")
     List<Installment> findAllWithUserAndTrip();
+
+    boolean existsByStudentId(Long studentId);
+
+    @Query("SELECT DISTINCT i.student.id FROM Installment i WHERE i.trip.id = :tripId AND i.student IS NOT NULL")
+    List<Long> findAssignedStudentIdsByTripId(@Param("tripId") Long tripId);
+
+    @Query("SELECT COUNT(DISTINCT i.student.id) FROM Installment i WHERE i.trip.id = :tripId AND i.student IS NOT NULL")
+    long countDistinctStudentsByTripId(@Param("tripId") Long tripId);
 }

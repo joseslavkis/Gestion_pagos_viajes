@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import { useQueryClient } from "@tanstack/react-query";
 
+import { SchoolAutocomplete } from "@/components/form-components/SchoolAutocomplete/SchoolAutocomplete";
 import { CommonLayout } from "@/components/CommonLayout/CommonLayout";
 import { useBankAccounts } from "@/features/bank-accounts/services/bank-accounts-service";
 import type { BankAccountDTO } from "@/features/bank-accounts/types/bank-accounts-dtos";
+import type { StudentCreateDTO } from "@/features/auth/types/auth-dtos";
+import { StudentCreateSchema } from "@/features/auth/types/auth-dtos";
 import { Folder } from "@/features/payments/components/Folder";
 import {
   useMyInstallments,
@@ -14,6 +17,11 @@ import type {
   PaymentMethod,
   UserInstallmentDTO,
 } from "@/features/payments/types/payments-dtos";
+import {
+  useAddStudent,
+  useDeleteStudent,
+  useStudents,
+} from "@/features/users/services/users-service";
 
 import styles from "./UserDashboardPage.module.css";
 
@@ -32,6 +40,32 @@ const dateFormatter = new Intl.DateTimeFormat("es-AR", {
   month: "2-digit",
   year: "numeric",
 });
+
+const studentCardStyle: CSSProperties = {
+  border: "1px solid #dbe5f0",
+  borderRadius: 16,
+  padding: "1rem",
+  background: "#fff",
+  display: "grid",
+  gap: "0.45rem",
+};
+
+const studentActionsStyle: CSSProperties = {
+  display: "flex",
+  gap: 8,
+  flexWrap: "wrap",
+};
+
+type InstallmentGroup = {
+  groupKey: string;
+  tripId: number;
+  studentId: number | null;
+  studentName: string | null;
+  studentDni: string | null;
+  schoolName: string | null;
+  courseName: string | null;
+  installments: UserInstallmentDTO[];
+};
 
 function getTodayDate() {
   return new Date().toISOString().slice(0, 10);
@@ -56,26 +90,34 @@ function resolveInstallmentDisplay(dto: UserInstallmentDTO): {
   };
 }
 
-type InstallmentGroup = {
-  tripIndex: number;
-  installments: UserInstallmentDTO[];
-};
-
 function buildInstallmentGroups(installments: UserInstallmentDTO[]): InstallmentGroup[] {
   if (installments.length === 0) return [];
 
-  const map = new Map<number, UserInstallmentDTO[]>();
+  const map = new Map<string, InstallmentGroup>();
   for (const installment of installments) {
-    const group = map.get(installment.tripId) ?? [];
-    group.push(installment);
-    map.set(installment.tripId, group);
+    const groupKey = `${installment.tripId}:${installment.studentId ?? "legacy"}`;
+    const current = map.get(groupKey);
+
+    if (current) {
+      current.installments.push(installment);
+      continue;
+    }
+
+    map.set(groupKey, {
+      groupKey,
+      tripId: installment.tripId,
+      studentId: installment.studentId,
+      studentName: installment.studentName,
+      studentDni: installment.studentDni,
+      schoolName: installment.schoolName,
+      courseName: installment.courseName,
+      installments: [installment],
+    });
   }
 
-  return Array.from(map.values()).map((group, index) => ({
-    tripIndex: index,
-    installments: group.sort(
-      (a, b) => a.installmentNumber - b.installmentNumber,
-    ),
+  return Array.from(map.values()).map((group) => ({
+    ...group,
+    installments: [...group.installments].sort((a, b) => a.installmentNumber - b.installmentNumber),
   }));
 }
 
@@ -101,9 +143,7 @@ function findNextDueDate(group: InstallmentGroup): string | null {
   if (pending.length === 0) {
     return group.installments[group.installments.length - 1]?.dueDate ?? null;
   }
-  return [...pending].sort((a, b) =>
-    a.dueDate.localeCompare(b.dueDate),
-  )[0]?.dueDate ?? null;
+  return [...pending].sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0]?.dueDate ?? null;
 }
 
 function findPendingInstallment(group: InstallmentGroup): UserInstallmentDTO | null {
@@ -140,18 +180,36 @@ function formatBankAccountTitle(account: BankAccountDTO): string {
   return `${account.bankName} - ${account.accountLabel}`;
 }
 
+function getGroupDisplayName(group: InstallmentGroup, index: number): string {
+  return group.studentName ? `Viaje ${index + 1} - ${group.studentName}` : `Viaje ${index + 1}`;
+}
+
+const emptyStudent = (): StudentCreateDTO => ({
+  name: "",
+  dni: "",
+  schoolName: "",
+  courseName: "",
+});
+
 export function UserDashboardPage() {
   const queryClient = useQueryClient();
   const registerPayment = useRegisterPayment();
+  const addStudent = useAddStudent();
+  const deleteStudent = useDeleteStudent();
   const { data: installments, isLoading, error } = useMyInstallments();
   const {
     data: bankAccounts,
     isLoading: isBankAccountsLoading,
     error: bankAccountsError,
   } = useBankAccounts();
+  const {
+    data: students,
+    isLoading: isStudentsLoading,
+    error: studentsError,
+  } = useStudents();
 
-  const [expandedTripIndexes, setExpandedTripIndexes] = useState<number[]>([]);
-  const [selectedTripIndex, setSelectedTripIndex] = useState<number | null>(null);
+  const [expandedGroupKeys, setExpandedGroupKeys] = useState<string[]>([]);
+  const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null);
   const [selectedInstallmentId, setSelectedInstallmentId] = useState<number | null>(null);
   const [reportedAmount, setReportedAmount] = useState("");
   const [reportedPaymentDate, setReportedPaymentDate] = useState(getTodayDate);
@@ -163,6 +221,10 @@ export function UserDashboardPage() {
   const [closeFolderSignal, setCloseFolderSignal] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [newStudent, setNewStudent] = useState<StudentCreateDTO>(emptyStudent());
+  const [studentFormError, setStudentFormError] = useState<string | null>(null);
+  const [studentSuccessMessage, setStudentSuccessMessage] = useState<string | null>(null);
+  const [deletingStudentId, setDeletingStudentId] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -178,6 +240,18 @@ export function UserDashboardPage() {
   }, [successMessage]);
 
   useEffect(() => {
+    if (!studentSuccessMessage) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setStudentSuccessMessage(null);
+    }, 4000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [studentSuccessMessage]);
+
+  useEffect(() => {
     return () => {
       if (receiptPreviewUrl) {
         URL.revokeObjectURL(receiptPreviewUrl);
@@ -187,35 +261,28 @@ export function UserDashboardPage() {
 
   const installmentItems = useMemo(() => installments ?? [], [installments]);
   const bankAccountItems = useMemo(() => bankAccounts ?? [], [bankAccounts]);
+  const studentItems = useMemo(() => students ?? [], [students]);
   const groups = useMemo(() => buildInstallmentGroups(installmentItems), [installmentItems]);
   const completedGroups = useMemo(
-    () => groups.filter((g) => g.installments.every((i) => i.userCompletedTrip)),
-    [groups]
-  );
-  const allInstallments = useMemo(
-    () => groups.flatMap((g) => g.installments),
+    () => groups.filter((group) => group.installments.every((installment) => installment.userCompletedTrip)),
     [groups],
   );
+  const allInstallments = useMemo(() => groups.flatMap((group) => group.installments), [groups]);
 
-  const selectedGroup =
-    selectedTripIndex != null ? groups.find((group) => group.tripIndex === selectedTripIndex) ?? null : null;
+  const selectedGroup = selectedGroupKey != null
+    ? groups.find((group) => group.groupKey === selectedGroupKey) ?? null
+    : null;
 
   const selectedInstallment = useMemo(
     () =>
       selectedInstallmentId != null
-        ? allInstallments.find(
-            (i) => i.installmentId === selectedInstallmentId,
-          ) ?? null
+        ? allInstallments.find((installment) => installment.installmentId === selectedInstallmentId) ?? null
         : null,
     [selectedInstallmentId, allInstallments],
   );
 
-  const selectedInstallmentDisplay = selectedInstallment
-    ? resolveInstallmentDisplay(selectedInstallment)
-    : null;
-  const selectedInstallmentRemaining = selectedInstallment
-    ? getInstallmentRemainingAmount(selectedInstallment)
-    : 0;
+  const selectedInstallmentDisplay = selectedInstallment ? resolveInstallmentDisplay(selectedInstallment) : null;
+  const selectedInstallmentRemaining = selectedInstallment ? getInstallmentRemainingAmount(selectedInstallment) : 0;
 
   const selectedTripHasPending =
     selectedGroup != null ? findPendingInstallment(selectedGroup) != null : false;
@@ -242,18 +309,26 @@ export function UserDashboardPage() {
 
   useEffect(() => {
     if (groups.length === 0) {
-      setExpandedTripIndexes([]);
+      setExpandedGroupKeys([]);
+      setSelectedGroupKey(null);
       return;
     }
 
-    setExpandedTripIndexes((current) => {
+    setExpandedGroupKeys((current) => {
       if (current.length === 0) {
-        return [groups[0].tripIndex];
+        return [groups[0].groupKey];
       }
 
-      const availableIndexes = new Set(groups.map((group) => group.tripIndex));
-      const filtered = current.filter((index) => availableIndexes.has(index));
-      return filtered.length > 0 ? filtered : [groups[0].tripIndex];
+      const availableKeys = new Set(groups.map((group) => group.groupKey));
+      const filtered = current.filter((groupKey) => availableKeys.has(groupKey));
+      return filtered.length > 0 ? filtered : [groups[0].groupKey];
+    });
+
+    setSelectedGroupKey((current) => {
+      if (current && groups.some((group) => group.groupKey === current)) {
+        return current;
+      }
+      return current ?? groups[0].groupKey;
     });
   }, [groups]);
 
@@ -267,18 +342,19 @@ export function UserDashboardPage() {
       if (current != null && availableBankAccounts.some((account) => account.id === current)) {
         return current;
       }
+
       return availableBankAccounts[0]?.id ?? null;
     });
   }, [availableBankAccounts]);
 
   useEffect(() => {
-    if (selectedTripIndex == null) {
+    if (selectedGroupKey == null) {
       setSelectedInstallmentId(null);
       setReportedAmount("");
       return;
     }
 
-    const group = groups.find((item) => item.tripIndex === selectedTripIndex) ?? null;
+    const group = groups.find((item) => item.groupKey === selectedGroupKey) ?? null;
     if (!group) {
       setSelectedInstallmentId(null);
       setReportedAmount("");
@@ -294,25 +370,25 @@ export function UserDashboardPage() {
 
     setSelectedInstallmentId(pendingInstallment.installmentId);
     setReportedAmount(getInstallmentRemainingAmount(pendingInstallment).toFixed(2));
-  }, [selectedTripIndex, groups]);
+  }, [selectedGroupKey, groups]);
 
-  const toggleTrip = (tripIndex: number) => {
-    setExpandedTripIndexes((current) => {
-      if (current.includes(tripIndex)) {
-        return current.filter((item) => item !== tripIndex);
+  const toggleGroup = (groupKey: string) => {
+    setExpandedGroupKeys((current) => {
+      if (current.includes(groupKey)) {
+        return current.filter((item) => item !== groupKey);
       }
 
-      return [...current, tripIndex];
+      return [...current, groupKey];
     });
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0] ?? null;
-    if (receiptPreviewUrl) URL.revokeObjectURL(receiptPreviewUrl);
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0] ?? null;
+    if (receiptPreviewUrl) {
+      URL.revokeObjectURL(receiptPreviewUrl);
+    }
     setReceiptFile(file);
     setReceiptPreviewUrl(file ? URL.createObjectURL(file) : null);
-    
-    // Trigger the folder close animation
     setCloseFolderSignal(true);
     setTimeout(() => setCloseFolderSignal(false), 200);
   };
@@ -323,7 +399,7 @@ export function UserDashboardPage() {
     setSuccessMessage(null);
 
     if (selectedInstallmentId == null) {
-      setSubmitError("Seleccioná un viaje con cuotas pendientes antes de enviar el comprobante.");
+      setSubmitError("Seleccioná una inscripción con cuotas pendientes antes de enviar el comprobante.");
       return;
     }
 
@@ -333,7 +409,6 @@ export function UserDashboardPage() {
     }
 
     const parsedAmount = Number(reportedAmount);
-
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
       setSubmitError("Ingresá un monto válido mayor a 0.");
       return;
@@ -350,7 +425,6 @@ export function UserDashboardPage() {
         file: receiptFile,
       });
 
-      setSelectedTripIndex(null);
       setSelectedInstallmentId(null);
       setReportedAmount("");
       setReportedPaymentDate(getTodayDate());
@@ -365,11 +439,52 @@ export function UserDashboardPage() {
 
       await queryClient.invalidateQueries({ queryKey: ["payments", "my"] });
       await queryClient.invalidateQueries({ queryKey: ["payments", "my", "installments"] });
-    } catch (submitError) {
+    } catch (currentError) {
       setSubmitError(
-        submitError instanceof Error
-          ? submitError.message
+        currentError instanceof Error
+          ? currentError.message
           : "No se pudo enviar el comprobante. Intentá nuevamente.",
+      );
+    }
+  };
+
+  const handleAddStudent = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setStudentFormError(null);
+    setStudentSuccessMessage(null);
+
+    const parsed = StudentCreateSchema.safeParse(newStudent);
+    if (!parsed.success) {
+      setStudentFormError(parsed.error.issues[0]?.message ?? "Revisá los datos del alumno.");
+      return;
+    }
+
+    try {
+      await addStudent.mutateAsync(parsed.data);
+      setNewStudent(emptyStudent());
+      setStudentSuccessMessage("Alumno agregado correctamente.");
+    } catch (currentError) {
+      setStudentFormError(
+        currentError instanceof Error
+          ? currentError.message
+          : "No se pudo agregar el alumno.",
+      );
+    }
+  };
+
+  const handleDeleteStudent = async (studentId: number) => {
+    setStudentFormError(null);
+    setStudentSuccessMessage(null);
+
+    try {
+      await deleteStudent.mutateAsync(studentId);
+      setDeletingStudentId(null);
+      setStudentSuccessMessage("Alumno eliminado correctamente.");
+    } catch (currentError) {
+      setStudentFormError(
+        currentError instanceof Error
+          ? currentError.message
+          : "No se pudo eliminar el alumno.",
       );
     }
   };
@@ -392,29 +507,32 @@ export function UserDashboardPage() {
             {!isLoading && !error && groups.length > 0 ? (
               <div className={styles.tripGroupList}>
                 {groups.map((group, index) => {
-                  const isExpanded = expandedTripIndexes.includes(group.tripIndex);
+                  const isExpanded = expandedGroupKeys.includes(group.groupKey);
                   const nextDueDate = findNextDueDate(group);
                   const groupColor = getGroupBadgeColor(group);
 
                   return (
                     <article
-                      key={`trip-${group.tripIndex}`}
+                      key={group.groupKey}
                       className={`${styles.tripGroupCard} ${styles[`tripGroup${groupColor}`]}`}
                     >
                       <button
                         type="button"
                         className={styles.tripGroupHeader}
-                        onClick={() => toggleTrip(group.tripIndex)}
+                        onClick={() => toggleGroup(group.groupKey)}
                       >
                         <div className={styles.tripGroupTitleBlock}>
-                          <h3 className={styles.tripGroupTitle}>Viaje {index + 1}</h3>
+                          <h3 className={styles.tripGroupTitle}>{getGroupDisplayName(group, index)}</h3>
                           <p className={styles.tripGroupSummary}>
                             {group.installments.length} cuotas
                             {nextDueDate ? ` · próximo vencimiento ${formatReportedDate(nextDueDate)}` : ""}
                           </p>
+                          {group.studentDni ? (
+                            <p className={styles.tripGroupSummary}>DNI alumno: {group.studentDni}</p>
+                          ) : null}
                         </div>
                         <div className={styles.tripGroupActions}>
-                          {group.installments.every((i) => i.userCompletedTrip) ? (
+                          {group.installments.every((installment) => installment.userCompletedTrip) ? (
                             <span className={styles.tripCompletedBadge}>✓ Viaje completado</span>
                           ) : null}
                           <span className={styles.expandIcon}>{isExpanded ? "−" : "+"}</span>
@@ -447,9 +565,7 @@ export function UserDashboardPage() {
                                     )}
                                   </p>
                                 ) : null}
-                                <p className={styles.chipMeta}>
-                                  Vence: {formatReportedDate(installment.dueDate)}
-                                </p>
+                                <p className={styles.chipMeta}>Vence: {formatReportedDate(installment.dueDate)}</p>
 
                                 {installment.uiStatusCode === "RECEIPT_REJECTED" &&
                                 installment.latestReceiptObservation ? (
@@ -478,21 +594,117 @@ export function UserDashboardPage() {
           <section className={styles.section}>
             <h2 className={styles.sectionTitle}>Historial de viajes</h2>
             {completedGroups.length === 0 ? (
-              <p className={styles.helperText}>
-                Todavía no tenés viajes completados.
-              </p>
+              <p className={styles.helperText}>Todavía no tenés viajes completados.</p>
             ) : (
               <div className={styles.historyList}>
                 {completedGroups.map((group, index) => (
-                  <div key={group.tripIndex} className={styles.historyItem}>
-                    <span className={styles.historyTripName}>
-                      Viaje {index + 1}
-                    </span>
+                  <div key={group.groupKey} className={styles.historyItem}>
+                    <span className={styles.historyTripName}>{getGroupDisplayName(group, index)}</span>
                     <span className={styles.historyBadge}>✓ Pagado</span>
                   </div>
                 ))}
               </div>
             )}
+          </section>
+
+          <section className={styles.section}>
+            <h2 className={styles.sectionTitle}>Mis hijos</h2>
+            <p className={styles.helperText}>Podés agregar más hijos para que el administrador los asigne a viajes.</p>
+
+            {isStudentsLoading ? <p className={styles.helperText}>Cargando alumnos...</p> : null}
+            {studentsError ? <p className={styles.errorText}>{studentsError.message}</p> : null}
+
+            {!isStudentsLoading && !studentsError && studentItems.length === 0 ? (
+              <p className={styles.helperText}>Todavía no registraste hijos en tu cuenta.</p>
+            ) : null}
+
+            <div style={{ display: "grid", gap: "0.85rem", marginBottom: "1rem" }}>
+              {studentItems.map((student) => (
+                <div key={student.id} style={studentCardStyle}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                    <strong>{student.name}</strong>
+                    {deletingStudentId === student.id ? (
+                      <div style={studentActionsStyle}>
+                        <button
+                          type="button"
+                          className={styles.submitButton}
+                          onClick={() => handleDeleteStudent(student.id)}
+                          disabled={deleteStudent.isPending}
+                        >
+                          Confirmar
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.select}
+                          onClick={() => setDeletingStudentId(null)}
+                          disabled={deleteStudent.isPending}
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className={styles.select}
+                        onClick={() => setDeletingStudentId(student.id)}
+                        disabled={deleteStudent.isPending}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                  <div>DNI: <strong>{student.dni}</strong></div>
+                  {student.schoolName ? <div>Colegio: <strong>{student.schoolName}</strong></div> : null}
+                  {student.courseName ? <div>Curso: <strong>{student.courseName}</strong></div> : null}
+                  {deletingStudentId === student.id ? (
+                    <p className={styles.helperWarning}>
+                      ¿Eliminar a {student.name}? Esta acción no se puede deshacer si no tiene cuotas.
+                    </p>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+
+            <form className={styles.form} onSubmit={handleAddStudent}>
+              <label className={styles.formField}>
+                <span className={styles.label}>Nombre completo</span>
+                <input
+                  className={styles.input}
+                  value={newStudent.name}
+                  onChange={(event) => setNewStudent((current) => ({ ...current, name: event.target.value }))}
+                />
+              </label>
+              <label className={styles.formField}>
+                <span className={styles.label}>DNI</span>
+                <input
+                  className={styles.input}
+                  value={newStudent.dni}
+                  onChange={(event) => setNewStudent((current) => ({ ...current, dni: event.target.value }))}
+                />
+              </label>
+              <div className={styles.formField}>
+                <SchoolAutocomplete
+                  label="Colegio"
+                  value={newStudent.schoolName ?? ""}
+                  onChange={(value) => setNewStudent((current) => ({ ...current, schoolName: value }))}
+                />
+              </div>
+              <label className={styles.formField}>
+                <span className={styles.label}>Curso</span>
+                <input
+                  className={styles.input}
+                  value={newStudent.courseName ?? ""}
+                  onChange={(event) => setNewStudent((current) => ({ ...current, courseName: event.target.value }))}
+                />
+              </label>
+
+              <button type="submit" className={styles.submitButton} disabled={addStudent.isPending}>
+                {addStudent.isPending ? "Agregando..." : "Agregar hijo"}
+              </button>
+
+              {studentFormError ? <p className={styles.errorText}>{studentFormError}</p> : null}
+              {studentSuccessMessage ? <p className={styles.successText}>{studentSuccessMessage}</p> : null}
+            </form>
           </section>
 
           <section className={styles.section}>
@@ -528,30 +740,28 @@ export function UserDashboardPage() {
               <label className={styles.formField}>
                 <span className={styles.label}>Seleccioná el viaje</span>
                 <select
-                  value={selectedTripIndex ?? ""}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setSelectedTripIndex(value === "" ? null : Number(value));
-                  }}
+                  value={selectedGroupKey ?? ""}
+                  onChange={(event) => setSelectedGroupKey(event.target.value === "" ? null : event.target.value)}
                   className={styles.select}
                 >
                   <option value="">Elegí una opción</option>
                   {groups.map((group, index) => (
-                    <option key={group.tripIndex} value={group.tripIndex}>
-                      Viaje {index + 1}
+                    <option key={group.groupKey} value={group.groupKey}>
+                      {getGroupDisplayName(group, index)}
                     </option>
                   ))}
                 </select>
               </label>
 
-              {selectedTripIndex != null && !selectedTripHasPending ? (
-                <p className={styles.helperWarning}>Este viaje no tiene cuotas pendientes</p>
+              {selectedGroupKey != null && !selectedTripHasPending ? (
+                <p className={styles.helperWarning}>Esta inscripción no tiene cuotas pendientes</p>
               ) : null}
 
               {selectedInstallment ? (
                 <div className={styles.selectedInfoBox}>
                   <div className={styles.selectedInfoHeader}>
                     <span>
+                      {selectedGroup?.studentName ? `${selectedGroup.studentName} · ` : ""}
                       Cuota {selectedInstallment.installmentNumber} · vence {formatReportedDate(selectedInstallment.dueDate)} ·{" "}
                       saldo {formatInstallmentAmount(selectedInstallment, selectedInstallmentRemaining)}
                     </span>
@@ -578,14 +788,19 @@ export function UserDashboardPage() {
                   forceClose={closeFolderSignal}
                   items={
                     receiptPreviewUrl
-                      ? [<img key="preview" src={receiptPreviewUrl} style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 6 }} alt="Vista previa" />]
+                      ? [
+                          <img
+                            key="preview"
+                            src={receiptPreviewUrl}
+                            style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 6 }}
+                            alt="Vista previa"
+                          />,
+                        ]
                       : []
                   }
                 />
                 <p className={styles.folderHint}>
-                  {receiptFile
-                    ? receiptFile.name
-                    : "Hacé click para adjuntar el comprobante (opcional)"}
+                  {receiptFile ? receiptFile.name : "Hacé click para adjuntar el comprobante (opcional)"}
                 </p>
               </label>
 
@@ -604,9 +819,7 @@ export function UserDashboardPage() {
               </label>
               {selectedInstallment ? (
                 <p className={styles.helperText}>
-                  Saldo restante sugerido:{" "}
-                  {formatInstallmentAmount(selectedInstallment, selectedInstallmentRemaining)}
-                  {" "}· Si pagás más, el excedente se aplica en cascada a cuotas siguientes.
+                  Saldo restante sugerido: {formatInstallmentAmount(selectedInstallment, selectedInstallmentRemaining)} · Si pagás más, el excedente se aplica en cascada a cuotas siguientes.
                 </p>
               ) : null}
 
@@ -679,11 +892,7 @@ export function UserDashboardPage() {
                 </select>
               </label>
 
-              <button
-                type="submit"
-                className={styles.submitButton}
-                disabled={!canSubmitPayment}
-              >
+              <button type="submit" className={styles.submitButton} disabled={!canSubmitPayment}>
                 {registerPayment.isPending ? "Enviando..." : "Enviar comprobante"}
               </button>
 

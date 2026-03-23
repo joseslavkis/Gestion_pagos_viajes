@@ -15,6 +15,11 @@ describe("UserDashboardPage", () => {
         HttpResponse.json([
           {
             tripId: 77,
+            studentId: 501,
+            studentName: "Martina Slavkis",
+            studentDni: "45678901",
+            schoolName: "Colegio Test",
+            courseName: "5A",
             installmentId: 101,
             installmentNumber: 1,
             dueDate: "2026-03-25",
@@ -30,6 +35,11 @@ describe("UserDashboardPage", () => {
           },
           {
             tripId: 77,
+            studentId: 501,
+            studentName: "Martina Slavkis",
+            studentDni: "45678901",
+            schoolName: "Colegio Test",
+            courseName: "5A",
             installmentId: 102,
             installmentNumber: 2,
             dueDate: "2026-04-25",
@@ -45,6 +55,11 @@ describe("UserDashboardPage", () => {
           },
           {
             tripId: 77,
+            studentId: 501,
+            studentName: "Martina Slavkis",
+            studentDni: "45678901",
+            schoolName: "Colegio Test",
+            courseName: "5A",
             installmentId: 103,
             installmentNumber: 3,
             dueDate: "2026-05-25",
@@ -60,6 +75,11 @@ describe("UserDashboardPage", () => {
           },
           {
             tripId: 77,
+            studentId: 501,
+            studentName: "Martina Slavkis",
+            studentDni: "45678901",
+            schoolName: "Colegio Test",
+            courseName: "5A",
             installmentId: 104,
             installmentNumber: 4,
             dueDate: "2026-06-25",
@@ -75,6 +95,11 @@ describe("UserDashboardPage", () => {
           },
           {
             tripId: 77,
+            studentId: 501,
+            studentName: "Martina Slavkis",
+            studentDni: "45678901",
+            schoolName: "Colegio Test",
+            courseName: "5A",
             installmentId: 105,
             installmentNumber: 5,
             dueDate: "2026-06-26",
@@ -104,6 +129,17 @@ describe("UserDashboardPage", () => {
             currency: "ARS",
             active: true,
             displayOrder: 1,
+          },
+        ]),
+      ),
+      http.get("http://localhost:30002/api/v1/users/students", () =>
+        HttpResponse.json([
+          {
+            id: 501,
+            name: "Martina Slavkis",
+            dni: "45678901",
+            schoolName: "Colegio Test",
+            courseName: "5A",
           },
         ]),
       ),
@@ -143,7 +179,7 @@ describe("UserDashboardPage", () => {
     ).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Seleccioná el viaje"), {
-      target: { value: "0" },
+      target: { value: "77:501" },
     });
 
     const amountInput = await screen.findByLabelText("Monto pagado");

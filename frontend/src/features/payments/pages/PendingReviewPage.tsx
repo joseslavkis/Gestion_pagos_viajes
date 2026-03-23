@@ -60,6 +60,7 @@ export function PendingReviewPage() {
         item.userEmail,
         item.tripName,
         item.studentName ?? "",
+        item.studentDni ?? "",
         item.bankAccountDisplayName ?? "",
         item.bankAccountAlias ?? "",
       ]
@@ -124,7 +125,10 @@ export function PendingReviewPage() {
                   <div className={styles.cardHeader}>
                     <div>
                       <h2 className={styles.cardTitle}>{item.userLastname}, {item.userName}</h2>
-                      <p className={styles.cardSubtitle}>{item.userEmail} · {item.studentName || "Sin alumno informado"}</p>
+                      <p className={styles.cardSubtitle}>
+                        {item.userEmail} · {item.studentName || "Sin alumno informado"}
+                        {item.studentDni ? ` · DNI ${item.studentDni}` : ""}
+                      </p>
                     </div>
                     <span className={styles.pendingBadge}>Pendiente</span>
                   </div>

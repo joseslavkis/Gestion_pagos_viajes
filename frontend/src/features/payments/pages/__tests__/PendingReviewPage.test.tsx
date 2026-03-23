@@ -35,6 +35,7 @@ describe("PendingReviewPage", () => {
         userLastname: "Slavkis",
         userEmail: "jose@example.com",
         studentName: "Alumno Test",
+        studentDni: "45678901",
       },
     ];
 

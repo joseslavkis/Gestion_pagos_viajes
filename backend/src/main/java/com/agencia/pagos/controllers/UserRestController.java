@@ -12,13 +12,17 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import com.agencia.pagos.dtos.request.AdminCreateDTO;
+import com.agencia.pagos.dtos.request.StudentCreateDTO;
 import com.agencia.pagos.dtos.request.UserCreateDTO;
 import com.agencia.pagos.dtos.request.UserUpdateDTO;
+import com.agencia.pagos.dtos.response.StudentDTO;
 import com.agencia.pagos.dtos.response.StatusResponseDTO;
 import com.agencia.pagos.dtos.response.TokenDTO;
 import com.agencia.pagos.dtos.response.UserProfileDTO;
-import com.agencia.pagos.entities.Role;
 import com.agencia.pagos.services.UserService;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/v1/users")
@@ -82,11 +86,41 @@ class UserRestController {
     @ApiResponse(responseCode = "401", description = "Unauthorized", content = @Content)
     @ApiResponse(responseCode = "409", description = "Email already register", content = @Content)
     ResponseEntity<TokenDTO> createAdmin(
-            @Valid @RequestBody UserCreateDTO userDTO
+            @Valid @RequestBody AdminCreateDTO userDTO
     ) {
-        return userService.createUser(userDTO, Role.ADMIN)
+        return userService.createAdmin(userDTO)
                 .map(tk -> ResponseEntity.status(HttpStatus.CREATED).body(tk))
                 .orElse(ResponseEntity.status(HttpStatus.CONFLICT).build());
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping(value = "/students", produces = "application/json")
+    @Operation(summary = "List the authenticated user's students")
+    ResponseEntity<List<StudentDTO>> getStudents(
+            @AuthenticationPrincipal(expression = "username") String email
+    ) {
+        return ResponseEntity.ok(userService.getStudentsForCurrentUser(email));
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @PostMapping(value = "/students", produces = "application/json")
+    @Operation(summary = "Add a student to the authenticated user")
+    ResponseEntity<StudentDTO> addStudent(
+            @AuthenticationPrincipal(expression = "username") String email,
+            @Valid @RequestBody StudentCreateDTO studentDTO
+    ) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(userService.addStudentForCurrentUser(email, studentDTO));
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @DeleteMapping(value = "/students/{studentId}", produces = "application/json")
+    @Operation(summary = "Delete a student from the authenticated user")
+    ResponseEntity<StatusResponseDTO> deleteStudent(
+            @AuthenticationPrincipal(expression = "username") String email,
+            @PathVariable Long studentId
+    ) {
+        userService.deleteStudentForCurrentUser(email, studentId);
+        return ResponseEntity.ok(new StatusResponseDTO("success", "Student deleted"));
     }
 
     @PreAuthorize("isAuthenticated()")

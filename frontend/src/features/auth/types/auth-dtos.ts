@@ -9,6 +9,15 @@ export const UserLoginDTOSchema = z.object({
 
 export type UserLoginDTO = z.infer<typeof UserLoginDTOSchema>;
 
+export const StudentCreateSchema = z.object({
+  name: z.string().min(2, "El nombre debe tener al menos 2 caracteres"),
+  dni: z.string().regex(/^\d{7,8}$/, "El DNI debe tener 7 u 8 números"),
+  schoolName: z.string().optional(),
+  courseName: z.string().optional(),
+});
+
+export type StudentCreateDTO = z.infer<typeof StudentCreateSchema>;
+
 export const UserCreateDTOSchema = z.object({
   email: z.string().email("Debe ser un email válido (ej: nombre@gmail.com)"),
   password: z
@@ -20,12 +29,8 @@ export const UserCreateDTOSchema = z.object({
   name: z.string().min(2, "El nombre debe tener al menos 2 caracteres"),
   lastname: z.string().min(2, "El apellido debe tener al menos 2 caracteres"),
   dni: z.string().regex(/^\d{7,8}$/, "El DNI debe tener 7 u 8 números"),
-  studentName: z.string().min(2, "El nombre del hijo/a debe tener al menos 2 caracteres"),
-  studentDni: z.string().regex(/^\d{7,8}$/, "El DNI del hijo/a debe tener 7 u 8 números"),
-  // Optional fields from backend UserCreateDTO
-  phone: z.string().optional(),
-  schoolName: z.string().optional(),
-  courseName: z.string().optional(),
+  phone: z.string().min(6, "Ingresá un teléfono válido"),
+  students: z.array(StudentCreateSchema).min(1).max(10),
 });
 
 export type UserCreateDTO = z.infer<typeof UserCreateDTOSchema>;
@@ -45,4 +50,3 @@ export const LoginResponseSchema = TokenDTOSchema;
 export type LoginRequest = UserLoginDTO;
 export type SignupRequest = UserCreateDTO;
 export type LoginResponse = TokenDTO;
-

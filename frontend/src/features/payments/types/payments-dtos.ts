@@ -46,6 +46,11 @@ export type PaymentReceiptDTO = z.infer<typeof PaymentReceiptDTOSchema>;
 
 export const UserInstallmentDTOSchema = z.object({
   tripId: z.number(),
+  studentId: z.number().nullable(),
+  studentName: z.string().nullable(),
+  studentDni: z.string().nullable(),
+  schoolName: z.string().nullable(),
+  courseName: z.string().nullable(),
   installmentId: z.number(),
   installmentNumber: z.number(),
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -115,6 +120,7 @@ export const PendingPaymentReviewDTOSchema = z.object({
   userLastname: z.string(),
   userEmail: z.string(),
   studentName: z.string().nullable(),
+  studentDni: z.string().nullable(),
 });
 
 export type PendingPaymentReviewDTO = z.infer<typeof PendingPaymentReviewDTOSchema>;

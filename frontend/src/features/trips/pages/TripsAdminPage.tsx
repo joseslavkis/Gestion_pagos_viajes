@@ -151,7 +151,7 @@ type TripCardProps = {
 
 function TripCard({ trip, onAssign, onDelete }: TripCardProps) {
   const [, setLocation] = useLocation();
-  const status = trip.assignedUsersCount > 0 ? "active" : "configuring";
+  const status = trip.assignedParticipantsCount > 0 ? "active" : "configuring";
   const isActive = status === "active";
 
   const tripAmountLabel =
@@ -170,7 +170,7 @@ function TripCard({ trip, onAssign, onDelete }: TripCardProps) {
             type="button"
             className={styles.cardTitle}
             onClick={() => {
-              if (trip.assignedUsersCount > 0) {
+              if (trip.assignedParticipantsCount > 0) {
                 setLocation(`/trips/${trip.id}/spreadsheet`);
               }
             }}
@@ -178,7 +178,7 @@ function TripCard({ trip, onAssign, onDelete }: TripCardProps) {
             {trip.name}
           </button>
           <p className={styles.cardMeta}>
-            {trip.installmentsCount} cuotas · {trip.assignedUsersCount} participantes
+            {trip.installmentsCount} cuotas · {trip.assignedParticipantsCount} participantes
           </p>
         </div>
         <span
@@ -193,7 +193,7 @@ function TripCard({ trip, onAssign, onDelete }: TripCardProps) {
         <span className={styles.label}>Monto total</span>
         <span className={styles.value}>{tripAmountLabel}</span>
         <span className={styles.label}>Usuarios asignados</span>
-        <span className={styles.value}>{trip.assignedUsersCount}</span>
+        <span className={styles.value}>{trip.assignedParticipantsCount}</span>
       </div>
       <div className={styles.cardFooter}>
         <button
@@ -205,25 +205,25 @@ function TripCard({ trip, onAssign, onDelete }: TripCardProps) {
           👥 Asignar usuarios
         </button>
         <TooltipWrapper
-          disabled={trip.assignedUsersCount > 0}
+          disabled={trip.assignedParticipantsCount > 0}
           message="Asigna usuarios primero para ver la plantilla"
         >
           <button
             type="button"
             className={`${styles.chipButton} ${
-              trip.assignedUsersCount === 0 ? styles.chipDisabled : ""
+              trip.assignedParticipantsCount === 0 ? styles.chipDisabled : ""
             }`}
             onClick={() => {
-              if (trip.assignedUsersCount > 0) {
+              if (trip.assignedParticipantsCount > 0) {
                 setLocation(`/trips/${trip.id}/spreadsheet`);
               }
             }}
             aria-label={
-              trip.assignedUsersCount > 0
+              trip.assignedParticipantsCount > 0
                 ? `Ver plantilla del viaje ${trip.name}`
                 : `No se puede ver la plantilla de ${trip.name} porque aún no tiene usuarios asignados`
             }
-            disabled={trip.assignedUsersCount === 0}
+            disabled={trip.assignedParticipantsCount === 0}
           >
             📊 Ver plantilla
           </button>
@@ -526,25 +526,25 @@ function AssignUsersModal({ tripId, tripName, onClose }: AssignUsersModalProps) 
   const { mutateAsync, error, isPending, data } = useAssignUsersBulk();
   const [rawInput, setRawInput] = useState("");
 
-  const parsedIds = useMemo(() => {
+  const parsedDnis = useMemo(() => {
     const parts = rawInput
       .split(/[\s,]+/)
       .map((part) => part.trim())
       .filter((part) => part.length > 0);
-    const numbers = parts.map((part) => Number(part)).filter((value) => Number.isInteger(value) && value >= 0);
-    const unique = Array.from(new Set(numbers));
+    const validDnis = parts.filter((part) => /^\d{7,8}$/.test(part));
+    const unique = Array.from(new Set(validDnis));
     return unique.slice(0, 500);
   }, [rawInput]);
 
   const parsedDtoResult = useMemo(() => {
     try {
-      return UserAssignBulkDTOSchema.parse({ userIds: parsedIds });
+      return UserAssignBulkDTOSchema.parse({ studentDnis: parsedDnis });
     } catch {
       return null;
     }
-  }, [parsedIds]);
+  }, [parsedDnis]);
 
-  const hasValidIds = parsedDtoResult !== null && parsedDtoResult.userIds.length > 0;
+  const hasValidIds = parsedDtoResult !== null && parsedDtoResult.studentDnis.length > 0;
 
   const handleSubmit = async () => {
     if (!parsedDtoResult) {
@@ -562,29 +562,29 @@ function AssignUsersModal({ tripId, tripName, onClose }: AssignUsersModalProps) 
   return (
     <ModalShell
       title={`Asignar usuarios a ${tripName}`}
-      description="Pega o escribe los IDs de usuario separados por coma o salto de línea. Máximo 500 IDs, sin duplicados."
+      description="Pega los DNIs de los alumnos separados por coma, espacio o salto de línea. Máximo 500 DNIs, sin duplicados."
       onClose={onClose}
     >
       <RequestState
         isLoading={isPending}
         error={error ?? null}
-        loadingLabel="Asignando usuarios al viaje..."
+        loadingLabel="Asignando alumnos al viaje..."
       >
         <>
           <label className={styles.fieldGroup}>
-            <span className={styles.label}>IDs de usuario</span>
+            <span className={styles.label}>DNIs de alumnos</span>
             <textarea
               className={styles.idsTextArea}
               value={rawInput}
               onChange={(event) => setRawInput(event.target.value)}
-              placeholder="Ej: 101, 102, 103 o uno por línea"
+              placeholder="Ej: 45678901, 45678902 o uno por línea"
             />
             <p className={styles.idsHelper}>
-              Se aceptan solo números. Los duplicados se eliminarán automáticamente. Máximo 500 IDs.
+              Ingresá los DNIs de los alumnos. Solo números de 7-8 dígitos.
             </p>
             <p className={styles.idsPreview}>
-              IDs válidos detectados: {parsedIds.length}
-              {parsedIds.length > 0 ? ` · Se enviarán ${Math.min(parsedIds.length, 500)} IDs` : ""}
+              DNIs válidos detectados: {parsedDnis.length}
+              {parsedDnis.length > 0 ? ` · Se enviarán ${Math.min(parsedDnis.length, 500)} DNIs` : ""}
             </p>
           </label>
           <div className={styles.modalFooter}>
@@ -627,9 +627,9 @@ function DeleteTripModal({ trip, onClose }: DeleteTripModalProps) {
         error={error ?? null}
         loadingLabel="Eliminando viaje..."
       >
-        {trip.assignedUsersCount > 0 ? (
+        {trip.assignedParticipantsCount > 0 ? (
           <div className={styles.warningBox} role="alert">
-            <strong>Advertencia:</strong> este viaje tiene {trip.assignedUsersCount} integrante{trip.assignedUsersCount === 1 ? "" : "s"} asignado{trip.assignedUsersCount === 1 ? "" : "s"}.
+            <strong>Advertencia:</strong> este viaje tiene {trip.assignedParticipantsCount} integrante{trip.assignedParticipantsCount === 1 ? "" : "s"} asignado{trip.assignedParticipantsCount === 1 ? "" : "s"}.
             Al eliminarlo también se borrarán todas sus cuotas generadas y el historial asociado a esas cuotas.
           </div>
         ) : null}
