@@ -12,6 +12,8 @@ public interface InstallmentRepository extends JpaRepository<Installment, Long> 
 
   List<Installment> findByUserId(Long userId);
 
+    void deleteByTripId(Long tripId);
+
     @Query("SELECT i FROM Installment i JOIN FETCH i.trip WHERE i.id = :id")
     Optional<Installment> findByIdWithTrip(@Param("id") Long id);
 
@@ -94,5 +96,7 @@ public interface InstallmentRepository extends JpaRepository<Installment, Long> 
      */
     @Query("SELECT i FROM Installment i JOIN FETCH i.user WHERE i.trip.id = :tripId")
     List<Installment> findByTripIdWithUsers(@Param("tripId") Long tripId);
-}
 
+    @Query("SELECT i FROM Installment i JOIN FETCH i.user JOIN FETCH i.trip")
+    List<Installment> findAllWithUserAndTrip();
+}

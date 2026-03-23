@@ -4,13 +4,15 @@ import { useLocation } from "wouter";
 import { CommonLayout } from "@/components/CommonLayout/CommonLayout";
 import { RequestState } from "@/components/ui/RequestState/RequestState";
 import { PaymentDrawer } from "@/features/payments/components/PaymentDrawer";
-import { useTrip } from "@/features/trips/services/trips-service";
-import { useSpreadsheet } from "@/features/trips/services/trips-service";
+import { downloadSpreadsheetExcel, useSpreadsheet, useTrip } from "@/features/trips/services/trips-service";
 import type {
   SpreadsheetParams,
   SpreadsheetRowDTO,
   SpreadsheetRowInstallmentDTO,
 } from "@/features/trips/types/trips-dtos";
+import { ApiError } from "@/lib/api-error";
+import { resolveInstallmentBaseDisplay } from "@/lib/installment-status";
+import { useToken } from "@/lib/session";
 
 import styles from "./SpreadsheetPage.module.css";
 
@@ -30,6 +32,7 @@ type SelectedInstallment = {
 
 export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
   const [, setLocation] = useLocation();
+  const [tokenState] = useToken();
 
   const [params, setParams] = useState<SpreadsheetParams>({
     page: 0,
@@ -42,6 +45,8 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
   const [rawSearch, setRawSearch] = useState("");
   const [hasScrolledHorizontally, setHasScrolledHorizontally] = useState(false);
   const [selected, setSelected] = useState<SelectedInstallment | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const tableContainerRef = useRef<HTMLDivElement | null>(null);
 
   const { data, isLoading, error } = useSpreadsheet(tripId, params);
@@ -135,8 +140,27 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
     }));
   };
 
+  const handleExport = async () => {
+    if (tokenState.state !== "LOGGED_IN") return;
+    setIsExporting(true);
+    setExportError(null);
+    try {
+      await downloadSpreadsheetExcel(
+        tripId,
+        data?.tripName ?? String(tripId),
+        tokenState.accessToken,
+      );
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "No se pudo descargar el archivo.";
+      setExportError(message);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const rows = data?.rows ?? [];
   const installmentsCount = data?.installmentsCount ?? 0;
+  const yellowWarningDays = tripData?.yellowWarningDays ?? 0;
 
   return (
     <CommonLayout>
@@ -151,6 +175,22 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
               >
                 ← Volver a viajes
               </button>
+              <div className={styles.exportWrapper}>
+                <button
+                  type="button"
+                  className={styles.exportButton}
+                  onClick={handleExport}
+                  disabled={isExporting || !data}
+                  aria-label="Exportar planilla como archivo Excel"
+                >
+                  {isExporting ? "Descargando..." : "⬇ Exportar Excel"}
+                </button>
+                {exportError ? (
+                  <p className={styles.exportError} role="alert">
+                    {exportError}
+                  </p>
+                ) : null}
+              </div>
               <div className={styles.titleBlock}>
                 <h1 className={styles.title}>{data?.tripName ?? "Planilla de viaje"}</h1>
                 <p className={styles.subtitle}>
@@ -275,8 +315,16 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                                 );
                               }
 
-                              const statusClass = getStatusClass(installment.status, installment.dueDate);
-                              const icon = getStatusIcon(installment.status, installment.dueDate);
+                              const statusClass = getStatusClass(
+                                installment.status,
+                                installment.dueDate,
+                                yellowWarningDays,
+                              );
+                              const icon = getStatusIcon(
+                                installment.status,
+                                installment.dueDate,
+                                yellowWarningDays,
+                              );
 
                               return (
                                 <td
@@ -355,61 +403,45 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
             </div>
           </RequestState>
 
-          {selected ? <PaymentDrawer installment={selected.installment} row={selected.row} onClose={() => setSelected(null)} /> : null}
+          {selected ? (
+            <PaymentDrawer
+              installment={selected.installment}
+              row={selected.row}
+              yellowWarningDays={yellowWarningDays}
+              onClose={() => setSelected(null)}
+            />
+          ) : null}
         </div>
       </section>
     </CommonLayout>
   );
 }
 
-function getStatusClass(status: SpreadsheetRowInstallmentDTO["status"], dueDate: string): { pill: string; dot: string } {
-  switch (status) {
-    case "GREEN":
+function getStatusClass(
+  status: SpreadsheetRowInstallmentDTO["status"],
+  dueDate: string,
+  yellowWarningDays: number,
+): { pill: string; dot: string } {
+  const display = resolveInstallmentBaseDisplay(status, dueDate, yellowWarningDays);
+
+  switch (display.tone) {
+    case "green":
       return { pill: styles.statusGreen, dot: styles.statusGreenDot };
-    case "YELLOW": {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const due = new Date(dueDate);
-      due.setHours(0, 0, 0, 0);
-      const diffDays = Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-      
-      if (diffDays <= 30) {
-        return { pill: styles.statusYellow, dot: styles.statusYellowDot };
-      }
-      return { pill: styles.statusGreen, dot: styles.statusGreenDot };
-    }
-    case "RED":
+    case "yellow":
+      return { pill: styles.statusYellow, dot: styles.statusYellowDot };
+    case "red":
       return { pill: styles.statusRed, dot: styles.statusRedDot };
-    case "RETROACTIVE":
+    case "retro":
       return { pill: styles.statusRetro, dot: styles.statusRetroDot };
     default:
       return { pill: "", dot: "" };
   }
 }
 
-function getStatusIcon(status: SpreadsheetRowInstallmentDTO["status"], dueDate: string): string {
-  switch (status) {
-    case "GREEN":
-      return "Pagada";
-    case "YELLOW": {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const due = new Date(dueDate);
-      due.setHours(0, 0, 0, 0);
-      const diffDays = Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-      
-      if (diffDays <= 30) {
-        return "Vence pronto";
-      }
-      return "Al día";
-    }
-    case "RED":
-      return "Vencida";
-    case "RETROACTIVE":
-      return "Deuda retroactiva";
-    default:
-      return "Al día";
-  }
+function getStatusIcon(
+  status: SpreadsheetRowInstallmentDTO["status"],
+  dueDate: string,
+  yellowWarningDays: number,
+): string {
+  return resolveInstallmentBaseDisplay(status, dueDate, yellowWarningDays).label;
 }
-
-

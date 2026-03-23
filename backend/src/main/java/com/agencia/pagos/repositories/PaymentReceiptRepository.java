@@ -12,6 +12,8 @@ public interface PaymentReceiptRepository extends JpaRepository<PaymentReceipt, 
 
     List<PaymentReceipt> findByInstallmentId(Long installmentId);
 
+    void deleteByInstallmentTripId(Long tripId);
+
     List<PaymentReceipt> findByInstallmentIdAndStatus(Long installmentId, ReceiptStatus status);
 
     List<PaymentReceipt> findByInstallmentUserId(Long userId);

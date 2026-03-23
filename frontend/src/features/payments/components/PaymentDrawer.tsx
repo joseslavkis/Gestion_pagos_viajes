@@ -13,6 +13,7 @@ import type {
   SpreadsheetRowDTO,
   SpreadsheetRowInstallmentDTO,
 } from "@/features/trips/types/trips-dtos";
+import { resolveInstallmentBaseDisplay } from "@/lib/installment-status";
 
 import styles from "@/features/trips/pages/SpreadsheetPage.module.css";
 
@@ -56,10 +57,11 @@ function formatDate(isoDate: string): string {
 type PaymentDrawerProps = {
   installment: SpreadsheetRowInstallmentDTO;
   row: SpreadsheetRowDTO;
+  yellowWarningDays: number;
   onClose: () => void;
 };
 
-export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps) {
+export function PaymentDrawer({ installment, row, yellowWarningDays, onClose }: PaymentDrawerProps) {
   const {
     data: receipts,
     isLoading: isReceiptsLoading,
@@ -164,7 +166,7 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
                 Vencimiento: <span className={styles.strong}>{formatDate(installment.dueDate)}</span>
               </div>
               <div>
-                Estado: <StatusBadge status={installment.status} dueDate={installment.dueDate} />
+                Estado: <StatusBadge status={installment.status} dueDate={installment.dueDate} yellowWarningDays={yellowWarningDays} />
               </div>
             </div>
           </section>
@@ -296,11 +298,12 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
 type StatusBadgeProps = {
   status: SpreadsheetRowInstallmentDTO["status"];
   dueDate: string;
+  yellowWarningDays: number;
 };
 
-function StatusBadge({ status, dueDate }: StatusBadgeProps) {
-  const classes = getStatusClass(status, dueDate);
-  const label = getStatusIcon(status, dueDate);
+function StatusBadge({ status, dueDate, yellowWarningDays }: StatusBadgeProps) {
+  const classes = getStatusClass(status, dueDate, yellowWarningDays);
+  const label = getStatusIcon(status, dueDate, yellowWarningDays);
 
   return (
     <span className={`${styles.statusPill} ${classes.pill}`}>
@@ -310,53 +313,31 @@ function StatusBadge({ status, dueDate }: StatusBadgeProps) {
   );
 }
 
-function getStatusClass(status: SpreadsheetRowInstallmentDTO["status"], dueDate: string): { pill: string; dot: string } {
-  switch (status) {
-    case "GREEN":
+function getStatusClass(
+  status: SpreadsheetRowInstallmentDTO["status"],
+  dueDate: string,
+  yellowWarningDays: number,
+): { pill: string; dot: string } {
+  const display = resolveInstallmentBaseDisplay(status, dueDate, yellowWarningDays);
+
+  switch (display.tone) {
+    case "green":
       return { pill: styles.statusGreen, dot: styles.statusGreenDot };
-    case "YELLOW": {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const due = new Date(dueDate);
-      due.setHours(0, 0, 0, 0);
-      const diffDays = Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-      
-      if (diffDays <= 30) {
-        return { pill: styles.statusYellow, dot: styles.statusYellowDot };
-      }
-      return { pill: styles.statusGreen, dot: styles.statusGreenDot };
-    }
-    case "RED":
+    case "yellow":
+      return { pill: styles.statusYellow, dot: styles.statusYellowDot };
+    case "red":
       return { pill: styles.statusRed, dot: styles.statusRedDot };
-    case "RETROACTIVE":
+    case "retro":
       return { pill: styles.statusRetro, dot: styles.statusRetroDot };
     default:
       return { pill: "", dot: "" };
   }
 }
 
-function getStatusIcon(status: SpreadsheetRowInstallmentDTO["status"], dueDate: string): string {
-  switch (status) {
-    case "GREEN":
-      return "Pagada";
-    case "YELLOW": {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const due = new Date(dueDate);
-      due.setHours(0, 0, 0, 0);
-      const diffDays = Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-      
-      if (diffDays <= 30) {
-        return "Vence pronto";
-      }
-      return "Al día";
-    }
-    case "RED":
-      return "Vencida";
-    case "RETROACTIVE":
-      return "Deuda retroactiva";
-    default:
-      return "Al día";
-  }
+function getStatusIcon(
+  status: SpreadsheetRowInstallmentDTO["status"],
+  dueDate: string,
+  yellowWarningDays: number,
+): string {
+  return resolveInstallmentBaseDisplay(status, dueDate, yellowWarningDays).label;
 }
-

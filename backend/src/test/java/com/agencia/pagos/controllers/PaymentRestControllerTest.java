@@ -5,6 +5,7 @@ import com.agencia.pagos.dtos.request.RegisterPaymentDTO;
 import com.agencia.pagos.dtos.request.ReviewPaymentDTO;
 import com.agencia.pagos.dtos.request.UserCreateDTO;
 import com.agencia.pagos.dtos.response.TokenDTO;
+import com.agencia.pagos.entities.Currency;
 import com.agencia.pagos.entities.Installment;
 import com.agencia.pagos.entities.InstallmentStatus;
 import com.agencia.pagos.entities.PaymentMethod;
@@ -339,6 +340,47 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 .andExpect(jsonPath("$", hasSize(2)))
                 .andExpect(jsonPath("$[0].id").value(second.getId()))
                 .andExpect(jsonPath("$[1].id").value(first.getId()));
+    }
+
+    @Test
+    void getMyInstallments_incluyeYellowWarningDaysDelViaje() throws Exception {
+        UserCreateDTO participantDto = buildValidUser("payment-my-installments");
+        TokenDTO userTokens = signUp(participantDto);
+        User user = userRepository.findByEmail(participantDto.email()).orElseThrow();
+
+        Trip trip = new Trip();
+        trip.setName("Trip payment my-installments");
+        trip.setCurrency(Currency.USD);
+        trip.setTotalAmount(BigDecimal.valueOf(120000));
+        trip.setInstallmentsCount(12);
+        trip.setDueDay(10);
+        trip.setYellowWarningDays(5);
+        trip.setFixedFineAmount(BigDecimal.valueOf(5000));
+        trip.setRetroactiveActive(false);
+        trip.setFirstDueDate(LocalDate.now().plusMonths(1));
+        trip.getAssignedUsers().add(user);
+        trip = tripRepository.save(trip);
+
+        Installment installment = new Installment();
+        installment.setTrip(trip);
+        installment.setUser(user);
+        installment.setInstallmentNumber(1);
+        installment.setDueDate(LocalDate.now().plusDays(10));
+        installment.setCapitalAmount(BigDecimal.valueOf(10000));
+        installment.setRetroactiveAmount(BigDecimal.ZERO);
+        installment.setFineAmount(BigDecimal.ZERO);
+        installment.setStatus(InstallmentStatus.YELLOW);
+        installment.recalculateTotalDue();
+        installmentRepository.save(installment);
+
+        mockMvc.perform(get("/api/v1/payments/my/installments")
+                        .header("Authorization", "Bearer " + userTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].tripId").value(trip.getId()))
+                .andExpect(jsonPath("$[0].yellowWarningDays").value(5))
+                .andExpect(jsonPath("$[0].tripCurrency").value("USD"))
+                .andExpect(jsonPath("$[0].installmentStatus").value("YELLOW"));
     }
 
     private Installment createInstallmentWithStatus(String prefix, InstallmentStatus status) throws Exception {

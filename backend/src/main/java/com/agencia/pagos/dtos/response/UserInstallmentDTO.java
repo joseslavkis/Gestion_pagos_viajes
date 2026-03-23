@@ -14,6 +14,7 @@ public record UserInstallmentDTO(
         LocalDate dueDate,
         BigDecimal totalDue,
         BigDecimal paidAmount,
+        Integer yellowWarningDays,
         Currency tripCurrency,
         InstallmentStatus installmentStatus,
         ReceiptStatus latestReceiptStatus,

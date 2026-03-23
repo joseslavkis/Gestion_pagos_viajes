@@ -19,7 +19,7 @@ function translateBackendMessage(message: string): string {
     "Cannot modify firstDueDate on a trip that already has assigned users.":
       "No se puede modificar la fecha de vencimiento de un viaje que ya tiene usuarios asignados.",
     "Cannot delete a trip with assigned users":
-      "No se puede eliminar un viaje que tiene usuarios asignados.",
+      "No se pudo eliminar el viaje.",
     "Esta cuota ya está pagada":
       "Esta cuota ya está pagada.",
     "Ya existe un comprobante pendiente de revisión para esta cuota":
@@ -33,7 +33,7 @@ function translateBackendMessage(message: string): string {
     "No podés registrar un pago para una cuota que no es tuya":
       "No podés registrar un pago para una cuota que no es tuya.",
     "No se puede eliminar el viaje porque hay usuarios con cuotas pendientes de pago.":
-      "No se puede eliminar el viaje porque hay usuarios con cuotas pendientes de pago.",
+      "No se pudo eliminar el viaje.",
     "Trip not found":
       "El viaje no fue encontrado.",
     "User not found":
@@ -122,4 +122,3 @@ export async function handleApiResponse(response: Response): Promise<never> {
   // pero generalmente para 409 o 401 devolvemos nuestro friendly message.
   throw new ApiError(status, userFriendlyMessage, rawMessage, fieldErrors);
 }
-

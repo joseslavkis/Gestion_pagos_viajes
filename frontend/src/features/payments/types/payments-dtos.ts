@@ -33,6 +33,7 @@ export const UserInstallmentDTOSchema = z.object({
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   totalDue: MoneySchema,
   paidAmount: MoneySchema,
+  yellowWarningDays: z.number().int().nonnegative(),
   tripCurrency: CurrencySchema,
   installmentStatus: z.enum(["GREEN", "YELLOW", "RED", "RETROACTIVE"]),
   latestReceiptStatus: ReceiptStatusSchema.nullable(),

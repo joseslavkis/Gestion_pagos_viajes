@@ -384,6 +384,17 @@
   line-height: 1.35;
 }
 
+.warningBox {
+  margin-bottom: 0.85rem;
+  padding: 0.8rem 0.9rem;
+  border-radius: 0.9rem;
+  background: rgba(255, 247, 237, 0.98);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #9a3412;
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
 .tooltipWrapper {
   position: relative;
   display: inline-block;
@@ -428,4 +439,3 @@
     background-position: 200% 0;
   }
 }
-

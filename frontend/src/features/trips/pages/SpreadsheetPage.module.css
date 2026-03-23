@@ -44,6 +44,47 @@
   font-weight: 600;
 }
 
+.exportWrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+}
+
+.exportButton {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.6rem 1rem;
+  border-radius: 999px;
+  border: 1px solid rgba(22, 163, 74, 0.45);
+  background: rgba(22, 163, 74, 0.08);
+  color: #14532d;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 180ms ease, transform 180ms ease;
+}
+
+.exportButton:hover:not(:disabled) {
+  background: rgba(22, 163, 74, 0.15);
+  transform: translateY(-1px);
+}
+
+.exportButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.exportError {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #b91c1c;
+  max-width: 220px;
+}
+
 .titleBlock {
   display: flex;
   flex-direction: column;
@@ -221,11 +262,18 @@
 }
 
 .cellPartial {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   margin-top: 0.2rem;
   font-size: 0.72rem;
   color: #526883;
-  gap: 0.1rem;
+  gap: 0.14rem;
+  line-height: 1.25;
+}
+
+.cellPartial span {
+  display: block;
   white-space: nowrap;
 }
 
@@ -444,6 +492,16 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .titleBlock {
+    order: 2;
+    width: 100%;
+  }
+
+  .exportWrapper {
+    order: 3;
+    width: 100%;
+  }
+
   .userCol,
   .userCell {
     min-width: 160px;
@@ -462,6 +520,14 @@
 @media (prefers-reduced-motion: reduce) {
   .skeletonBlock {
     animation: none;
+  }
+
+  .exportButton {
+    transition: none;
+  }
+
+  .exportButton:hover:not(:disabled) {
+    transform: none;
   }
 }
 

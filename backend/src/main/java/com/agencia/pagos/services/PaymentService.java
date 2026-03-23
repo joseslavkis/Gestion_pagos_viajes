@@ -342,6 +342,7 @@ public class PaymentService {
                             installment.getDueDate(),
                             installment.getTotalDue(),
                             installment.getPaidAmount(),
+                            yellowDays,
                             installment.getTrip().getCurrency(),
                             installmentStatusResolver.computeEffective(
                                 installment.getStatus(), installment.getDueDate(), yellowDays),

@@ -15,6 +15,8 @@ import com.agencia.pagos.entities.InstallmentStatus;
 import com.agencia.pagos.entities.Trip;
 import com.agencia.pagos.entities.user.User;
 import com.agencia.pagos.repositories.InstallmentRepository;
+import com.agencia.pagos.repositories.InstallmentReminderNotificationRepository;
+import com.agencia.pagos.repositories.PaymentReceiptRepository;
 import com.agencia.pagos.repositories.TripRepository;
 import com.agencia.pagos.repositories.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -43,19 +45,28 @@ public class TripService {
     private final TripRepository tripRepository;
     private final UserRepository userRepository;
     private final InstallmentRepository installmentRepository;
+    private final PaymentReceiptRepository paymentReceiptRepository;
+    private final InstallmentReminderNotificationRepository installmentReminderNotificationRepository;
     private final InstallmentStatusResolver installmentStatusResolver;
+    private final TripExcelExporter tripExcelExporter;
 
     @Autowired
     public TripService(
             TripRepository tripRepository,
             UserRepository userRepository,
             InstallmentRepository installmentRepository,
-            InstallmentStatusResolver installmentStatusResolver
+            PaymentReceiptRepository paymentReceiptRepository,
+            InstallmentReminderNotificationRepository installmentReminderNotificationRepository,
+            InstallmentStatusResolver installmentStatusResolver,
+            TripExcelExporter tripExcelExporter
     ) {
         this.tripRepository = tripRepository;
         this.userRepository = userRepository;
         this.installmentRepository = installmentRepository;
+        this.paymentReceiptRepository = paymentReceiptRepository;
+        this.installmentReminderNotificationRepository = installmentReminderNotificationRepository;
         this.installmentStatusResolver = installmentStatusResolver;
+        this.tripExcelExporter = tripExcelExporter;
     }
 
     // Backward-compatible constructor for tests that still instantiate TripService with 3 args.
@@ -64,7 +75,15 @@ public class TripService {
             UserRepository userRepository,
             InstallmentRepository installmentRepository
     ) {
-        this(tripRepository, userRepository, installmentRepository, new InstallmentStatusResolver());
+        this(
+                tripRepository,
+                userRepository,
+                installmentRepository,
+                null,
+                null,
+                new InstallmentStatusResolver(),
+                new TripExcelExporter()
+        );
     }
 
     public TripDetailDTO createTrip(TripCreateDTO dto) {
@@ -125,25 +144,15 @@ public class TripService {
         Trip trip = tripRepository.findByIdWithUsers(id)
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + id));
 
-        if (!trip.getAssignedUsers().isEmpty()) {
-            // Verificar si todos los usuarios tienen todas sus cuotas pagadas
-            boolean allUsersCompleted = trip.getAssignedUsers().stream()
-                .allMatch(user -> {
-                    List<Installment> userInstallments = installmentRepository
-                        .findByTripIdAndUserId(trip.getId(), user.getId());
-                    return !userInstallments.isEmpty() &&
-                        userInstallments.stream()
-                            .allMatch(i -> i.getStatus() == InstallmentStatus.GREEN);
-                });
-
-            if (!allUsersCompleted) {
-                throw new IllegalStateException(
-                    "No se puede eliminar el viaje porque hay usuarios con cuotas pendientes de pago.");
-            }
-            // Si todos están completados, permitir eliminar
-            // CascadeType.ALL en Trip.installments se encarga de borrar las cuotas
-            // La tabla trip_user se limpia al borrar el trip por el JoinTable
+        if (paymentReceiptRepository != null) {
+            paymentReceiptRepository.deleteByInstallmentTripId(trip.getId());
         }
+        if (installmentReminderNotificationRepository != null) {
+            installmentReminderNotificationRepository.deleteByInstallmentTripId(trip.getId());
+        }
+        installmentRepository.deleteByTripId(trip.getId());
+
+        trip.getAssignedUsers().clear();
 
         tripRepository.delete(trip);
     }
@@ -158,84 +167,16 @@ public class TripService {
             String order,
             InstallmentStatus status
     ) {
-        if (size > 100) {
-            throw new IllegalArgumentException("Page size cannot exceed 100");
-        }
+        return buildSpreadsheet(tripId, page, size, search, sortBy, order, status, true);
+    }
 
+    @Transactional(readOnly = true)
+    public byte[] exportSpreadsheetAsExcel(Long tripId) {
         Trip trip = tripRepository.findById(tripId)
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + tripId));
 
-        int safeSize = Math.max(1, size);
-        int safePage = Math.max(0, page);
-        int offset = safePage * safeSize;
-
-        String normalizedSortBy = normalizeSortBy(sortBy);
-        String normalizedOrder = normalizeOrder(order);
-
-        long totalElements = installmentRepository.countFilteredUsersForSpreadsheet(tripId, search);
-
-        List<Object[]> pagedUsers = installmentRepository.findPagedUsersForSpreadsheet(
-            tripId,
-            search,
-            normalizedSortBy,
-            normalizedOrder,
-            safeSize,
-            offset
-        );
-
-        List<Long> userIds = pagedUsers.stream()
-            .map(row -> ((Number) row[0]).longValue())
-            .toList();
-
-        Map<Long, List<Installment>> installmentsByUserId = userIds.isEmpty()
-            ? Map.of()
-            : installmentRepository.findInstallmentsByTripAndUserIds(tripId, userIds).stream()
-                .collect(Collectors.groupingBy(i -> i.getUser().getId()));
-
-        List<SpreadsheetRowDTO> rows = pagedUsers.stream()
-            .map(row -> {
-                Long userId = ((Number) row[0]).longValue();
-                
-                List<Installment> userInstallments = installmentsByUserId
-                    .getOrDefault(userId, List.of());
-                    
-                boolean userCompleted = !userInstallments.isEmpty() && userInstallments.stream()
-                    .allMatch(i -> i.getStatus() == InstallmentStatus.GREEN);
-                    
-                List<SpreadsheetRowInstallmentDTO> rowInstallments = userInstallments
-                    .stream()
-                    .sorted((a, b) -> Integer.compare(a.getInstallmentNumber(), b.getInstallmentNumber()))
-                    .map(this::toSpreadsheetInstallmentDTO)
-                    .toList();
-
-                return new SpreadsheetRowDTO(
-                    userId,
-                    row[1] == null ? null : row[1].toString(),
-                    row[2] == null ? null : row[2].toString(),
-                    row[3] == null ? null : row[3].toString(),
-                    row[4] == null ? null : row[4].toString(),
-                    row[5] == null ? null : row[5].toString(),
-                    row[6] == null ? null : row[6].toString(),
-                    row[7] == null ? null : row[7].toString(),
-                    userCompleted,
-                    rowInstallments
-                );
-            })
-            .toList();
-
-        if (status != null) {
-            rows = rows.stream()
-                .filter(row -> row.installments().stream().anyMatch(i -> i.status() == status))
-                .toList();
-        }
-
-        return new SpreadsheetDTO(
-                trip.getName(),
-                trip.getInstallmentsCount(),
-                safePage,
-            totalElements,
-            rows
-        );
+        SpreadsheetDTO data = getSpreadsheetUnpaged(tripId);
+        return tripExcelExporter.export(data, trip.getCurrency().name());
     }
 
     // [C-2, A-1] Uses pessimistic lock + Argentina timezone
@@ -428,5 +369,105 @@ public class TripService {
 
     private static String normalizeOrder(String order) {
         return "desc".equalsIgnoreCase(order) ? "desc" : "asc";
+    }
+
+    private SpreadsheetDTO getSpreadsheetUnpaged(Long tripId) {
+        return buildSpreadsheet(tripId, 0, Integer.MAX_VALUE, null, "lastname", "asc", null, false);
+    }
+
+    private SpreadsheetDTO buildSpreadsheet(
+            Long tripId,
+            int page,
+            int size,
+            String search,
+            String sortBy,
+            String order,
+            InstallmentStatus status,
+            boolean enforceMaxPageSize
+    ) {
+        if (enforceMaxPageSize && size > 100) {
+            throw new IllegalArgumentException("Page size cannot exceed 100");
+        }
+
+        Trip trip = tripRepository.findById(tripId)
+                .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + tripId));
+
+        int safePage = Math.max(0, page);
+        long totalElements = installmentRepository.countFilteredUsersForSpreadsheet(tripId, search);
+        int safeSize;
+        int offset;
+        if (enforceMaxPageSize) {
+            safeSize = Math.max(1, size);
+            offset = safePage * safeSize;
+        } else {
+            safeSize = totalElements > Integer.MAX_VALUE ? Integer.MAX_VALUE : Math.max(1, (int) totalElements);
+            offset = 0;
+        }
+
+        String normalizedSortBy = normalizeSortBy(sortBy);
+        String normalizedOrder = normalizeOrder(order);
+
+        List<Object[]> pagedUsers = installmentRepository.findPagedUsersForSpreadsheet(
+                tripId,
+                search,
+                normalizedSortBy,
+                normalizedOrder,
+                safeSize,
+                offset
+        );
+
+        List<Long> userIds = pagedUsers.stream()
+                .map(row -> ((Number) row[0]).longValue())
+                .toList();
+
+        Map<Long, List<Installment>> installmentsByUserId = userIds.isEmpty()
+                ? Map.of()
+                : installmentRepository.findInstallmentsByTripAndUserIds(tripId, userIds).stream()
+                .collect(Collectors.groupingBy(i -> i.getUser().getId()));
+
+        List<SpreadsheetRowDTO> rows = pagedUsers.stream()
+                .map(row -> {
+                    Long userId = ((Number) row[0]).longValue();
+
+                    List<Installment> userInstallments = installmentsByUserId
+                            .getOrDefault(userId, List.of());
+
+                    boolean userCompleted = !userInstallments.isEmpty() && userInstallments.stream()
+                            .allMatch(i -> i.getStatus() == InstallmentStatus.GREEN);
+
+                    List<SpreadsheetRowInstallmentDTO> rowInstallments = userInstallments
+                            .stream()
+                            .sorted((a, b) -> Integer.compare(a.getInstallmentNumber(), b.getInstallmentNumber()))
+                            .map(this::toSpreadsheetInstallmentDTO)
+                            .toList();
+
+                    return new SpreadsheetRowDTO(
+                            userId,
+                            row[1] == null ? null : row[1].toString(),
+                            row[2] == null ? null : row[2].toString(),
+                            row[3] == null ? null : row[3].toString(),
+                            row[4] == null ? null : row[4].toString(),
+                            row[5] == null ? null : row[5].toString(),
+                            row[6] == null ? null : row[6].toString(),
+                            row[7] == null ? null : row[7].toString(),
+                            userCompleted,
+                            rowInstallments
+                    );
+                })
+                .toList();
+
+        if (status != null) {
+            rows = rows.stream()
+                    .filter(row -> row.installments().stream().anyMatch(i -> i.status() == status))
+                    .toList();
+        }
+
+        return new SpreadsheetDTO(
+                trip.getName(),
+                trip.getInstallmentsCount(),
+                safePage,
+                totalElements,
+                rows
+        );
     }
 }

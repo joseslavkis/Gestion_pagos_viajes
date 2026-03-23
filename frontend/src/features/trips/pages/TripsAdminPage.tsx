@@ -228,30 +228,14 @@ function TripCard({ trip, onAssign, onDelete }: TripCardProps) {
             📊 Ver plantilla
           </button>
         </TooltipWrapper>
-        <TooltipWrapper
-          disabled={trip.assignedUsersCount === 0}
-          message="No es posible eliminar un viaje con usuarios asignados."
+        <button
+          type="button"
+          className={`${styles.chipButton} ${styles.chipDanger}`}
+          onClick={() => onDelete(trip)}
+          aria-label={`Eliminar viaje ${trip.name}`}
         >
-          <button
-            type="button"
-            className={`${styles.chipButton} ${styles.chipDanger} ${
-              trip.assignedUsersCount > 0 ? styles.chipDisabled : ""
-            }`}
-            onClick={() => {
-              if (trip.assignedUsersCount === 0) {
-                onDelete(trip);
-              }
-            }}
-            aria-label={
-              trip.assignedUsersCount === 0
-                ? `Eliminar viaje ${trip.name}`
-                : `No se puede eliminar viaje ${trip.name} porque tiene usuarios asignados`
-            }
-            disabled={trip.assignedUsersCount > 0}
-          >
-            🗑 Eliminar
-          </button>
-        </TooltipWrapper>
+          🗑 Eliminar
+        </button>
       </div>
     </article>
   );
@@ -635,7 +619,7 @@ function DeleteTripModal({ trip, onClose }: DeleteTripModalProps) {
   return (
     <ModalShell
       title="Eliminar viaje"
-      description="Esta acción es permanente. Solo puedes eliminar viajes sin usuarios asignados."
+      description="Esta acción es permanente y eliminará el viaje junto con sus cuotas asociadas."
       onClose={onClose}
     >
       <RequestState
@@ -643,6 +627,12 @@ function DeleteTripModal({ trip, onClose }: DeleteTripModalProps) {
         error={error ?? null}
         loadingLabel="Eliminando viaje..."
       >
+        {trip.assignedUsersCount > 0 ? (
+          <div className={styles.warningBox} role="alert">
+            <strong>Advertencia:</strong> este viaje tiene {trip.assignedUsersCount} integrante{trip.assignedUsersCount === 1 ? "" : "s"} asignado{trip.assignedUsersCount === 1 ? "" : "s"}.
+            Al eliminarlo también se borrarán todas sus cuotas generadas y el historial asociado a esas cuotas.
+          </div>
+        ) : null}
         <p className={styles.modalDescription}>
           ¿Seguro que deseas eliminar el viaje <strong>{trip.name}</strong>? Esta acción no se puede deshacer.
         </p>
@@ -694,4 +684,3 @@ function TooltipWrapper({ children, message, disabled = false }: TooltipWrapperP
     </div>
   );
 }
-

@@ -94,4 +94,30 @@ export async function apiDelete<T>(
   );
 }
 
+export async function apiDownload(
+  endpoint: string,
+  filename: string,
+  initOverrides?: Omit<RequestInitJson, "body">,
+): Promise<void> {
+  const response = await fetch(BASE_API_URL + endpoint, {
+    method: "GET",
+    headers: {
+      ...(initOverrides?.headers ?? {}),
+    },
+  });
+
+  if (!response.ok) {
+    return handleApiResponse(response);
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
 

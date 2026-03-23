@@ -7,10 +7,16 @@ import com.agencia.pagos.dtos.request.UserAssignBulkDTO;
 import com.agencia.pagos.dtos.request.UserCreateDTO;
 import com.agencia.pagos.dtos.response.TokenDTO;
 import com.agencia.pagos.entities.Installment;
+import com.agencia.pagos.entities.InstallmentReminderNotification;
+import com.agencia.pagos.entities.InstallmentReminderNotificationType;
 import com.agencia.pagos.entities.InstallmentStatus;
+import com.agencia.pagos.entities.PaymentReceipt;
+import com.agencia.pagos.entities.PaymentMethod;
 import com.agencia.pagos.entities.Trip;
 import com.agencia.pagos.entities.user.User;
 import com.agencia.pagos.repositories.InstallmentRepository;
+import com.agencia.pagos.repositories.InstallmentReminderNotificationRepository;
+import com.agencia.pagos.repositories.PaymentReceiptRepository;
 import com.agencia.pagos.repositories.TripRepository;
 import com.agencia.pagos.repositories.UserRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -30,6 +36,7 @@ import java.util.List;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.hasSize;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -54,10 +61,18 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
     private InstallmentRepository installmentRepository;
 
     @Autowired
+    private PaymentReceiptRepository paymentReceiptRepository;
+
+    @Autowired
+    private InstallmentReminderNotificationRepository installmentReminderNotificationRepository;
+
+    @Autowired
     private UserRepository userRepository;
 
     @AfterEach
     void cleanUpTrips() {
+        installmentReminderNotificationRepository.deleteAll();
+        paymentReceiptRepository.deleteAll();
         installmentRepository.deleteAll();
         tripRepository.deleteAll();
     }
@@ -553,7 +568,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             }
 
             @Test
-            void deleteTrip_conUsuariosAsignados_devuelve409() throws Exception {
+            void deleteTrip_conUsuariosAsignados_eliminaViajeCuotasYDependencias() throws Exception {
             TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-delete-conflict"));
             UserCreateDTO userDto = buildValidUser("user-trip-delete-conflict");
             signUp(userDto);
@@ -569,13 +584,43 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 LocalDate.now().plusMonths(2)
             );
             trip.getAssignedUsers().add(u);
-            tripRepository.save(trip);
+            trip = tripRepository.save(trip);
+
+            Installment installment = new Installment();
+            installment.setTrip(trip);
+            installment.setUser(u);
+            installment.setInstallmentNumber(1);
+            installment.setDueDate(LocalDate.now().plusDays(10));
+            installment.setCapitalAmount(BigDecimal.valueOf(500));
+            installment.setRetroactiveAmount(BigDecimal.ZERO);
+            installment.setFineAmount(BigDecimal.ZERO);
+            installment.setStatus(InstallmentStatus.YELLOW);
+            installment.recalculateTotalDue();
+            installment = installmentRepository.save(installment);
+
+            paymentReceiptRepository.save(PaymentReceipt.builder()
+                .installment(installment)
+                .reportedAmount(BigDecimal.valueOf(200))
+                .reportedPaymentDate(LocalDate.now())
+                .paymentMethod(PaymentMethod.BANK_TRANSFER)
+                .fileKey("test-file")
+                .build());
+
+            installmentReminderNotificationRepository.save(InstallmentReminderNotification.builder()
+                .installment(installment)
+                .type(InstallmentReminderNotificationType.DUE_SOON)
+                .sentOn(LocalDate.now())
+                .build());
 
             mockMvc.perform(delete("/api/v1/trips/{id}", trip.getId())
                 .header("Authorization", "Bearer " + adminTokens.accessToken()))
-                .andExpect(status().isConflict());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("success"));
 
-            assertTrue(tripRepository.findById(trip.getId()).isPresent());
+            assertTrue(tripRepository.findById(trip.getId()).isEmpty());
+            assertTrue(installmentRepository.findByTripIdWithUsers(trip.getId()).isEmpty());
+            assertEquals(0, paymentReceiptRepository.count());
+            assertEquals(0, installmentReminderNotificationRepository.count());
             }
 
             @Test
@@ -758,4 +803,72 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 .andExpect(jsonPath("$.rows", hasSize(greaterThan(0))))
                 .andExpect(jsonPath("$.rows[0].installments[?(@.status == 'RED')]", hasSize(greaterThan(0))));
             }
+
+    @Test
+    void exportSpreadsheet_siendoAdmin_devuelve200ConContentDisposition() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-spreadsheet-export"));
+
+        UserCreateDTO user1Dto = buildValidUser("user-export-1");
+        UserCreateDTO user2Dto = buildValidUser("user-export-2");
+        signUp(user1Dto);
+        signUp(user2Dto);
+        User user1 = userRepository.findByEmail(user1Dto.email()).orElseThrow();
+        User user2 = userRepository.findByEmail(user2Dto.email()).orElseThrow();
+
+        Trip trip = buildTripForBulk(
+                "Trip Export",
+                BigDecimal.valueOf(9000),
+                3,
+                10,
+                BigDecimal.valueOf(100),
+                false,
+                LocalDate.now().plusMonths(1)
+        );
+
+        UserAssignBulkDTO assignDto = new UserAssignBulkDTO(List.of(user1.getId(), user2.getId()));
+        mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(assignDto)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assignedCount").value(2));
+
+        byte[] responseBody = mockMvc.perform(get("/api/v1/trips/{id}/spreadsheet/export", trip.getId())
+                        .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", containsString("spreadsheetml")))
+                .andExpect(header().string("Content-Disposition", containsString("attachment")))
+                .andReturn()
+                .getResponse()
+                .getContentAsByteArray();
+
+        assertNotNull(responseBody);
+        assertTrue(responseBody.length > 1);
+        assertEquals((byte) 0x50, responseBody[0]);
+        assertEquals((byte) 0x4B, responseBody[1]);
+    }
+
+    @Test
+    void exportSpreadsheet_tripNoExiste_devuelve404() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-spreadsheet-export-not-found"));
+
+        mockMvc.perform(get("/api/v1/trips/{id}/spreadsheet/export", 99999L)
+                        .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void exportSpreadsheet_sinAutenticacion_devuelve401() throws Exception {
+        mockMvc.perform(get("/api/v1/trips/{id}/spreadsheet/export", 1L))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void exportSpreadsheet_siendoUserNormal_devuelve403() throws Exception {
+        TokenDTO userTokens = signUp(buildValidUser("user-spreadsheet-export-forbidden"));
+
+        mockMvc.perform(get("/api/v1/trips/{id}/spreadsheet/export", 1L)
+                        .header("Authorization", "Bearer " + userTokens.accessToken()))
+                .andExpect(status().isForbidden());
+    }
 }

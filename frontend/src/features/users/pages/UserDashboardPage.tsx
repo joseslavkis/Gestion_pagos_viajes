@@ -12,6 +12,7 @@ import type {
   PaymentMethod,
   UserInstallmentDTO,
 } from "@/features/payments/types/payments-dtos";
+import { resolveInstallmentBaseDisplay } from "@/lib/installment-status";
 
 import styles from "./UserDashboardPage.module.css";
 
@@ -71,20 +72,16 @@ function resolveInstallmentDisplay(dto: UserInstallmentDTO): {
     return { color: "green", label: "Al día" };
   }
 
-  if (dto.installmentStatus === "YELLOW") {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const due = new Date(dto.dueDate);
-    due.setHours(0, 0, 0, 0);
-    const diffDays = Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-    
-    if (diffDays <= 30) {
-      return { color: "yellow", label: "Vence pronto" };
-    }
-    return { color: "green", label: "Al día" };
-  }
+  const display = resolveInstallmentBaseDisplay(
+    dto.installmentStatus,
+    dto.dueDate,
+    dto.yellowWarningDays,
+  );
 
-  return { color: "green", label: "Al día" };
+  return {
+    color: display.tone === "retro" ? "red" : display.tone,
+    label: display.label,
+  };
 }
 
 type InstallmentGroup = {
@@ -156,6 +153,18 @@ function findPendingInstallment(group: InstallmentGroup): UserInstallmentDTO | n
   return pending[0] ?? null;
 }
 
+function roundMoney(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function getInstallmentRemainingAmount(installment: Pick<UserInstallmentDTO, "totalDue" | "paidAmount">): number {
+  return Math.max(0, roundMoney(installment.totalDue - installment.paidAmount));
+}
+
+function formatInstallmentAmount(installment: Pick<UserInstallmentDTO, "tripCurrency">, amount: number): string {
+  return installment.tripCurrency === "USD" ? usdFormatter.format(amount) : currencyFormatter.format(amount);
+}
+
 export function UserDashboardPage() {
   const queryClient = useQueryClient();
   const registerPayment = useRegisterPayment();
@@ -222,6 +231,9 @@ export function UserDashboardPage() {
   const selectedInstallmentDisplay = selectedInstallment
     ? resolveInstallmentDisplay(selectedInstallment)
     : null;
+  const selectedInstallmentRemaining = selectedInstallment
+    ? getInstallmentRemainingAmount(selectedInstallment)
+    : 0;
 
   const selectedTripHasPending =
     selectedGroup != null ? findPendingInstallment(selectedGroup) != null : false;
@@ -265,7 +277,7 @@ export function UserDashboardPage() {
     }
 
     setSelectedInstallmentId(pendingInstallment.installmentId);
-    setReportedAmount(String(pendingInstallment.totalDue));
+    setReportedAmount(getInstallmentRemainingAmount(pendingInstallment).toFixed(2));
   }, [selectedTripIndex, groups]);
 
   const toggleTrip = (tripIndex: number) => {
@@ -304,6 +316,19 @@ export function UserDashboardPage() {
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
       setSubmitError("Ingresá un monto válido mayor a 0.");
       return;
+    }
+
+    if (selectedInstallment) {
+      const remainingAmount = getInstallmentRemainingAmount(selectedInstallment);
+      if (parsedAmount > remainingAmount) {
+        setSubmitError(
+          `El monto supera el saldo restante de esta cuota (${formatInstallmentAmount(
+            selectedInstallment,
+            remainingAmount,
+          )}).`,
+        );
+        return;
+      }
     }
 
     try {
@@ -403,7 +428,11 @@ export function UserDashboardPage() {
                                 <p className={styles.chipMeta}>{currencyFormatter.format(installment.totalDue)}</p>
                                 {installment.paidAmount > 0 && installment.installmentStatus !== "GREEN" ? (
                                   <p className={styles.chipMeta}>
-                                    Abonado: {installment.tripCurrency === "USD" ? usdFormatter.format(installment.paidAmount) : currencyFormatter.format(installment.paidAmount)} · Resta: {installment.tripCurrency === "USD" ? usdFormatter.format(installment.totalDue - installment.paidAmount) : currencyFormatter.format(installment.totalDue - installment.paidAmount)}
+                                    Abonado: {formatInstallmentAmount(installment, installment.paidAmount)} · Resta:{" "}
+                                    {formatInstallmentAmount(
+                                      installment,
+                                      getInstallmentRemainingAmount(installment),
+                                    )}
                                   </p>
                                 ) : null}
                                 <p className={styles.chipMeta}>
@@ -505,7 +534,7 @@ export function UserDashboardPage() {
                   <div className={styles.selectedInfoHeader}>
                     <span>
                       Cuota {selectedInstallment.installmentNumber} · vence {formatReportedDate(selectedInstallment.dueDate)} ·{" "}
-                      {currencyFormatter.format(selectedInstallment.totalDue)}
+                      saldo {formatInstallmentAmount(selectedInstallment, selectedInstallmentRemaining)}
                     </span>
                     {selectedInstallmentDisplay ? (
                       <span className={`${styles.statusBadge} ${styles[`status${selectedInstallmentDisplay.color}`]}`}>
@@ -545,15 +574,22 @@ export function UserDashboardPage() {
                 <span className={styles.label}>Monto pagado</span>
                 <input
                   type="number"
-                  min="0"
+                  min="0.01"
                   step="0.01"
                   value={reportedAmount}
                   onChange={(event) => setReportedAmount(event.target.value)}
                   className={styles.input}
                   disabled={!selectedTripHasPending}
+                  max={selectedInstallment ? selectedInstallmentRemaining.toFixed(2) : undefined}
                   required
                 />
               </label>
+              {selectedInstallment ? (
+                <p className={styles.helperText}>
+                  Saldo restante sugerido:{" "}
+                  {formatInstallmentAmount(selectedInstallment, selectedInstallmentRemaining)}
+                </p>
+              ) : null}
 
               <label className={styles.formField}>
                 <span className={styles.label}>Fecha de pago</span>
@@ -618,4 +654,3 @@ export function UserDashboardPage() {
     </CommonLayout>
   );
 }
-
