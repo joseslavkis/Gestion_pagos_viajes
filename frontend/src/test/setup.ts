@@ -10,11 +10,14 @@ type WindowWithEnv = Window & {
   };
 };
 
-beforeAll(() => {
+if (typeof window !== "undefined") {
   (window as WindowWithEnv)._env_ = {
     ...(window as WindowWithEnv)._env_,
     baseApiUrl: "http://localhost:30002",
   };
+}
+
+beforeAll(() => {
   server.listen({ onUnhandledRequest: "error" });
   if (!Element.prototype.scrollIntoView) {
     Object.defineProperty(Element.prototype, "scrollIntoView", {
