@@ -4,7 +4,17 @@ import { afterAll, afterEach, beforeAll, vi } from "vitest";
 
 import { server } from "@/test/msw-server";
 
+type WindowWithEnv = Window & {
+  _env_?: {
+    baseApiUrl?: string;
+  };
+};
+
 beforeAll(() => {
+  (window as WindowWithEnv)._env_ = {
+    ...(window as WindowWithEnv)._env_,
+    baseApiUrl: "http://localhost:30002",
+  };
   server.listen({ onUnhandledRequest: "error" });
   if (!Element.prototype.scrollIntoView) {
     Object.defineProperty(Element.prototype, "scrollIntoView", {
