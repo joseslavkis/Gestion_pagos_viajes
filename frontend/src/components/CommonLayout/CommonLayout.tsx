@@ -107,6 +107,11 @@ const LoggedInLinks = ({ onNavigate }: { onNavigate: () => void }) => {
               Cuentas bancarias
             </Link>
           </li>
+          <li>
+            <Link href="/schools" className={styles.navLink} onClick={onNavigate}>
+              Colegios
+            </Link>
+          </li>
         </>
       ) : null}
       <li>

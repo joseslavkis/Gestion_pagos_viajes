@@ -2,9 +2,9 @@ import { useMemo, useState, type CSSProperties } from "react";
 import { Link } from "wouter";
 
 import { CommonLayout } from "@/components/CommonLayout/CommonLayout";
-import { SchoolAutocomplete } from "@/components/form-components/SchoolAutocomplete/SchoolAutocomplete";
 import { RequestState } from "@/components/ui/RequestState/RequestState";
 import { useSignup } from "@/features/auth/services/auth-service";
+import { useSchools } from "@/features/schools/services/schools-service";
 import {
   SignupRequestSchema,
   type SignupRequest,
@@ -71,6 +71,7 @@ const primaryButtonStyle: CSSProperties = {
 
 export function SignupPage() {
   const { mutateAsync, error, isPending } = useSignup();
+  const { data: schools, isLoading: isSchoolsLoading, error: schoolsError } = useSchools();
   const [form, setForm] = useState<SignupRequest>({
     email: "",
     password: "",
@@ -86,6 +87,7 @@ export function SignupPage() {
     () => `${form.students.length} hijo${form.students.length === 1 ? "" : "s"} cargado${form.students.length === 1 ? "" : "s"}`,
     [form.students.length],
   );
+  const schoolItems = useMemo(() => schools ?? [], [schools]);
 
   const handleParentFieldChange = (field: keyof Omit<SignupRequest, "students">, value: string) => {
     setForm((current) => ({ ...current, [field]: value }));
@@ -256,11 +258,26 @@ export function SignupPage() {
                       onChange={(event) => handleStudentChange(index, "dni", event.target.value)}
                     />
                   </label>
-                  <SchoolAutocomplete
-                    label="Colegio"
-                    value={student.schoolName ?? ""}
-                    onChange={(value) => handleStudentChange(index, "schoolName", value)}
-                  />
+                  <label style={fieldStyle}>
+                    <span>Colegio</span>
+                    <div className={styles.schoolSelectWrap}>
+                      <select
+                        className={styles.schoolSelect}
+                        value={student.schoolName ?? ""}
+                        onChange={(event) => handleStudentChange(index, "schoolName", event.target.value)}
+                        disabled={isSchoolsLoading || schoolItems.length === 0}
+                      >
+                        <option value="">
+                          {schoolItems.length === 0 ? "No hay colegios cargados" : "Seleccioná un colegio"}
+                        </option>
+                        {schoolItems.map((school) => (
+                          <option key={school.id} value={school.name}>
+                            {school.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </label>
                   <label style={fieldStyle}>
                     <span>Curso</span>
                     <input
@@ -272,6 +289,13 @@ export function SignupPage() {
                 </div>
               ))}
             </div>
+            {isSchoolsLoading ? <p style={{ margin: 0, color: "#47658f" }}>Cargando colegios disponibles...</p> : null}
+            {schoolsError ? <p style={{ margin: 0, color: "#b91c1c" }}>{schoolsError.message}</p> : null}
+            {!isSchoolsLoading && !schoolsError && schoolItems.length === 0 ? (
+              <p style={{ margin: 0, color: "#92400e", fontWeight: 600 }}>
+                Aún no hay colegios cargados por administración.
+              </p>
+            ) : null}
 
             {validationErrors.length > 0 ? (
               <ul style={{ margin: 0, paddingLeft: "1.2rem", color: "#b42318" }}>

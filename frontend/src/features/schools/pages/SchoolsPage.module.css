@@ -1,0 +1,117 @@
+.page {
+  min-height: 100vh;
+  padding: 2rem 1rem 2.5rem;
+  background-color: #f0f7ff;
+}
+
+.container {
+  width: min(960px, 100%);
+  margin: 0 auto;
+  display: grid;
+  gap: 1.25rem;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.title {
+  margin: 0;
+  color: #0d3657;
+  font-size: clamp(1.5rem, 2vw, 1.9rem);
+}
+
+.subtitle {
+  margin: 0.35rem 0 0;
+  color: #526883;
+}
+
+.card {
+  border-radius: 1.1rem;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(209, 227, 255, 0.9);
+  box-shadow:
+    0 0.75rem 1.5rem rgba(15, 23, 42, 0.06),
+    0 0 0 1px rgba(148, 163, 184, 0.06);
+  padding: 1.1rem;
+}
+
+.sectionTitle {
+  margin: 0 0 1rem;
+  font-size: 1.1rem;
+  color: #0f2f57;
+}
+
+.form {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.input {
+  border: 1px solid #b5cde9;
+  background: #fff;
+  border-radius: 0.6rem;
+  min-height: 42px;
+  padding: 0 0.7rem;
+  color: #0f2f57;
+}
+
+.input:focus {
+  outline: 2px solid rgba(11, 119, 213, 0.25);
+  border-color: #0b77d5;
+}
+
+.button {
+  min-height: 42px;
+  border: none;
+  border-radius: 0.8rem;
+  background: #0b5bcf;
+  color: #fff;
+  font-weight: 700;
+  padding: 0.7rem 1rem;
+  cursor: pointer;
+}
+
+.button:disabled {
+  opacity: 0.7;
+  cursor: progress;
+}
+
+.errorText {
+  margin: 0;
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.successText {
+  margin: 0;
+  color: #166534;
+  font-weight: 600;
+}
+
+.emptyText {
+  margin: 0;
+  color: #526883;
+}
+
+.list {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.schoolItem {
+  border: 1px solid #d8e6fb;
+  border-radius: 0.8rem;
+  background: #fff;
+  padding: 0.8rem 0.9rem;
+  color: #0f2f57;
+}
