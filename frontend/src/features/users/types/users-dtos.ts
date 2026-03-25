@@ -19,6 +19,15 @@ export const UserProfileDTOSchema = z.object({
 
 export type UserProfileDTO = z.infer<typeof UserProfileDTOSchema>;
 
+export const StudentDTOSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  dni: z.string(),
+  schoolName: z.string().nullable(),
+  courseName: z.string().nullable(),
+});
+
+export type StudentDTO = z.infer<typeof StudentDTOSchema>;
+
 export { StatusResponseDTOSchema };
 export type { StatusResponseDTO };
-

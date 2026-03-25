@@ -2,6 +2,7 @@ package com.agencia.pagos.entities.user;
 
 import com.agencia.pagos.entities.Installment;
 import com.agencia.pagos.entities.Role;
+import com.agencia.pagos.entities.Student;
 import com.agencia.pagos.entities.Trip;
 import jakarta.persistence.*;
 import org.springframework.security.core.GrantedAuthority;
@@ -36,18 +37,6 @@ public class User implements UserDetails, UserCredentials {
     @Column
     private String phone;
 
-    @Column
-    private String studentName;
-
-    @Column
-    private String studentDni;
-
-    @Column
-    private String schoolName;
-
-    @Column
-    private String courseName;
-
     @Column(nullable = false)
     private String password;
 
@@ -63,6 +52,9 @@ public class User implements UserDetails, UserCredentials {
 
     @OneToMany(mappedBy = "user")
     private List<Installment> installments = new ArrayList<>();
+
+    @OneToMany(mappedBy = "parent", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    private List<Student> students = new ArrayList<>();
 
     public User() {
     }
@@ -167,38 +159,6 @@ public class User implements UserDetails, UserCredentials {
         this.phone = phone;
     }
 
-    public String getStudentName() {
-        return studentName;
-    }
-
-    public void setStudentName(String studentName) {
-        this.studentName = studentName;
-    }
-
-    public String getStudentDni() {
-        return studentDni;
-    }
-
-    public void setStudentDni(String studentDni) {
-        this.studentDni = studentDni;
-    }
-
-    public String getSchoolName() {
-        return schoolName;
-    }
-
-    public void setSchoolName(String schoolName) {
-        this.schoolName = schoolName;
-    }
-
-    public String getCourseName() {
-        return courseName;
-    }
-
-    public void setCourseName(String courseName) {
-        this.courseName = courseName;
-    }
-
     public void setPassword(String password) {
         this.password = password;
     }
@@ -233,5 +193,13 @@ public class User implements UserDetails, UserCredentials {
 
     public void setInstallments(List<Installment> installments) {
         this.installments = installments;
+    }
+
+    public List<Student> getStudents() {
+        return students;
+    }
+
+    public void setStudents(List<Student> students) {
+        this.students = students;
     }
 }

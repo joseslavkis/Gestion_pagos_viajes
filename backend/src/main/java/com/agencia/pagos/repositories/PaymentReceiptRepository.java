@@ -18,7 +18,14 @@ public interface PaymentReceiptRepository extends JpaRepository<PaymentReceipt, 
 
     List<PaymentReceipt> findByInstallmentUserId(Long userId);
 
-    @Query("SELECT p FROM PaymentReceipt p JOIN FETCH p.installment WHERE p.installment.id IN :installmentIds ORDER BY p.id DESC")
+    @Query("""
+        SELECT p
+        FROM PaymentReceipt p
+        JOIN FETCH p.installment i
+        LEFT JOIN FETCH i.student
+        WHERE i.id IN :installmentIds
+        ORDER BY p.id DESC
+        """)
     List<PaymentReceipt> findByInstallmentIdIn(@Param("installmentIds") List<Long> installmentIds);
 
     @Query("""
@@ -27,6 +34,7 @@ public interface PaymentReceiptRepository extends JpaRepository<PaymentReceipt, 
         JOIN FETCH p.installment i
         JOIN FETCH i.trip
         JOIN FETCH i.user
+        LEFT JOIN FETCH i.student
         LEFT JOIN FETCH p.bankAccount
         WHERE p.status = :status
         ORDER BY p.id DESC

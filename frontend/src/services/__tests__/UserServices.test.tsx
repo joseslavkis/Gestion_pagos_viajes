@@ -54,8 +54,13 @@ describe("UserServices Hook Error Handling", () => {
         name: "Test",
         lastname: "User",
         dni: "12345678",
-        studentName: "Alumno Test",
-        studentDni: "87654321"
+        phone: "1122334455",
+        students: [
+          {
+            name: "Alumno Test",
+            dni: "87654321",
+          },
+        ],
       });
 
       await waitFor(() => expect(result.current.isError).toBe(true));

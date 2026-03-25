@@ -2,15 +2,21 @@ package com.agencia.pagos.services;
 
 import com.agencia.pagos.config.security.JwtService;
 import com.agencia.pagos.config.security.JwtUserDetails;
+import com.agencia.pagos.dtos.request.AdminCreateDTO;
 import com.agencia.pagos.dtos.request.RefreshDTO;
+import com.agencia.pagos.dtos.request.StudentCreateDTO;
 import com.agencia.pagos.dtos.request.UserCreateDTO;
 import com.agencia.pagos.dtos.request.UserUpdateDTO;
+import com.agencia.pagos.dtos.response.StudentDTO;
 import com.agencia.pagos.dtos.response.TokenDTO;
 import com.agencia.pagos.dtos.response.UserProfileDTO;
 import com.agencia.pagos.entities.Role;
+import com.agencia.pagos.entities.Student;
 import com.agencia.pagos.entities.user.User;
 import com.agencia.pagos.entities.user.UserCredentials;
 import com.agencia.pagos.entities.refresh_token.RefreshToken;
+import com.agencia.pagos.repositories.InstallmentRepository;
+import com.agencia.pagos.repositories.StudentRepository;
 import com.agencia.pagos.repositories.UserRepository;
 
 import jakarta.persistence.EntityNotFoundException;
@@ -23,6 +29,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Comparator;
+import java.util.List;
 import java.util.Optional;
 
 @Service
@@ -32,6 +40,8 @@ public class UserService implements UserDetailsService {
     private final JwtService jwtService;
     private final PasswordEncoder passwordEncoder;
     private final UserRepository userRepository;
+    private final InstallmentRepository installmentRepository;
+    private final StudentRepository studentRepository;
     private final RefreshTokenService refreshTokenService;
 
     @Autowired
@@ -39,11 +49,15 @@ public class UserService implements UserDetailsService {
             JwtService jwtService,
             PasswordEncoder passwordEncoder,
             UserRepository userRepository,
+            InstallmentRepository installmentRepository,
+            StudentRepository studentRepository,
             RefreshTokenService refreshTokenService
     ) {
         this.jwtService = jwtService;
         this.passwordEncoder = passwordEncoder;
         this.userRepository = userRepository;
+        this.installmentRepository = installmentRepository;
+        this.studentRepository = studentRepository;
         this.refreshTokenService = refreshTokenService;
     }
 
@@ -58,21 +72,24 @@ public class UserService implements UserDetailsService {
     }
 
     public Optional<TokenDTO> createUser(UserCreateDTO data) {
-        if (userRepository.findByEmail(data.email()).isPresent()) {
+        if (userRepository.findByEmail(data.email()).isPresent() || userRepository.existsByDni(data.dni())) {
             return Optional.empty();
         }
 
+        validateStudentDnis(data.students());
+
         var user = data.asUser(passwordEncoder::encode, Role.USER);
+        attachStudents(user, data.students());
         userRepository.save(user);
         return Optional.of(generateTokens(user));
     }
 
-    public Optional<TokenDTO> createUser(UserCreateDTO data, Role role) {
-        if (userRepository.findByEmail(data.email()).isPresent()) {
+    public Optional<TokenDTO> createAdmin(AdminCreateDTO data) {
+        if (userRepository.findByEmail(data.email()).isPresent() || userRepository.existsByDni(data.dni())) {
             return Optional.empty();
         }
 
-        var user = data.asUser(passwordEncoder::encode, role);
+        var user = data.asUser(passwordEncoder::encode);
         userRepository.save(user);
         return Optional.of(generateTokens(user));
     }
@@ -161,6 +178,49 @@ public class UserService implements UserDetailsService {
         return applyUpdates(foundUser, userDTO);
     }
 
+    @Transactional(readOnly = true)
+    public List<StudentDTO> getStudentsForCurrentUser(String email) {
+        User user = getUserByEmail(email);
+        return studentRepository.findByParentId(user.getId()).stream()
+                .sorted(Comparator.comparing(Student::getName, String.CASE_INSENSITIVE_ORDER))
+                .map(this::toStudentDTO)
+                .toList();
+    }
+
+    public StudentDTO addStudentForCurrentUser(String email, StudentCreateDTO dto) {
+        User user = getUserByEmail(email);
+
+        if (studentRepository.existsByDni(dto.dni())) {
+            throw new IllegalStateException("El DNI de alumno " + dto.dni() + " ya está registrado en el sistema");
+        }
+
+        Student student = Student.builder()
+                .parent(user)
+                .name(dto.name())
+                .dni(dto.dni())
+                .schoolName(dto.schoolName())
+                .courseName(dto.courseName())
+                .build();
+
+        return toStudentDTO(studentRepository.save(student));
+    }
+
+    public void deleteStudentForCurrentUser(String email, Long studentId) {
+        User user = getUserByEmail(email);
+        Student student = studentRepository.findById(studentId)
+                .orElseThrow(() -> new EntityNotFoundException("Student not found with id " + studentId));
+
+        if (!student.getParent().getId().equals(user.getId())) {
+            throw new AccessDeniedException("No podés eliminar un alumno que no te pertenece");
+        }
+
+        if (installmentRepositoryExistsByStudentId(studentId)) {
+            throw new IllegalStateException("No se puede eliminar un alumno con cuotas asignadas");
+        }
+
+        studentRepository.delete(student);
+    }
+
     private User applyUpdates(User user, UserUpdateDTO dto) {
         if (dto.name() != null) {
             user.setName(dto.name());
@@ -172,5 +232,40 @@ public class UserService implements UserDetailsService {
             user.setPassword(passwordEncoder.encode(dto.password()));
         }
         return userRepository.save(user);
+    }
+
+    private void validateStudentDnis(List<StudentCreateDTO> students) {
+        for (StudentCreateDTO student : students) {
+            if (studentRepository.existsByDni(student.dni())) {
+                throw new IllegalStateException("El DNI de alumno " + student.dni() + " ya está registrado en el sistema");
+            }
+        }
+    }
+
+    private void attachStudents(User user, List<StudentCreateDTO> students) {
+        for (StudentCreateDTO studentDto : students) {
+            Student student = Student.builder()
+                    .parent(user)
+                    .name(studentDto.name())
+                    .dni(studentDto.dni())
+                    .schoolName(studentDto.schoolName())
+                    .courseName(studentDto.courseName())
+                    .build();
+            user.getStudents().add(student);
+        }
+    }
+
+    private StudentDTO toStudentDTO(Student student) {
+        return new StudentDTO(
+                student.getId(),
+                student.getName(),
+                student.getDni(),
+                student.getSchoolName(),
+                student.getCourseName()
+        );
+    }
+
+    private boolean installmentRepositoryExistsByStudentId(Long studentId) {
+        return installmentRepository.existsByStudentId(studentId);
     }
 }

@@ -1,5 +1,7 @@
 package com.agencia.pagos.controllers;
 
+import com.agencia.pagos.dtos.request.AdminCreateDTO;
+import com.agencia.pagos.dtos.request.StudentCreateDTO;
 import com.agencia.pagos.dtos.request.UserCreateDTO;
 import com.agencia.pagos.dtos.request.UserLoginDTO;
 import com.agencia.pagos.dtos.response.TokenDTO;
@@ -13,6 +15,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.util.List;
 import java.util.Base64;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -80,10 +83,23 @@ abstract class ControllerIntegrationTestSupport {
                 "User",
                 uniqueDni(),
                 "123456789",
-                "Alumno",
-            uniqueDni(),
-                "Colegio",
-                "3ro"
+                List.of(new StudentCreateDTO(
+                        "Alumno",
+                        uniqueDni(),
+                        "Colegio",
+                        "3ro"
+                ))
+        );
+    }
+
+    protected AdminCreateDTO buildValidAdmin(String prefix) {
+        return new AdminCreateDTO(
+                uniqueEmail(prefix),
+                "Password123!",
+                "Admin",
+                "User",
+                uniqueDni(),
+                "123456789"
         );
     }
 

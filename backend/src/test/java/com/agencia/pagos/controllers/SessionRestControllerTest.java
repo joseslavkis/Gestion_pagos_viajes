@@ -2,6 +2,7 @@ package com.agencia.pagos.controllers;
 
 import com.agencia.pagos.TestcontainersConfiguration;
 import com.agencia.pagos.dtos.request.RefreshDTO;
+import com.agencia.pagos.dtos.request.StudentCreateDTO;
 import com.agencia.pagos.dtos.request.UserCreateDTO;
 import com.agencia.pagos.dtos.request.UserLoginDTO;
 import com.agencia.pagos.dtos.response.TokenDTO;
@@ -10,6 +11,8 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+
+import java.util.List;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -50,7 +53,8 @@ class SessionRestControllerTest extends ControllerIntegrationTestSupport {
         UserCreateDTO dto = new UserCreateDTO(
                 uniqueEmail("pass-corta"), "Abc1",
                 "Test", "User", uniqueDni(),
-                "123456789", "Alumno", uniqueDni(), "Colegio", "3ro"
+                "123456789",
+                List.of(new StudentCreateDTO("Alumno", uniqueDni(), "Colegio", "3ro"))
         );
 
         mockMvc.perform(post("/api/v1/auth/signup")
@@ -64,7 +68,8 @@ class SessionRestControllerTest extends ControllerIntegrationTestSupport {
         UserCreateDTO dto = new UserCreateDTO(
                 "email-invalido", "Password123!",
                 "Test", "User", uniqueDni(),
-                "123456789", "Alumno", uniqueDni(), "Colegio", "3ro"
+                "123456789",
+                List.of(new StudentCreateDTO("Alumno", uniqueDni(), "Colegio", "3ro"))
         );
 
         mockMvc.perform(post("/api/v1/auth/signup")

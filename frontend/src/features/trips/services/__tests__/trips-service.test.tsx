@@ -53,7 +53,15 @@ describe("trips-service hooks", () => {
   describe("useTrips", () => {
     it("devuelve lista de viajes cuando la API responde 200", async () => {
       const trips = [
-        { id: 1, name: "Viaje 1", totalAmount: 1000, currency: "ARS", installmentsCount: 10, assignedUsersCount: 0 },
+        {
+          id: 1,
+          name: "Viaje 1",
+          totalAmount: 1000,
+          currency: "ARS",
+          installmentsCount: 10,
+          assignedUsersCount: 0,
+          assignedParticipantsCount: 0,
+        },
       ];
 
       globalThis.fetch = vi.fn().mockResolvedValue(
@@ -123,6 +131,7 @@ describe("trips-service hooks", () => {
             currency: "ARS",
             id: 1,
             assignedUsersCount: 0,
+            assignedParticipantsCount: 0,
           }),
           {
             status: 201,
@@ -195,6 +204,7 @@ describe("trips-service hooks", () => {
             retroactiveActive: false,
             firstDueDate: "2027-01-01",
             assignedUsersCount: 2,
+            assignedParticipantsCount: 2,
           }),
           {
             status: 200,
@@ -244,6 +254,7 @@ describe("trips-service hooks", () => {
             retroactiveActive: false,
             firstDueDate: "2027-01-01",
             assignedUsersCount: 2,
+            assignedParticipantsCount: 2,
           }),
           {
             status: 200,
@@ -301,7 +312,7 @@ describe("trips-service hooks", () => {
   });
 
   describe("useAssignUsersBulk", () => {
-    it("llama al endpoint correcto con el body { userIds }", async () => {
+    it("llama al endpoint correcto con el body { studentDnis }", async () => {
       const fetchSpy = vi
         .spyOn(globalThis, "fetch")
         .mockResolvedValue(
@@ -313,7 +324,7 @@ describe("trips-service hooks", () => {
 
       const { result } = renderHook(() => useAssignUsersBulk(), { wrapper });
 
-      result.current.mutate({ id: 5, data: { userIds: [1, 2] } });
+      result.current.mutate({ id: 5, data: { studentDnis: ["45678901", "45678902"] } });
 
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
@@ -322,8 +333,8 @@ describe("trips-service hooks", () => {
       expect(url).toContain("/api/v1/trips/5/users/bulk");
       expect(init.method).toBe("POST");
       expect(init.body).toBeDefined();
-      const parsedBody = JSON.parse(init.body as string) as { userIds: number[] };
-      expect(parsedBody.userIds).toEqual([1, 2]);
+      const parsedBody = JSON.parse(init.body as string) as { studentDnis: string[] };
+      expect(parsedBody.studentDnis).toEqual(["45678901", "45678902"]);
     });
 
     it("en onSuccess invalida el queryKey ['trips', id]", async () => {
@@ -338,7 +349,7 @@ describe("trips-service hooks", () => {
 
       const { result } = renderHook(() => useAssignUsersBulk(), { wrapper });
 
-      result.current.mutate({ id: 7, data: { userIds: [1, 2] } });
+      result.current.mutate({ id: 7, data: { studentDnis: ["45678901", "45678902"] } });
 
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["trips", 7] });
@@ -354,7 +365,7 @@ describe("trips-service hooks", () => {
 
       const { result } = renderHook(() => useAssignUsersBulk(), { wrapper });
 
-      result.current.mutate({ id: 3, data: { userIds: [99] } });
+      result.current.mutate({ id: 3, data: { studentDnis: ["45678901"] } });
 
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
       expect(result.current.data?.assignedCount).toBe(0);
@@ -451,11 +462,13 @@ describe("trips-service hooks", () => {
         rows: [
           {
             userId: 1,
+            studentId: 10,
             name: "Juan",
             lastname: "García",
             phone: null,
             email: "juan@example.com",
             studentName: null,
+            studentDni: null,
             schoolName: null,
             courseName: null,
             userCompleted: false,

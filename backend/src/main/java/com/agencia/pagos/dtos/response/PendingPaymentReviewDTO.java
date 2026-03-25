@@ -31,6 +31,7 @@ public record PendingPaymentReviewDTO(
         String userName,
         String userLastname,
         String userEmail,
-        String studentName
+        String studentName,
+        String studentDni
 ) {
 }

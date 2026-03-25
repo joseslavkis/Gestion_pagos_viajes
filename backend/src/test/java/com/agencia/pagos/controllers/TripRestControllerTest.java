@@ -242,7 +242,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
         TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-bulk"));
         UserCreateDTO userDto = buildValidUser("user-bulk");
         signUp(userDto);
-        User u = userRepository.findByEmail(userDto.email()).orElseThrow();
 
         Trip trip = new Trip();
         trip.setName("Viaje Retroactivo");
@@ -256,7 +255,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
         trip.setFirstDueDate(LocalDate.now().minusMonths(2).withDayOfMonth(10));
         trip = tripRepository.save(trip);
 
-        UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(u.getId()));
+        UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(userDto.students().get(0).dni()));
 
         mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
                 .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -308,7 +307,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
         TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-bulk-inactive"));
         UserCreateDTO userDto = buildValidUser("user-bulk-inactive");
         signUp(userDto);
-        User u = userRepository.findByEmail(userDto.email()).orElseThrow();
 
         Trip trip = new Trip();
         trip.setName("Viaje No Retroactivo");
@@ -322,7 +320,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
         trip.setFirstDueDate(LocalDate.now().minusMonths(2).withDayOfMonth(10));
         trip = tripRepository.save(trip);
 
-        UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(u.getId()));
+        UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(userDto.students().get(0).dni()));
 
         mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
                 .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -365,7 +363,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             TokenDTO userTokens = signUp(buildValidUser("user-bulk-forbidden"));
             UserCreateDTO userDto = buildValidUser("candidate-bulk-forbidden");
             signUp(userDto);
-            User candidate = userRepository.findByEmail(userDto.email()).orElseThrow();
 
             Trip trip = buildTripForBulk(
                 "Trip Forbidden",
@@ -377,7 +374,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 LocalDate.now().plusMonths(2)
             );
 
-            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(candidate.getId()));
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(userDto.students().get(0).dni()));
 
             mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
                 .header("Authorization", "Bearer " + userTokens.accessToken())
@@ -391,9 +388,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-bulk-trip-not-found"));
             UserCreateDTO userDto = buildValidUser("user-bulk-trip-not-found");
             signUp(userDto);
-            User u = userRepository.findByEmail(userDto.email()).orElseThrow();
-
-            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(u.getId()));
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(userDto.students().get(0).dni()));
 
             mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", 999999L)
                 .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -416,7 +411,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 LocalDate.now().plusMonths(3)
             );
 
-            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(999999L));
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of("99999999"));
 
             mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
                 .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -430,8 +425,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-bulk-duplicates"));
             UserCreateDTO userDto = buildValidUser("user-bulk-duplicates");
             signUp(userDto);
-            User u = userRepository.findByEmail(userDto.email()).orElseThrow();
-
             Trip trip = buildTripForBulk(
                 "Trip Duplicate IDs",
                 BigDecimal.valueOf(2000),
@@ -442,7 +435,10 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 LocalDate.now().plusMonths(2)
             );
 
-            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(u.getId(), u.getId()));
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(
+                    userDto.students().get(0).dni(),
+                    userDto.students().get(0).dni()
+            ));
 
             mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
                 .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -457,8 +453,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-bulk-idempotent"));
             UserCreateDTO userDto = buildValidUser("user-bulk-idempotent");
             signUp(userDto);
-            User u = userRepository.findByEmail(userDto.email()).orElseThrow();
-
             Trip trip = buildTripForBulk(
                 "Trip Idempotent",
                 BigDecimal.valueOf(1200),
@@ -469,7 +463,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 LocalDate.now().plusMonths(2)
             );
 
-            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(u.getId()));
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(userDto.students().get(0).dni()));
 
             mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
                 .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -497,8 +491,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-bulk-remainder"));
             UserCreateDTO userDto = buildValidUser("user-bulk-remainder");
             signUp(userDto);
-            User u = userRepository.findByEmail(userDto.email()).orElseThrow();
-
             Trip trip = buildTripForBulk(
                 "Trip Remainder",
                 new BigDecimal("100.00"),
@@ -509,7 +501,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 LocalDate.now().plusMonths(2)
             );
 
-            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(u.getId()));
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(userDto.students().get(0).dni()));
 
             mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
                 .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -518,7 +510,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 .andExpect(status().isOk());
 
             List<Installment> userInstallments = installmentRepository.findByTripIdWithUsers(trip.getId()).stream()
-                .filter(i -> i.getUser().getId().equals(u.getId()))
+                .filter(i -> i.getUser().getEmail().equals(userDto.email()))
                 .sorted(Comparator.comparing(Installment::getInstallmentNumber))
                 .toList();
 
@@ -538,8 +530,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-bulk-due-day"));
             UserCreateDTO userDto = buildValidUser("user-bulk-due-day");
             signUp(userDto);
-            User u = userRepository.findByEmail(userDto.email()).orElseThrow();
-
             Trip trip = buildTripForBulk(
                 "Trip Due Day 31",
                 BigDecimal.valueOf(3100),
@@ -550,7 +540,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 LocalDate.of(2027, 1, 1)
             );
 
-            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(u.getId()));
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(userDto.students().get(0).dni()));
 
             mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
                 .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -559,7 +549,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 .andExpect(status().isOk());
 
             Installment secondInstallment = installmentRepository.findByTripIdWithUsers(trip.getId()).stream()
-                .filter(i -> i.getUser().getId().equals(u.getId()))
+                .filter(i -> i.getUser().getEmail().equals(userDto.email()))
                 .filter(i -> i.getInstallmentNumber() == 2)
                 .findFirst()
                 .orElseThrow();
@@ -670,9 +660,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             UserCreateDTO user2Dto = buildValidUser("user-bulk-two-2");
             signUp(user1Dto);
             signUp(user2Dto);
-            User user1 = userRepository.findByEmail(user1Dto.email()).orElseThrow();
-            User user2 = userRepository.findByEmail(user2Dto.email()).orElseThrow();
-
             Trip trip = buildTripForBulk(
                 "Trip Two Users",
                 BigDecimal.valueOf(8000),
@@ -683,7 +670,10 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 LocalDate.now().plusMonths(2)
             );
 
-            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(user1.getId(), user2.getId()));
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(
+                    user1Dto.students().get(0).dni(),
+                    user2Dto.students().get(0).dni()
+            ));
 
             mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
                 .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -696,8 +686,8 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             assertNotNull(installments);
             assertEquals(8, installments.size());
 
-            long user1Installments = installments.stream().filter(i -> i.getUser().getId().equals(user1.getId())).count();
-            long user2Installments = installments.stream().filter(i -> i.getUser().getId().equals(user2.getId())).count();
+            long user1Installments = installments.stream().filter(i -> i.getUser().getEmail().equals(user1Dto.email())).count();
+            long user2Installments = installments.stream().filter(i -> i.getUser().getEmail().equals(user2Dto.email())).count();
             assertEquals(4, user1Installments);
             assertEquals(4, user2Installments);
             assertTrue(installments.stream().allMatch(i -> i.getStatus() == InstallmentStatus.YELLOW));
@@ -709,8 +699,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
 
             UserCreateDTO userDto = buildValidUser("user-spreadsheet-green");
             signUp(userDto);
-            User user = userRepository.findByEmail(userDto.email()).orElseThrow();
-
             Trip trip = buildTripForBulk(
                 "Trip Spreadsheet Green",
                 BigDecimal.valueOf(9000),
@@ -721,7 +709,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 LocalDate.now().plusMonths(3)
             );
 
-            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(user.getId()));
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(userDto.students().get(0).dni()));
 
             mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
                     .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -745,8 +733,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
 
             UserCreateDTO userDto = buildValidUser("user-spreadsheet-red");
             signUp(userDto);
-            User user = userRepository.findByEmail(userDto.email()).orElseThrow();
-
             Trip trip = buildTripForBulk(
                 "Trip Spreadsheet Red",
                 BigDecimal.valueOf(4000),
@@ -757,7 +743,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 LocalDate.now().minusMonths(2)
             );
 
-            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(user.getId()));
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(userDto.students().get(0).dni()));
 
             mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
                     .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -781,8 +767,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
 
             UserCreateDTO userDto = buildValidUser("user-spreadsheet-under-review");
             signUp(userDto);
-            User user = userRepository.findByEmail(userDto.email()).orElseThrow();
-
             Trip trip = buildTripForBulk(
                 "Trip Spreadsheet Under Review",
                 BigDecimal.valueOf(4000),
@@ -793,7 +777,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 LocalDate.now().plusDays(2)
             );
 
-            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(user.getId()));
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(userDto.students().get(0).dni()));
 
             mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
                     .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -829,8 +813,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
 
             UserCreateDTO userDto = buildValidUser("user-spreadsheet-filter-red");
             signUp(userDto);
-            User user = userRepository.findByEmail(userDto.email()).orElseThrow();
-
             Trip trip = buildTripForBulk(
                 "Trip Spreadsheet Filter Red",
                 BigDecimal.valueOf(6000),
@@ -841,7 +823,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 LocalDate.now().minusMonths(2)
             );
 
-            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(user.getId()));
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(userDto.students().get(0).dni()));
 
             mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
                     .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -866,9 +848,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
         UserCreateDTO user2Dto = buildValidUser("user-export-2");
         signUp(user1Dto);
         signUp(user2Dto);
-        User user1 = userRepository.findByEmail(user1Dto.email()).orElseThrow();
-        User user2 = userRepository.findByEmail(user2Dto.email()).orElseThrow();
-
         Trip trip = buildTripForBulk(
                 "Trip Export",
                 BigDecimal.valueOf(9000),
@@ -879,7 +858,10 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 LocalDate.now().plusMonths(1)
         );
 
-        UserAssignBulkDTO assignDto = new UserAssignBulkDTO(List.of(user1.getId(), user2.getId()));
+        UserAssignBulkDTO assignDto = new UserAssignBulkDTO(List.of(
+                user1Dto.students().get(0).dni(),
+                user2Dto.students().get(0).dni()
+        ));
         mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
                         .header("Authorization", "Bearer " + adminTokens.accessToken())
                         .contentType(MediaType.APPLICATION_JSON)

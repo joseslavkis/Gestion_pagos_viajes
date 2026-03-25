@@ -16,5 +16,6 @@ public record TripDetailDTO(
         Boolean retroactiveActive,
         Currency currency,
         LocalDate firstDueDate,
-        Integer assignedUsersCount
+        Integer assignedUsersCount,
+        Integer assignedParticipantsCount
 ) {}

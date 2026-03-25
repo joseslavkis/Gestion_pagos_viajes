@@ -23,6 +23,7 @@ import java.time.LocalDate;
     name = "installments",
     indexes = {
         @Index(name = "idx_installments_trip_user", columnList = "trip_id,user_id"),
+        @Index(name = "idx_installments_trip_user_student", columnList = "trip_id,user_id,student_id"),
         @Index(name = "idx_installments_status", columnList = "status"),
         @Index(name = "idx_installments_due_date", columnList = "due_date")
     }
@@ -41,6 +42,10 @@ public class Installment {
     @ManyToOne(optional = false)
     @JoinColumn(name = "user_id", nullable = false)
     private User user; // El padre o tutor responsable de pagar esta cuota en particular
+
+    @ManyToOne
+    @JoinColumn(name = "student_id")
+    private Student student;
 
     @Column(nullable = false)
     private Integer installmentNumber; // Número secuencial (ej: Cuota 1, 2, 3) para ordenamiento en la grilla
@@ -92,6 +97,9 @@ public class Installment {
 
     public User getUser() { return user; }
     public void setUser(User user) { this.user = user; }
+
+    public Student getStudent() { return student; }
+    public void setStudent(Student student) { this.student = student; }
 
     public Integer getInstallmentNumber() { return installmentNumber; }
     public void setInstallmentNumber(Integer installmentNumber) { this.installmentNumber = installmentNumber; }

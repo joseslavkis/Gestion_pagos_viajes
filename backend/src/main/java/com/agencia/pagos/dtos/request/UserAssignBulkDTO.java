@@ -1,11 +1,14 @@
 package com.agencia.pagos.dtos.request;
 
 import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import org.hibernate.validator.constraints.UniqueElements;
 import java.util.List;
 
 public record UserAssignBulkDTO(
-        @NotEmpty @UniqueElements @Size(max = 500, message = "Cannot assign more than 500 users at once") List<Long> userIds
+        @NotEmpty
+        @UniqueElements
+        @Size(max = 500, message = "Cannot assign more than 500 students at once")
+        List<@Pattern(regexp = "^\\d{7,8}$", message = "Student DNI must have 7 or 8 digits") String> studentDnis
 ) {}
-

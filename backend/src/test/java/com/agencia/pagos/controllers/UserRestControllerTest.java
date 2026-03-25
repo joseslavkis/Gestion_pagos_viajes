@@ -1,6 +1,7 @@
 package com.agencia.pagos.controllers;
 
 import com.agencia.pagos.TestcontainersConfiguration;
+import com.agencia.pagos.dtos.request.AdminCreateDTO;
 import com.agencia.pagos.dtos.request.UserCreateDTO;
 import com.agencia.pagos.dtos.request.UserUpdateDTO;
 import com.agencia.pagos.dtos.response.TokenDTO;
@@ -133,7 +134,7 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
     @Test
     void adminCreate_siendoAdmin_devuelve201() throws Exception {
         TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-creator"));
-        UserCreateDTO nuevoAdmin = buildValidUser("nuevo-admin");
+        AdminCreateDTO nuevoAdmin = buildValidAdmin("nuevo-admin");
 
         mockMvc.perform(post("/api/v1/users/admin/create")
                 .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -146,7 +147,7 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
     @Test
     void adminCreate_siendoUserNormal_devuelve403() throws Exception {
         TokenDTO userTokens = signUp(buildValidUser("user-intenta-crear-admin"));
-        UserCreateDTO nuevoAdmin = buildValidUser("admin-bloqueado");
+        AdminCreateDTO nuevoAdmin = buildValidAdmin("admin-bloqueado");
 
         mockMvc.perform(post("/api/v1/users/admin/create")
                 .header("Authorization", "Bearer " + userTokens.accessToken())
@@ -159,7 +160,7 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
     void adminCreate_sinAutenticacion_devuelve401() throws Exception {
         mockMvc.perform(post("/api/v1/users/admin/create")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(buildValidUser("sin-auth"))))
+                .content(objectMapper.writeValueAsString(buildValidAdmin("sin-auth"))))
                 .andExpect(status().isUnauthorized());
     }
 

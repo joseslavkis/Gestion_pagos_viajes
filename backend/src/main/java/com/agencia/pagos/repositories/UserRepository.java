@@ -11,6 +11,8 @@ import java.util.Optional;
 public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByEmail(String email);
 
+    boolean existsByDni(String dni);
+
     /** Recupera todos los usuarios cuyos IDs están en la colección en una sola consulta SQL. */
     List<User> findAllByIdIn(Collection<Long> ids);
 }

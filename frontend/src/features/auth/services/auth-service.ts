@@ -29,8 +29,8 @@ export function useSignup() {
         name: req.name,
         lastname: req.lastname,
         dni: req.dni,
-        studentName: req.studentName,
-        studentDni: req.studentDni,
+        phone: req.phone,
+        students: req.students,
       };
 
       const tokenData = await apiPost("/api/v1/auth/signup", payload, (json) => LoginResponseSchema.parse(json));
@@ -39,4 +39,3 @@ export function useSignup() {
     },
   });
 }
-

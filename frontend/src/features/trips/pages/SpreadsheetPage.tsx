@@ -274,7 +274,7 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                           </tr>
                         ))
                       : rows.map((row, index) => (
-                          <tr key={row.userId} className={index % 2 === 0 ? styles.rowEven : styles.rowOdd}>
+                          <tr key={`${row.userId}-${row.studentId ?? "legacy"}`} className={index % 2 === 0 ? styles.rowEven : styles.rowOdd}>
                             <td
                               className={`${styles.td} ${styles.userCell} ${
                                 index % 2 === 0 ? styles.userCellEven : styles.userCellOdd
@@ -292,6 +292,9 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                               ) : null}
                               {row.studentName ? (
                                 <span className={styles.userSecondary}>Alumno: {row.studentName}</span>
+                              ) : null}
+                              {row.studentDni ? (
+                                <span className={styles.userSecondary}>DNI alumno: {row.studentDni}</span>
                               ) : null}
                               {row.schoolName ? (
                                 <span className={styles.userSecondary}>Colegio: {row.schoolName}</span>

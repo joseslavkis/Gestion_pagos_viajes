@@ -29,7 +29,7 @@ import java.util.Map;
 @Component
 public class TripExcelExporter {
 
-    private static final int FIXED_COLUMNS = 8;
+    private static final int FIXED_COLUMNS = 9;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd/MM/yyyy");
 
     public byte[] export(SpreadsheetDTO data, String currency) {
@@ -58,6 +58,7 @@ public class TripExcelExporter {
                     "Email",
                     "Teléfono",
                     "Alumno",
+                    "DNI Alumno",
                     "Colegio",
                     "Curso",
                     "Completado"
@@ -117,9 +118,10 @@ public class TripExcelExporter {
                 writeTextCell(row, 2, rowData.email(), baseStyle);
                 writeTextCell(row, 3, rowData.phone(), baseStyle);
                 writeTextCell(row, 4, rowData.studentName(), baseStyle);
-                writeTextCell(row, 5, rowData.schoolName(), baseStyle);
-                writeTextCell(row, 6, rowData.courseName(), baseStyle);
-                writeTextCell(row, 7, Boolean.TRUE.equals(rowData.userCompleted()) ? "Sí" : "No",
+                writeTextCell(row, 5, rowData.studentDni(), baseStyle);
+                writeTextCell(row, 6, rowData.schoolName(), baseStyle);
+                writeTextCell(row, 7, rowData.courseName(), baseStyle);
+                writeTextCell(row, 8, Boolean.TRUE.equals(rowData.userCompleted()) ? "Sí" : "No",
                         Boolean.TRUE.equals(rowData.userCompleted()) ? completedStyle : baseStyle);
 
                 for (int installmentNumber = 1; installmentNumber <= installmentsCount; installmentNumber++) {
