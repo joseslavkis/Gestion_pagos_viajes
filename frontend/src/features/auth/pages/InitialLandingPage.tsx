@@ -90,7 +90,7 @@ export function InitialLandingPage() {
           <div className={styles.contactGrid}>
             <div className={styles.contactIntro}>
               <p className={styles.kicker}>Soporte humano</p>
-              <h2 className={styles.contactTitle}>Conversemos sobre tu agencia y tus viajes</h2>
+              <h2 className={styles.contactTitle}>Conversemos sobre tus viajes</h2>
               <p className={styles.contactDescription}>
                 Nuestro equipo acompana a escuelas y familias para implementar un circuito de cobros simple,
                 transparente y confiable.
@@ -119,7 +119,7 @@ export function InitialLandingPage() {
                   <span className={styles.iconBadge} aria-hidden="true">
                     I
                   </span>
-                  <span>Parque Empresarial Austral - Edificio Insignia M3 - Espacio VA EVT Leg. 14325</span>
+                  <span>Parque Empresarial Austral - Edificio Insignia M3 - Proyecto VA EVT Leg. 14325</span>
                 </li>
               </ul>
 
@@ -135,7 +135,7 @@ export function InitialLandingPage() {
                   </span>
                   <span className={styles.mapProvider}>Google Maps</span>
                 </div>
-                <p className={styles.mapLinkText}>Ver ubicacion de Espacio VA</p>
+                <p className={styles.mapLinkText}>Ver ubicacion de Proyecto VA</p>
                 <span className={styles.mapLinkHint}>Se abre en una nueva pestana</span>
               </a>
             </div>
