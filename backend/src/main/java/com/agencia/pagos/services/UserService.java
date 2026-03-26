@@ -4,18 +4,21 @@ import com.agencia.pagos.config.security.JwtService;
 import com.agencia.pagos.config.security.JwtUserDetails;
 import com.agencia.pagos.dtos.request.AdminCreateDTO;
 import com.agencia.pagos.dtos.request.RefreshDTO;
+import com.agencia.pagos.dtos.request.ResetPasswordDTO;
 import com.agencia.pagos.dtos.request.StudentCreateDTO;
 import com.agencia.pagos.dtos.request.UserCreateDTO;
 import com.agencia.pagos.dtos.request.UserUpdateDTO;
 import com.agencia.pagos.dtos.response.StudentDTO;
 import com.agencia.pagos.dtos.response.TokenDTO;
 import com.agencia.pagos.dtos.response.UserProfileDTO;
+import com.agencia.pagos.entities.PasswordResetToken;
 import com.agencia.pagos.entities.Role;
 import com.agencia.pagos.entities.Student;
 import com.agencia.pagos.entities.user.User;
 import com.agencia.pagos.entities.user.UserCredentials;
 import com.agencia.pagos.entities.refresh_token.RefreshToken;
 import com.agencia.pagos.repositories.InstallmentRepository;
+import com.agencia.pagos.repositories.PasswordResetTokenRepository;
 import com.agencia.pagos.repositories.StudentRepository;
 import com.agencia.pagos.repositories.UserRepository;
 
@@ -29,9 +32,11 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 @Service
 @Transactional
@@ -43,6 +48,8 @@ public class UserService implements UserDetailsService {
     private final InstallmentRepository installmentRepository;
     private final StudentRepository studentRepository;
     private final RefreshTokenService refreshTokenService;
+    private final PasswordResetTokenRepository passwordResetTokenRepository;
+    private final EmailService emailService;
 
     @Autowired
     UserService(
@@ -51,7 +58,9 @@ public class UserService implements UserDetailsService {
             UserRepository userRepository,
             InstallmentRepository installmentRepository,
             StudentRepository studentRepository,
-            RefreshTokenService refreshTokenService
+            RefreshTokenService refreshTokenService,
+            PasswordResetTokenRepository passwordResetTokenRepository,
+            EmailService emailService
     ) {
         this.jwtService = jwtService;
         this.passwordEncoder = passwordEncoder;
@@ -59,6 +68,8 @@ public class UserService implements UserDetailsService {
         this.installmentRepository = installmentRepository;
         this.studentRepository = studentRepository;
         this.refreshTokenService = refreshTokenService;
+        this.passwordResetTokenRepository = passwordResetTokenRepository;
+        this.emailService = emailService;
     }
 
     @Override
@@ -105,6 +116,48 @@ public class UserService implements UserDetailsService {
         return refreshTokenService.findByValue(data.refreshToken())
                 .map(RefreshToken::user)
                 .map(this::generateTokens);
+    }
+
+    public void requestPasswordReset(String email) {
+        Optional<User> maybeUser = userRepository.findByEmail(email);
+        if (maybeUser.isEmpty()) {
+            return;
+        }
+
+        User user = maybeUser.get();
+        passwordResetTokenRepository.deleteByUser(user);
+
+        String token = UUID.randomUUID().toString();
+        PasswordResetToken passwordResetToken = PasswordResetToken.builder()
+                .token(token)
+                .user(user)
+                .expiresAt(LocalDateTime.now().plusHours(1))
+                .used(false)
+                .build();
+
+        passwordResetTokenRepository.save(passwordResetToken);
+        emailService.sendPasswordResetEmail(user.getEmail(), user.getName(), token);
+    }
+
+    public void resetPassword(ResetPasswordDTO dto) {
+        PasswordResetToken token = passwordResetTokenRepository.findByToken(dto.token())
+                .orElseThrow(() -> new IllegalStateException("El enlace de recuperación no es válido."));
+
+        if (token.isUsed()) {
+            throw new IllegalStateException("Este enlace ya fue utilizado.");
+        }
+
+        if (token.getExpiresAt().isBefore(LocalDateTime.now())) {
+            throw new IllegalStateException("El enlace de recuperación expiró. Solicitá uno nuevo.");
+        }
+
+        User user = token.getUser();
+        user.setPassword(passwordEncoder.encode(dto.newPassword()));
+        userRepository.save(user);
+
+        token.setUsed(true);
+        passwordResetTokenRepository.save(token);
+        refreshTokenService.deleteByUser(user);
     }
 
     public Optional<UserProfileDTO> getUserProfileById(Long id) {

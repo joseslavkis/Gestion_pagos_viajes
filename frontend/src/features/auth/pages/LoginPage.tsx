@@ -38,12 +38,19 @@ export function LoginPage() {
               pendingLabel="Verificando credenciales..."
               isPending={isPending}
               footer={
-                <p>
-                  ¿No tienes cuenta?{" "}
-                  <Link href="/signup" className={styles.link}>
-                    Crear una ahora
-                  </Link>
-                </p>
+                <>
+                  <p>
+                    ¿No tienes cuenta?{" "}
+                    <Link href="/signup" className={styles.link}>
+                      Crear una ahora
+                    </Link>
+                  </p>
+                  <p>
+                    <Link href="/forgot-password" className={styles.link}>
+                      ¿Olvidaste tu contraseña?
+                    </Link>
+                  </p>
+                </>
               }
             >
               <formData.AppField
@@ -73,4 +80,3 @@ export function LoginPage() {
     </CommonLayout>
   );
 }
-
