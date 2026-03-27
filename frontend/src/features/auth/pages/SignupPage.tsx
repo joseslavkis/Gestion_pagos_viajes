@@ -82,12 +82,17 @@ export function SignupPage() {
     students: [emptyStudent()],
   });
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [schoolSearchByIndex, setSchoolSearchByIndex] = useState<Record<number, string>>({});
+  const [openSchoolPickerIndex, setOpenSchoolPickerIndex] = useState<number | null>(null);
 
   const studentsCountLabel = useMemo(
     () => `${form.students.length} hijo${form.students.length === 1 ? "" : "s"} cargado${form.students.length === 1 ? "" : "s"}`,
     [form.students.length],
   );
-  const schoolItems = useMemo(() => schools ?? [], [schools]);
+  const schoolItems = useMemo(
+    () => [...(schools ?? [])].sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" })),
+    [schools],
+  );
 
   const handleParentFieldChange = (field: keyof Omit<SignupRequest, "students">, value: string) => {
     setForm((current) => ({ ...current, [field]: value }));
@@ -125,6 +130,31 @@ export function SignupPage() {
         ...current,
         students: current.students.filter((_, studentIndex) => studentIndex !== index),
       };
+    });
+
+    setSchoolSearchByIndex((current) => {
+      const next: Record<number, string> = {};
+
+      for (const [key, value] of Object.entries(current)) {
+        const numericKey = Number(key);
+        if (!Number.isInteger(numericKey) || numericKey === index) {
+          continue;
+        }
+
+        next[numericKey > index ? numericKey - 1 : numericKey] = value;
+      }
+
+      return next;
+    });
+
+    setOpenSchoolPickerIndex((current) => {
+      if (current === null) {
+        return current;
+      }
+      if (current === index) {
+        return null;
+      }
+      return current > index ? current - 1 : current;
     });
   };
 
@@ -229,6 +259,22 @@ export function SignupPage() {
 
               {form.students.map((student, index) => (
                 <div key={index} style={{ ...cardStyle, background: "#fff" }}>
+                  {(() => {
+                    const schoolSearchValue = schoolSearchByIndex[index] ?? (student.schoolName ?? "");
+                    const normalizedSearch = schoolSearchValue.trim().toLocaleLowerCase("es");
+                    const filteredSchoolItems =
+                      normalizedSearch.length === 0
+                        ? schoolItems
+                        : schoolItems.filter((school) =>
+                            school.name.toLocaleLowerCase("es").includes(normalizedSearch),
+                          );
+                    const isSchoolListOpen =
+                      openSchoolPickerIndex === index && !isSchoolsLoading && schoolItems.length > 0;
+                    const schoolListboxId = `school-results-${index}`;
+                    const hasSchoolSelection = Boolean(student.schoolName?.trim());
+
+                    return (
+                      <>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
                     <strong>Hijo {index + 1}</strong>
                     <button
@@ -259,24 +305,110 @@ export function SignupPage() {
                     />
                   </label>
                   <label style={fieldStyle}>
-                    <span>Colegio</span>
-                    <div className={styles.schoolSelectWrap}>
-                      <select
-                        className={styles.schoolSelect}
-                        value={student.schoolName ?? ""}
-                        onChange={(event) => handleStudentChange(index, "schoolName", event.target.value)}
-                        disabled={isSchoolsLoading || schoolItems.length === 0}
-                      >
-                        <option value="">
-                          {schoolItems.length === 0 ? "No hay colegios cargados" : "Seleccioná un colegio"}
-                        </option>
-                        {schoolItems.map((school) => (
-                          <option key={school.id} value={school.name}>
-                            {school.name}
-                          </option>
-                        ))}
-                      </select>
+                    <div className={styles.schoolFieldHeader}>
+                      <span>Colegio</span>
+                      <span className={styles.schoolCountBadge}>
+                        {isSchoolsLoading
+                          ? "Cargando..."
+                          : `${filteredSchoolItems.length}/${schoolItems.length} disponibles`}
+                      </span>
                     </div>
+                    <div
+                      className={styles.schoolPicker}
+                      onBlur={(event) => {
+                        const nextFocused = event.relatedTarget;
+                        if (nextFocused instanceof Node && event.currentTarget.contains(nextFocused)) {
+                          return;
+                        }
+                        setOpenSchoolPickerIndex((current) => (current === index ? null : current));
+                      }}
+                    >
+                      <div className={styles.schoolSearchControl}>
+                        <input
+                          type="search"
+                          className={styles.schoolFilterInput}
+                          role="combobox"
+                          placeholder={
+                            schoolItems.length === 0 ? "No hay colegios cargados" : "Buscar y seleccionar colegio..."
+                          }
+                          value={schoolSearchValue}
+                          onFocus={() => setOpenSchoolPickerIndex(index)}
+                          onChange={(event) => {
+                            const nextValue = event.target.value;
+                            setSchoolSearchByIndex((current) => ({
+                              ...current,
+                              [index]: nextValue,
+                            }));
+                            if (student.schoolName !== nextValue) {
+                              handleStudentChange(index, "schoolName", "");
+                            }
+                            setOpenSchoolPickerIndex(index);
+                          }}
+                          disabled={isSchoolsLoading || schoolItems.length === 0}
+                          autoComplete="off"
+                          aria-expanded={isSchoolListOpen}
+                          aria-controls={schoolListboxId}
+                          aria-label={`Buscar colegio para hijo ${index + 1}`}
+                        />
+                        {schoolSearchValue.trim().length > 0 ? (
+                          <button
+                            type="button"
+                            className={styles.schoolClearButton}
+                            onClick={() => {
+                              setSchoolSearchByIndex((current) => ({ ...current, [index]: "" }));
+                              handleStudentChange(index, "schoolName", "");
+                              setOpenSchoolPickerIndex(index);
+                            }}
+                            aria-label="Limpiar búsqueda de colegio"
+                          >
+                            Limpiar
+                          </button>
+                        ) : null}
+                      </div>
+                      {isSchoolListOpen ? (
+                        <ul
+                          id={schoolListboxId}
+                          className={styles.schoolOptions}
+                          role="listbox"
+                          aria-label={`Resultados de colegios para hijo ${index + 1}`}
+                        >
+                          {filteredSchoolItems.length > 0 ? (
+                            filteredSchoolItems.map((school) => {
+                              const isSelected = student.schoolName === school.name;
+                              return (
+                                <li key={school.id}>
+                                  <button
+                                    type="button"
+                                    role="option"
+                                    aria-selected={isSelected}
+                                    className={`${styles.schoolOptionButton} ${isSelected ? styles.schoolOptionSelected : ""}`}
+                                    onMouseDown={(event) => event.preventDefault()}
+                                    onClick={() => {
+                                      handleStudentChange(index, "schoolName", school.name);
+                                      setSchoolSearchByIndex((current) => ({
+                                        ...current,
+                                        [index]: school.name,
+                                      }));
+                                      setOpenSchoolPickerIndex(null);
+                                    }}
+                                  >
+                                    <span>{school.name}</span>
+                                    {isSelected ? <span className={styles.schoolOptionTag}>Elegido</span> : null}
+                                  </button>
+                                </li>
+                              );
+                            })
+                          ) : (
+                            <li className={styles.schoolEmptyState}>No encontramos coincidencias para esa búsqueda.</li>
+                          )}
+                        </ul>
+                      ) : null}
+                    </div>
+                    {hasSchoolSelection ? (
+                      <small className={styles.schoolSelectedHint}>Seleccionado: {student.schoolName}</small>
+                    ) : (
+                      <small className={styles.schoolEmptyHint}>Buscá y elegí un colegio de la lista.</small>
+                    )}
                   </label>
                   <label style={fieldStyle}>
                     <span>Curso</span>
@@ -286,6 +418,9 @@ export function SignupPage() {
                       onChange={(event) => handleStudentChange(index, "courseName", event.target.value)}
                     />
                   </label>
+                      </>
+                    );
+                  })()}
                 </div>
               ))}
             </div>

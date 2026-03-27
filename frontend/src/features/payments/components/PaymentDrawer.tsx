@@ -72,6 +72,7 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
   const [rejectObservation, setRejectObservation] = useState("");
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [voidError, setVoidError] = useState<string | null>(null);
+  const titleId = `payment-drawer-title-${installment.id}`;
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -84,6 +85,16 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
 
   const isBusy = reviewPayment.isPending || voidPayment.isPending;
 
@@ -136,9 +147,14 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
         }
       }}
     >
-      <aside className={styles.drawer} role="complementary" aria-label="Gestión de comprobantes">
+      <aside
+        className={styles.drawer}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+      >
         <header className={styles.drawerHeader}>
-          <h2 className={styles.drawerTitle}>
+          <h2 id={titleId} className={styles.drawerTitle}>
             Cuota {installment.installmentNumber} · {currencyFormatter.format(installment.totalDue)}
           </h2>
           <button type="button" className={styles.drawerCloseButton} onClick={onClose}>

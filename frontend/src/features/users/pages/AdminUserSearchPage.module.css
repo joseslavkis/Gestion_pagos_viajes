@@ -1,0 +1,171 @@
+.page {
+  min-height: 100vh;
+  width: 100%;
+  padding: 2rem 1rem 2.5rem;
+}
+
+.container {
+  width: min(1040px, 100%);
+  margin: 0 auto;
+  display: grid;
+  gap: 1rem;
+}
+
+.header,
+.searchCard,
+.resultsCard,
+.emptyPanel {
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(209, 227, 255, 0.9);
+  box-shadow: 0 0.75rem 1.5rem rgba(15, 23, 42, 0.06);
+  padding: 1rem;
+}
+
+.eyebrow {
+  margin: 0 0 0.25rem;
+  color: #0b5bcf;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.title {
+  margin: 0;
+  color: #0d3657;
+  font-size: clamp(1.5rem, 2vw, 2rem);
+}
+
+.subtitle {
+  margin: 0.45rem 0 0;
+  color: #526883;
+}
+
+.searchLabel {
+  display: grid;
+  gap: 0.45rem;
+  color: #0f2f57;
+  font-weight: 600;
+}
+
+.searchField {
+  position: relative;
+}
+
+.searchInput {
+  width: 100%;
+  min-height: 46px;
+  border-radius: 999px;
+  border: 1px solid #b5cde9;
+  padding: 0 2.75rem 0 1rem;
+  font: inherit;
+  color: #0f2f57;
+}
+
+.searchInput::-webkit-search-cancel-button,
+.searchInput::-webkit-search-decoration,
+.searchInput::-webkit-search-results-button,
+.searchInput::-webkit-search-results-decoration {
+  appearance: none;
+  display: none;
+}
+
+.clearButton {
+  position: absolute;
+  right: 0.4rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2rem;
+  height: 2rem;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(11, 91, 207, 0.08);
+  color: #0b5bcf;
+  font-size: 1.1rem;
+}
+
+.searchHelp,
+.resultMeta,
+.emptyText {
+  margin: 0;
+  color: #526883;
+}
+
+.resultsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.9rem;
+  flex-wrap: wrap;
+}
+
+.sectionTitle,
+.emptyTitle {
+  margin: 0;
+  color: #0f2f57;
+}
+
+.resultCount {
+  border-radius: 999px;
+  padding: 0.22rem 0.65rem;
+  background: rgba(11, 91, 207, 0.08);
+  color: #0d4e86;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.resultsList {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.resultCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.9rem;
+  border: 1px solid #d8e6fb;
+  border-radius: 0.95rem;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  padding: 0.95rem 1rem;
+  text-decoration: none;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+}
+
+.resultCard:hover {
+  transform: translateY(-1px);
+  border-color: #9ec0ea;
+  box-shadow: 0 0.7rem 1.35rem rgba(15, 23, 42, 0.08);
+}
+
+.resultMain {
+  min-width: 0;
+}
+
+.resultTitle {
+  margin: 0 0 0.22rem;
+  color: #123a6b;
+}
+
+.studentBadge {
+  flex-shrink: 0;
+  border-radius: 999px;
+  padding: 0.28rem 0.7rem;
+  background: rgba(22, 163, 74, 0.12);
+  color: #166534;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+@media (max-width: 640px) {
+  .page {
+    padding-inline: 0.75rem;
+  }
+
+  .resultCard {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

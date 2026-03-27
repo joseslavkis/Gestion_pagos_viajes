@@ -43,6 +43,8 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
   });
   const [rawSearch, setRawSearch] = useState("");
   const [hasScrolledHorizontally, setHasScrolledHorizontally] = useState(false);
+  const [isScrollableHorizontally, setIsScrollableHorizontally] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
   const [selected, setSelected] = useState<SelectedInstallment | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -77,15 +79,37 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
       return;
     }
 
-    const handleScroll = () => {
-      if (element.scrollLeft > 0) {
-        setHasScrolledHorizontally(true);
-      }
+    const updateScrollAffordances = () => {
+      const maxScrollLeft = Math.max(0, element.scrollWidth - element.clientWidth);
+      const nextHasScrolledHorizontally = element.scrollLeft > 4;
+
+      setHasScrolledHorizontally(nextHasScrolledHorizontally);
+      setIsScrollableHorizontally(maxScrollLeft > 4);
+      setCanScrollRight(element.scrollLeft < maxScrollLeft - 4);
     };
 
-    element.addEventListener("scroll", handleScroll, { passive: true });
-    return () => element.removeEventListener("scroll", handleScroll);
-  }, []);
+    const resizeObserver =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => updateScrollAffordances())
+        : null;
+    const table = element.querySelector("table");
+    const animationFrameId = window.requestAnimationFrame(updateScrollAffordances);
+
+    resizeObserver?.observe(element);
+    if (table instanceof HTMLElement) {
+      resizeObserver?.observe(table);
+    }
+
+    element.addEventListener("scroll", updateScrollAffordances, { passive: true });
+    window.addEventListener("resize", updateScrollAffordances);
+
+    return () => {
+      window.cancelAnimationFrame(animationFrameId);
+      resizeObserver?.disconnect();
+      element.removeEventListener("scroll", updateScrollAffordances);
+      window.removeEventListener("resize", updateScrollAffordances);
+    };
+  }, [data?.installmentsCount, data?.rows?.length, isLoading, params.page]);
 
   useEffect(() => {
     const tableTopElement = document.getElementById("spreadsheet-table-top");
@@ -109,6 +133,15 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
       ...current,
       page: 0,
       status: value === "" ? "" : (value as SpreadsheetParams["status"]),
+    }));
+  };
+
+  const handleClearSearch = () => {
+    setRawSearch("");
+    setParams((current) => ({
+      ...current,
+      page: 0,
+      search: undefined,
     }));
   };
 
@@ -172,7 +205,7 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
               >
                 ← Volver a viajes
               </button>
-              <div className={styles.exportWrapper}>
+              <div className={`${styles.exportWrapper} ${styles.desktopExportWrapper}`}>
                 <button
                   type="button"
                   className={styles.exportButton}
@@ -202,13 +235,25 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
             </div>
 
             <div className={styles.toolbar}>
-              <input
-                type="search"
-                className={styles.searchInput}
-                placeholder="Buscar por nombre, apellido o email..."
-                value={rawSearch}
-                onChange={(event) => setRawSearch(event.target.value)}
-              />
+              <div className={styles.searchField}>
+                <input
+                  type="search"
+                  className={styles.searchInput}
+                  placeholder="Buscar por nombre, apellido o email..."
+                  value={rawSearch}
+                  onChange={(event) => setRawSearch(event.target.value)}
+                />
+                {rawSearch.length > 0 ? (
+                  <button
+                    type="button"
+                    className={styles.clearSearchButton}
+                    onClick={handleClearSearch}
+                    aria-label="Limpiar búsqueda"
+                  >
+                    ×
+                  </button>
+                ) : null}
+              </div>
               <select
                 className={styles.select}
                 value={params.status ?? ""}
@@ -243,11 +288,19 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
             error={error ?? null}
             loadingLabel="Cargando planilla..."
           >
-            <div id="spreadsheet-table-top" className={styles.tableContainer}>
-              <div ref={tableContainerRef} className={styles.scrollShell}>
-                {!hasScrolledHorizontally ? (
-                  <div className={styles.scrollHint}>Deslizá → para ver todas las cuotas</div>
-                ) : null}
+            <div
+              id="spreadsheet-table-top"
+              className={`${styles.tableContainer} ${
+                hasScrolledHorizontally ? styles.tableContainerScrolled : ""
+              }`}
+            >
+              {isScrollableHorizontally && !hasScrolledHorizontally ? (
+                <div className={styles.scrollHint}>Deslizá la tabla para ver más cuotas</div>
+              ) : null}
+              <div
+                ref={tableContainerRef}
+                className={`${styles.scrollShell} ${canScrollRight ? styles.scrollShellFadeRight : ""}`}
+              >
                 <table className={styles.table}>
                   <thead className={styles.thead}>
                     <tr>
@@ -391,6 +444,22 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                 >
                   →
                 </button>
+              </div>
+              <div className={styles.mobileExportBar}>
+                <button
+                  type="button"
+                  className={`${styles.exportButton} ${styles.mobileExportButton}`}
+                  onClick={handleExport}
+                  disabled={isExporting || !data}
+                  aria-label="Descargar planilla como archivo Excel"
+                >
+                  {isExporting ? "Descargando..." : "Descargar Excel"}
+                </button>
+                {exportError ? (
+                  <p className={styles.exportError} role="alert">
+                    {exportError}
+                  </p>
+                ) : null}
               </div>
             </div>
           </RequestState>

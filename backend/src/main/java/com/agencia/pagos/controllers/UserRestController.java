@@ -16,6 +16,8 @@ import com.agencia.pagos.dtos.request.AdminCreateDTO;
 import com.agencia.pagos.dtos.request.StudentCreateDTO;
 import com.agencia.pagos.dtos.request.UserCreateDTO;
 import com.agencia.pagos.dtos.request.UserUpdateDTO;
+import com.agencia.pagos.dtos.response.AdminUserDetailDTO;
+import com.agencia.pagos.dtos.response.AdminUserSearchResultDTO;
 import com.agencia.pagos.dtos.response.StudentDTO;
 import com.agencia.pagos.dtos.response.StatusResponseDTO;
 import com.agencia.pagos.dtos.response.TokenDTO;
@@ -91,6 +93,24 @@ class UserRestController {
         return userService.createAdmin(userDTO)
                 .map(tk -> ResponseEntity.status(HttpStatus.CREATED).body(tk))
                 .orElse(ResponseEntity.status(HttpStatus.CONFLICT).build());
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @GetMapping(value = "/admin/search", produces = "application/json")
+    @Operation(summary = "Search users for admin by name, lastname, email or DNI")
+    ResponseEntity<List<AdminUserSearchResultDTO>> searchUsersForAdmin(
+            @RequestParam("q") String query
+    ) {
+        return ResponseEntity.ok(userService.searchUsersForAdmin(query));
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @GetMapping(value = "/admin/{id}/detail", produces = "application/json")
+    @Operation(summary = "Get a complete user detail for admin")
+    ResponseEntity<AdminUserDetailDTO> getAdminUserDetail(
+            @PathVariable Long id
+    ) {
+        return ResponseEntity.ok(userService.getAdminUserDetail(id));
     }
 
     @PreAuthorize("isAuthenticated()")
