@@ -28,3 +28,4 @@ secrets/
 *.sql
 *.dump
 *.bak
+.DS_Store

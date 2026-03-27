@@ -18,8 +18,11 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.agencia.pagos.dtos.request.RefreshDTO;
+import com.agencia.pagos.dtos.request.ForgotPasswordDTO;
+import com.agencia.pagos.dtos.request.ResetPasswordDTO;
 import com.agencia.pagos.dtos.request.UserCreateDTO;
 import com.agencia.pagos.dtos.request.UserLoginDTO;
+import com.agencia.pagos.dtos.response.StatusResponseDTO;
 import com.agencia.pagos.dtos.response.TokenDTO;
 import com.agencia.pagos.services.UserService;
 
@@ -69,5 +72,31 @@ class SessionRestController {
         return userService
                 .refresh(data)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid refresh token"));
+    }
+
+    @PostMapping(value = "/forgot-password", produces = "application/json")
+    @Operation(summary = "Request a password reset link")
+    @ResponseStatus(HttpStatus.OK)
+    ResponseEntity<StatusResponseDTO> forgotPassword(
+            @Valid @NonNull @RequestBody ForgotPasswordDTO dto
+    ) {
+        userService.requestPasswordReset(dto.email());
+        return ResponseEntity.ok(new StatusResponseDTO(
+                "success",
+                "Si el email existe, recibirás un enlace para restablecer tu contraseña."
+        ));
+    }
+
+    @PostMapping(value = "/reset-password", produces = "application/json")
+    @Operation(summary = "Reset a password using a recovery token")
+    @ResponseStatus(HttpStatus.OK)
+    ResponseEntity<StatusResponseDTO> resetPassword(
+            @Valid @NonNull @RequestBody ResetPasswordDTO dto
+    ) {
+        userService.resetPassword(dto);
+        return ResponseEntity.ok(new StatusResponseDTO(
+                "success",
+                "Contraseña actualizada correctamente."
+        ));
     }
 }

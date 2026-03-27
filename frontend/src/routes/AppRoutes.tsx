@@ -1,7 +1,9 @@
 import { Redirect, Route, Switch } from "wouter";
 
+import { ForgotPasswordPage } from "@/features/auth/pages/ForgotPasswordPage";
 import { LoginPage } from "@/features/auth/pages/LoginPage";
 import { InitialLandingPage } from "@/features/auth/pages/InitialLandingPage";
+import { ResetPasswordPage } from "@/features/auth/pages/ResetPasswordPage";
 import { SignupPage } from "@/features/auth/pages/SignupPage";
 import { BankAccountsPage } from "@/features/bank-accounts/pages/BankAccountsPage";
 import { PendingReviewPage } from "@/features/payments/pages/PendingReviewPage";
@@ -80,6 +82,12 @@ export function AppRoutes() {
           </Route>
           <Route path="/signup">
             <SignupPage />
+          </Route>
+          <Route path="/forgot-password">
+            <ForgotPasswordPage />
+          </Route>
+          <Route path="/reset-password">
+            <ResetPasswordPage />
           </Route>
           <Route>
             <Redirect href="/" />

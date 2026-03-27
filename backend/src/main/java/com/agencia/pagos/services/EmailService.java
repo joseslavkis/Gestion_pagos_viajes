@@ -5,6 +5,8 @@ import com.agencia.pagos.entities.Currency;
 import jakarta.mail.Message;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
@@ -23,25 +25,29 @@ import java.util.Locale;
 public class EmailService {
 
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+    private static final Logger logger = LoggerFactory.getLogger(EmailService.class);
 
     private final JavaMailSender mailSender;
     private final String toEmail;
     private final String fromEmail;
     private final String smtpUsername;
     private final String smtpPassword;
+    private final String frontendUrl;
 
     public EmailService(
             JavaMailSender mailSender,
             @Value("${app.mail.to}") String toEmail,
             @Value("${app.mail.from}") String fromEmail,
             @Value("${spring.mail.username:}") String smtpUsername,
-            @Value("${spring.mail.password:}") String smtpPassword
+            @Value("${spring.mail.password:}") String smtpPassword,
+            @Value("${app.frontend.url:http://localhost:30005}") String frontendUrl
     ) {
         this.mailSender = mailSender;
         this.toEmail = toEmail;
-        this.fromEmail = fromEmail;
+        this.fromEmail = StringUtils.hasText(fromEmail) ? fromEmail : smtpUsername;
         this.smtpUsername = smtpUsername;
         this.smtpPassword = smtpPassword;
+        this.frontendUrl = frontendUrl;
     }
 
     @Async
@@ -69,6 +75,7 @@ public class EmailService {
 
             mailSender.send(mimeMessage);
         } catch (Exception e) {
+            logger.error("Could not send contact email to {}", toEmail, e);
             // Async execution: best-effort. Surface via logs (Spring will log uncaught exceptions too).
             throw new IllegalStateException("Could not send contact email", e);
         }
@@ -84,7 +91,11 @@ public class EmailService {
             String userName,
             List<InstallmentReminderMailItem> items
     ) {
-        if (!isDeliveryConfigured() || items == null || items.isEmpty()) {
+        if (items == null || items.isEmpty()) {
+            return;
+        }
+
+        if (shouldSkipDelivery("installment reminder")) {
             return;
         }
 
@@ -108,8 +119,92 @@ public class EmailService {
 
             mailSender.send(mimeMessage);
         } catch (Exception e) {
+            logger.error("Could not send installment reminder email to {}", userEmail, e);
             throw new IllegalStateException("Could not send installment reminder email", e);
         }
+    }
+
+    @Async
+    public void sendPasswordResetEmail(String toEmail, String userName, String token) {
+        if (shouldSkipDelivery("password reset")) {
+            return;
+        }
+
+        String link = frontendUrl + "/reset-password?token=" + token;
+        String safeName = escapeHtml(userName != null ? userName : "");
+        String safeLink = escapeHtml(link);
+
+        String html = """
+                <div style="font-family:Segoe UI,Arial,sans-serif;
+                            line-height:1.5;color:#0f2f57;">
+                  <h2 style="margin:0 0 12px;">Recuperación de contraseña</h2>
+                  <p style="margin:0 0 16px;">Hola %s,</p>
+                  <p style="margin:0 0 16px;">
+                    Recibimos una solicitud para restablecer la contraseña
+                    de tu cuenta. Hacé click en el botón para continuar.
+                  </p>
+                  <a href="%s"
+                     style="display:inline-block;padding:12px 24px;
+                            background:#0b5bcf;color:#fff;border-radius:10px;
+                            text-decoration:none;font-weight:700;
+                            margin-bottom:16px;">
+                    Restablecer contraseña
+                  </a>
+                  <p style="margin:0 0 8px;color:#526883;font-size:14px;">
+                    Este enlace expira en 1 hora.
+                  </p>
+                  <p style="margin:0;color:#526883;font-size:14px;">
+                    Si no solicitaste esto, ignorá este email.
+                    Tu contraseña no fue modificada.
+                  </p>
+                </div>
+                """.formatted(safeName, safeLink);
+
+        MimeMessage mimeMessage = mailSender.createMimeMessage();
+        try {
+            MimeMessageHelper helper = new MimeMessageHelper(
+                    mimeMessage,
+                    MimeMessageHelper.MULTIPART_MODE_NO,
+                    StandardCharsets.UTF_8.name()
+            );
+            helper.setFrom(fromEmail);
+            helper.setTo(toEmail);
+            helper.setSubject("Recuperación de contraseña - ProyectoVA");
+            helper.setText(html, true);
+            mailSender.send(mimeMessage);
+        } catch (Exception e) {
+            logger.error("Could not send password reset email to {}", toEmail, e);
+            throw new IllegalStateException("Could not send password reset email", e);
+        }
+    }
+
+    private boolean shouldSkipDelivery(String emailType) {
+        if (isDeliveryConfigured()) {
+            return false;
+        }
+
+        logger.warn(
+                "Skipping {} email because SMTP delivery is not fully configured. Missing settings: {}",
+                emailType,
+                describeMissingDeliverySettings()
+        );
+        return true;
+    }
+
+    private String describeMissingDeliverySettings() {
+        List<String> missingSettings = new java.util.ArrayList<>();
+
+        if (!StringUtils.hasText(smtpUsername)) {
+            missingSettings.add("SMTP_USERNAME/spring.mail.username");
+        }
+        if (!StringUtils.hasText(smtpPassword)) {
+            missingSettings.add("SMTP_APP_PASSWORD or SMTP_KEY/spring.mail.password");
+        }
+        if (!StringUtils.hasText(fromEmail)) {
+            missingSettings.add("SMTP_FROM/app.mail.from");
+        }
+
+        return missingSettings.isEmpty() ? "none" : String.join(", ", missingSettings);
     }
 
     private String buildHtmlBody(ContactMessageDTO dto) {

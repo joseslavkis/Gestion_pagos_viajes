@@ -9,6 +9,24 @@ export const UserLoginDTOSchema = z.object({
 
 export type UserLoginDTO = z.infer<typeof UserLoginDTOSchema>;
 
+export const ForgotPasswordSchema = z.object({
+  email: z.string().email("Debe ser un email válido (ej: nombre@gmail.com)"),
+});
+
+export type ForgotPasswordRequest = z.infer<typeof ForgotPasswordSchema>;
+
+export const ResetPasswordSchema = z.object({
+  token: z.string().min(1, "El enlace no es válido. Solicitá uno nuevo."),
+  newPassword: z
+    .string()
+    .regex(
+      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&]).{8,}$/,
+      "La contraseña debe incluir mayúscula, minúscula, número y símbolo (@$!%*?&)",
+    ),
+});
+
+export type ResetPasswordRequest = z.infer<typeof ResetPasswordSchema>;
+
 export const StudentCreateSchema = z.object({
   name: z.string().min(2, "El nombre debe tener al menos 2 caracteres"),
   dni: z.string().regex(/^\d{7,8}$/, "El DNI debe tener 7 u 8 números"),
