@@ -2,17 +2,15 @@ package com.agencia.pagos.services;
 
 import com.agencia.pagos.dtos.request.ContactMessageDTO;
 import com.agencia.pagos.entities.Currency;
-import jakarta.mail.Message;
-import jakarta.mail.internet.InternetAddress;
-import jakarta.mail.internet.MimeMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.http.MediaType;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.nio.charset.StandardCharsets;
 import java.text.NumberFormat;
@@ -27,62 +25,57 @@ public class EmailService {
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd/MM/yyyy");
     private static final Logger logger = LoggerFactory.getLogger(EmailService.class);
 
-    private final JavaMailSender mailSender;
+    private final RestClient restClient;
     private final String toEmail;
     private final String fromEmail;
-    private final String smtpUsername;
-    private final String smtpPassword;
+    private final String fromName;
+    private final String replyToEmail;
+    private final String brevoApiKey;
     private final String frontendUrl;
 
     public EmailService(
-            JavaMailSender mailSender,
+            RestClient.Builder restClientBuilder,
             @Value("${app.mail.to}") String toEmail,
             @Value("${app.mail.from}") String fromEmail,
-            @Value("${spring.mail.username:}") String smtpUsername,
-            @Value("${spring.mail.password:}") String smtpPassword,
-            @Value("${app.frontend.url:http://localhost:30005}") String frontendUrl
+            @Value("${app.mail.from-name:Proyecto VA}") String fromName,
+            @Value("${app.mail.reply-to:}") String replyToEmail,
+            @Value("${app.mail.brevo.api-key:}") String brevoApiKey,
+            @Value("${app.frontend.url}") String frontendUrl
     ) {
-        this.mailSender = mailSender;
+        this.restClient = restClientBuilder
+                .baseUrl("https://api.brevo.com")
+                .build();
         this.toEmail = toEmail;
-        this.fromEmail = StringUtils.hasText(fromEmail) ? fromEmail : smtpUsername;
-        this.smtpUsername = smtpUsername;
-        this.smtpPassword = smtpPassword;
+        this.fromEmail = fromEmail;
+        this.fromName = fromName;
+        this.replyToEmail = StringUtils.hasText(replyToEmail) ? replyToEmail : fromEmail;
+        this.brevoApiKey = brevoApiKey;
         this.frontendUrl = frontendUrl;
     }
 
     @Async
     public void sendContactMessage(ContactMessageDTO dto) {
-        MimeMessage mimeMessage = mailSender.createMimeMessage();
-
-        try {
-            MimeMessageHelper helper = new MimeMessageHelper(
-                    mimeMessage,
-                    MimeMessageHelper.MULTIPART_MODE_NO,
-                    StandardCharsets.UTF_8.name()
-            );
-
-            helper.setFrom(fromEmail);
-            helper.setTo(toEmail);
-            helper.setSubject("Nueva consulta - Viajes Pagos");
-            helper.setReplyTo(dto.email());
-
-            String body = buildHtmlBody(dto);
-            helper.setText(body, true);
-
-            // Ensure headers are consistent
-            mimeMessage.setHeader("X-Contact-Source", "landing");
-            mimeMessage.setRecipient(Message.RecipientType.TO, new InternetAddress(toEmail));
-
-            mailSender.send(mimeMessage);
-        } catch (Exception e) {
-            logger.error("Could not send contact email to {}", toEmail, e);
-            // Async execution: best-effort. Surface via logs (Spring will log uncaught exceptions too).
-            throw new IllegalStateException("Could not send contact email", e);
+        if (shouldSkipDelivery("contact")) {
+            return;
         }
+
+        if (!StringUtils.hasText(toEmail)) {
+            logger.warn("Skipping contact email because APP_MAIL_TO/app.mail.to is not configured");
+            return;
+        }
+
+        sendEmail(
+                List.of(new BrevoAddress(toEmail, null)),
+                new BrevoAddress(dto.email(), dto.name()),
+                "Nueva consulta - Viajes Pagos",
+                buildHtmlBody(dto),
+                "contact",
+                toEmail
+        );
     }
 
     public boolean isDeliveryConfigured() {
-        return StringUtils.hasText(smtpUsername) && StringUtils.hasText(smtpPassword) && StringUtils.hasText(fromEmail);
+        return StringUtils.hasText(brevoApiKey) && StringUtils.hasText(fromEmail);
     }
 
     @Async
@@ -99,29 +92,14 @@ public class EmailService {
             return;
         }
 
-        MimeMessage mimeMessage = mailSender.createMimeMessage();
-
-        try {
-            MimeMessageHelper helper = new MimeMessageHelper(
-                    mimeMessage,
-                    MimeMessageHelper.MULTIPART_MODE_NO,
-                    StandardCharsets.UTF_8.name()
-            );
-
-            helper.setFrom(fromEmail);
-            helper.setTo(userEmail);
-            helper.setReplyTo(fromEmail);
-            helper.setSubject(buildReminderSubject(items));
-            helper.setText(buildInstallmentReminderHtmlBody(userName, items), true);
-
-            mimeMessage.setHeader("X-Notification-Type", "installment-reminder");
-            mimeMessage.setRecipient(Message.RecipientType.TO, new InternetAddress(userEmail));
-
-            mailSender.send(mimeMessage);
-        } catch (Exception e) {
-            logger.error("Could not send installment reminder email to {}", userEmail, e);
-            throw new IllegalStateException("Could not send installment reminder email", e);
-        }
+        sendEmail(
+                List.of(new BrevoAddress(userEmail, userName)),
+                new BrevoAddress(replyToEmail, fromName),
+                buildReminderSubject(items),
+                buildInstallmentReminderHtmlBody(userName, items),
+                "installment reminder",
+                userEmail
+        );
     }
 
     @Async
@@ -155,27 +133,19 @@ public class EmailService {
                   </p>
                   <p style="margin:0;color:#526883;font-size:14px;">
                     Si no solicitaste esto, ignorá este email.
-                    Tu contraseña no fue modificada.
+                   Tu contraseña no fue modificada.
                   </p>
                 </div>
                 """.formatted(safeName, safeLink);
 
-        MimeMessage mimeMessage = mailSender.createMimeMessage();
-        try {
-            MimeMessageHelper helper = new MimeMessageHelper(
-                    mimeMessage,
-                    MimeMessageHelper.MULTIPART_MODE_NO,
-                    StandardCharsets.UTF_8.name()
-            );
-            helper.setFrom(fromEmail);
-            helper.setTo(toEmail);
-            helper.setSubject("Recuperación de contraseña - ProyectoVA");
-            helper.setText(html, true);
-            mailSender.send(mimeMessage);
-        } catch (Exception e) {
-            logger.error("Could not send password reset email to {}", toEmail, e);
-            throw new IllegalStateException("Could not send password reset email", e);
-        }
+        sendEmail(
+                List.of(new BrevoAddress(toEmail, userName)),
+                new BrevoAddress(replyToEmail, fromName),
+                "Recuperación de contraseña - ProyectoVA",
+                html,
+                "password reset",
+                toEmail
+        );
     }
 
     private boolean shouldSkipDelivery(String emailType) {
@@ -184,7 +154,7 @@ public class EmailService {
         }
 
         logger.warn(
-                "Skipping {} email because SMTP delivery is not fully configured. Missing settings: {}",
+                "Skipping {} email because Brevo delivery is not fully configured. Missing settings: {}",
                 emailType,
                 describeMissingDeliverySettings()
         );
@@ -194,17 +164,54 @@ public class EmailService {
     private String describeMissingDeliverySettings() {
         List<String> missingSettings = new java.util.ArrayList<>();
 
-        if (!StringUtils.hasText(smtpUsername)) {
-            missingSettings.add("SMTP_USERNAME/spring.mail.username");
-        }
-        if (!StringUtils.hasText(smtpPassword)) {
-            missingSettings.add("SMTP_APP_PASSWORD or SMTP_KEY/spring.mail.password");
+        if (!StringUtils.hasText(brevoApiKey)) {
+            missingSettings.add("BREVO_API_KEY/app.mail.brevo.api-key");
         }
         if (!StringUtils.hasText(fromEmail)) {
-            missingSettings.add("SMTP_FROM/app.mail.from");
+            missingSettings.add("BREVO_FROM_EMAIL/app.mail.from");
         }
 
         return missingSettings.isEmpty() ? "none" : String.join(", ", missingSettings);
+    }
+
+    private void sendEmail(
+            List<BrevoAddress> to,
+            BrevoAddress replyTo,
+            String subject,
+            String htmlContent,
+            String emailType,
+            String recipientLog
+    ) {
+        BrevoSendEmailRequest payload = new BrevoSendEmailRequest(
+                new BrevoAddress(fromEmail, fromName),
+                to,
+                replyTo,
+                subject,
+                htmlContent
+        );
+
+        try {
+            restClient.post()
+                    .uri("/v3/smtp/email")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .header("api-key", brevoApiKey)
+                    .body(payload)
+                    .retrieve()
+                    .toBodilessEntity();
+        } catch (RestClientResponseException exception) {
+            logger.error(
+                    "Could not send {} email to {}. Brevo responded with status {} and body {}",
+                    emailType,
+                    recipientLog,
+                    exception.getStatusCode(),
+                    exception.getResponseBodyAsString(StandardCharsets.UTF_8),
+                    exception
+            );
+            throw new IllegalStateException("Could not send " + emailType + " email", exception);
+        } catch (Exception exception) {
+            logger.error("Could not send {} email to {}", emailType, recipientLog, exception);
+            throw new IllegalStateException("Could not send " + emailType + " email", exception);
+        }
     }
 
     private String buildHtmlBody(ContactMessageDTO dto) {
@@ -346,6 +353,21 @@ public class EmailService {
             java.math.BigDecimal remainingAmount,
             Currency currency,
             ReminderKind kind
+    ) {
+    }
+
+    private record BrevoSendEmailRequest(
+            BrevoAddress sender,
+            List<BrevoAddress> to,
+            BrevoAddress replyTo,
+            String subject,
+            String htmlContent
+    ) {
+    }
+
+    private record BrevoAddress(
+            String email,
+            String name
     ) {
     }
 }

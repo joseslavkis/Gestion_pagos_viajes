@@ -64,7 +64,7 @@ public class InstallmentReminderScheduler {
     @Transactional
     public void sendDailyInstallmentReminders() {
         if (!emailService.isDeliveryConfigured()) {
-            LOGGER.info("Skipping installment reminder emails because SMTP credentials are not configured");
+            LOGGER.info("Skipping installment reminder emails because Brevo delivery is not fully configured");
             return;
         }
 
