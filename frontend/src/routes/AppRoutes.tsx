@@ -7,6 +7,7 @@ import { ResetPasswordPage } from "@/features/auth/pages/ResetPasswordPage";
 import { SignupPage } from "@/features/auth/pages/SignupPage";
 import { BankAccountsPage } from "@/features/bank-accounts/pages/BankAccountsPage";
 import { PendingReviewPage } from "@/features/payments/pages/PendingReviewPage";
+import { SchoolsPage } from "@/features/schools/pages/SchoolsPage";
 import { TripsAdminPage } from "@/features/trips/pages/TripsAdminPage";
 import { SpreadsheetPage } from "@/features/trips/pages/SpreadsheetPage";
 import { UserDashboardPage } from "@/features/users/pages/UserDashboardPage";
@@ -34,6 +35,9 @@ export function AppRoutes() {
             </Route>
             <Route path="/bank-accounts">
               <BankAccountsPage />
+            </Route>
+            <Route path="/schools">
+              <SchoolsPage />
             </Route>
             <Route>
               <Redirect href="/" />

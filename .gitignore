@@ -17,7 +17,7 @@ data
 *.kdbx
 *.asc
 *.gpg
-
+.DS_Store
 # Local config and secret exports
 secrets/
 *.secret
@@ -28,3 +28,4 @@ secrets/
 *.sql
 *.dump
 *.bak
+.DS_Store

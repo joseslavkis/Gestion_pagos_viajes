@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 
 import { useQueryClient } from "@tanstack/react-query";
 
-import { SchoolAutocomplete } from "@/components/form-components/SchoolAutocomplete/SchoolAutocomplete";
 import { CommonLayout } from "@/components/CommonLayout/CommonLayout";
 import { useBankAccounts } from "@/features/bank-accounts/services/bank-accounts-service";
 import type { BankAccountDTO } from "@/features/bank-accounts/types/bank-accounts-dtos";
@@ -17,6 +16,8 @@ import type {
   PaymentMethod,
   UserInstallmentDTO,
 } from "@/features/payments/types/payments-dtos";
+import { useSchools } from "@/features/schools/services/schools-service";
+import type { SchoolDTO } from "@/features/schools/types/schools-dtos";
 import {
   useAddStudent,
   useDeleteStudent,
@@ -184,6 +185,14 @@ function getGroupDisplayName(group: InstallmentGroup, index: number): string {
   return group.studentName ? `Viaje ${index + 1} - ${group.studentName}` : `Viaje ${index + 1}`;
 }
 
+function hasSelectedSchool(schools: SchoolDTO[], schoolName: string | undefined) {
+  if (!schoolName) {
+    return false;
+  }
+
+  return schools.some((school) => school.name === schoolName);
+}
+
 const emptyStudent = (): StudentCreateDTO => ({
   name: "",
   dni: "",
@@ -207,6 +216,11 @@ export function UserDashboardPage() {
     isLoading: isStudentsLoading,
     error: studentsError,
   } = useStudents();
+  const {
+    data: schools,
+    isLoading: isSchoolsLoading,
+    error: schoolsError,
+  } = useSchools();
 
   const [expandedGroupKeys, setExpandedGroupKeys] = useState<string[]>([]);
   const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null);
@@ -262,6 +276,7 @@ export function UserDashboardPage() {
   const installmentItems = useMemo(() => installments ?? [], [installments]);
   const bankAccountItems = useMemo(() => bankAccounts ?? [], [bankAccounts]);
   const studentItems = useMemo(() => students ?? [], [students]);
+  const schoolItems = useMemo(() => schools ?? [], [schools]);
   const groups = useMemo(() => buildInstallmentGroups(installmentItems), [installmentItems]);
   const completedGroups = useMemo(
     () => groups.filter((group) => group.installments.every((installment) => installment.userCompletedTrip)),
@@ -459,6 +474,11 @@ export function UserDashboardPage() {
       return;
     }
 
+    if (!hasSelectedSchool(schoolItems, parsed.data.schoolName)) {
+      setStudentFormError("Seleccioná un colegio cargado por administración.");
+      return;
+    }
+
     try {
       await addStudent.mutateAsync(parsed.data);
       setNewStudent(emptyStudent());
@@ -613,6 +633,8 @@ export function UserDashboardPage() {
 
             {isStudentsLoading ? <p className={styles.helperText}>Cargando alumnos...</p> : null}
             {studentsError ? <p className={styles.errorText}>{studentsError.message}</p> : null}
+            {isSchoolsLoading ? <p className={styles.helperText}>Cargando colegios disponibles...</p> : null}
+            {schoolsError ? <p className={styles.errorText}>{schoolsError.message}</p> : null}
 
             {!isStudentsLoading && !studentsError && studentItems.length === 0 ? (
               <p className={styles.helperText}>Todavía no registraste hijos en tu cuenta.</p>
@@ -682,13 +704,31 @@ export function UserDashboardPage() {
                   onChange={(event) => setNewStudent((current) => ({ ...current, dni: event.target.value }))}
                 />
               </label>
-              <div className={styles.formField}>
-                <SchoolAutocomplete
-                  label="Colegio"
-                  value={newStudent.schoolName ?? ""}
-                  onChange={(value) => setNewStudent((current) => ({ ...current, schoolName: value }))}
-                />
-              </div>
+              <label className={styles.formField}>
+                <span className={styles.label}>Colegio</span>
+                <div className={styles.schoolSelectWrap}>
+                  <select
+                    className={styles.schoolSelect}
+                    value={newStudent.schoolName ?? ""}
+                    onChange={(event) => setNewStudent((current) => ({ ...current, schoolName: event.target.value }))}
+                    disabled={isSchoolsLoading || schoolItems.length === 0}
+                  >
+                    <option value="">
+                      {schoolItems.length === 0 ? "No hay colegios cargados" : "Seleccioná un colegio"}
+                    </option>
+                    {schoolItems.map((school) => (
+                      <option key={school.id} value={school.name}>
+                        {school.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </label>
+              {!isSchoolsLoading && !schoolsError && schoolItems.length === 0 ? (
+                <p className={styles.helperWarning}>
+                  Aún no hay colegios cargados por administración para seleccionar.
+                </p>
+              ) : null}
               <label className={styles.formField}>
                 <span className={styles.label}>Curso</span>
                 <input

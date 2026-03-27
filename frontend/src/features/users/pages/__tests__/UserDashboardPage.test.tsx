@@ -143,6 +143,12 @@ describe("UserDashboardPage", () => {
           },
         ]),
       ),
+      http.get("http://localhost:30002/api/v1/schools", () =>
+        HttpResponse.json([
+          { id: 10, name: "Colegio Test" },
+          { id: 11, name: "Colegio Ward" },
+        ]),
+      ),
       http.post("http://localhost:30002/api/v1/payments", async ({ request }) => {
         const formData = await request.formData();
         paymentPayload = Object.fromEntries(formData.entries()) as Record<string, string>;
@@ -177,6 +183,7 @@ describe("UserDashboardPage", () => {
     expect(
       screen.getByText((text) => text.includes("Abonado:") && text.includes("Resta:")),
     ).toBeInTheDocument();
+    expect(screen.getByLabelText("Colegio").tagName).toBe("SELECT");
 
     fireEvent.change(screen.getByLabelText("Seleccioná el viaje"), {
       target: { value: "77:501" },
