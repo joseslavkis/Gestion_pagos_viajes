@@ -10,6 +10,8 @@ import { PendingReviewPage } from "@/features/payments/pages/PendingReviewPage";
 import { SchoolsPage } from "@/features/schools/pages/SchoolsPage";
 import { TripsAdminPage } from "@/features/trips/pages/TripsAdminPage";
 import { SpreadsheetPage } from "@/features/trips/pages/SpreadsheetPage";
+import { AdminUserDetailPage } from "@/features/users/pages/AdminUserDetailPage";
+import { AdminUserSearchPage } from "@/features/users/pages/AdminUserSearchPage";
 import { UserDashboardPage } from "@/features/users/pages/UserDashboardPage";
 import { getRoleFromToken } from "@/lib/auth-role";
 import { useToken } from "@/lib/session";
@@ -32,6 +34,12 @@ export function AppRoutes() {
             </Route>
             <Route path="/payments/pending-review">
               <PendingReviewPage />
+            </Route>
+            <Route path="/users/search">
+              <AdminUserSearchPage />
+            </Route>
+            <Route path="/users/:id">
+              {(params) => <AdminUserDetailPage userId={Number(params.id)} />}
             </Route>
             <Route path="/bank-accounts">
               <BankAccountsPage />

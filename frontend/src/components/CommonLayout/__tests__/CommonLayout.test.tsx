@@ -17,6 +17,7 @@ describe("CommonLayout", () => {
 
     expect(screen.getByRole("link", { name: "Viajes" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Pendientes de revisión" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Buscar usuarios" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Cuentas bancarias" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cerrar sesión" })).toBeInTheDocument();
   });
@@ -33,6 +34,7 @@ describe("CommonLayout", () => {
 
     expect(screen.getByRole("link", { name: "Inicio" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Pendientes de revisión" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Buscar usuarios" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Cuentas bancarias" })).not.toBeInTheDocument();
   });
 });

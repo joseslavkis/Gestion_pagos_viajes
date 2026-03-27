@@ -22,6 +22,19 @@ public interface PaymentReceiptRepository extends JpaRepository<PaymentReceipt, 
         SELECT p
         FROM PaymentReceipt p
         JOIN FETCH p.installment i
+        JOIN FETCH i.trip
+        JOIN FETCH i.user
+        LEFT JOIN FETCH i.student
+        LEFT JOIN FETCH p.bankAccount
+        WHERE i.user.id = :userId
+        ORDER BY p.reportedPaymentDate DESC, p.id DESC
+        """)
+    List<PaymentReceipt> findByInstallmentUserIdWithContext(@Param("userId") Long userId);
+
+    @Query("""
+        SELECT p
+        FROM PaymentReceipt p
+        JOIN FETCH p.installment i
         LEFT JOIN FETCH i.student
         WHERE i.id IN :installmentIds
         ORDER BY p.id DESC

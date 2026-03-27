@@ -2,6 +2,7 @@ import { screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
 
 import { SignupPage } from "@/features/auth/pages/SignupPage";
 import { TokenProvider } from "@/lib/session";
@@ -37,6 +38,13 @@ describe("SignupPage", () => {
     );
 
     renderSignupPage();
+
+    const user = userEvent.setup();
+    const schoolCombobox = await screen.findByRole("combobox", {
+      name: "Buscar colegio para hijo 1",
+    });
+
+    await user.click(schoolCombobox);
 
     expect(await screen.findByRole("option", { name: "Colegio Ward" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Colegio San Jose" })).toBeInTheDocument();

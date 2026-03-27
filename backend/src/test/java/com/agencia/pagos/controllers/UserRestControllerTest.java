@@ -2,14 +2,35 @@ package com.agencia.pagos.controllers;
 
 import com.agencia.pagos.TestcontainersConfiguration;
 import com.agencia.pagos.dtos.request.AdminCreateDTO;
+import com.agencia.pagos.dtos.request.StudentCreateDTO;
 import com.agencia.pagos.dtos.request.UserCreateDTO;
 import com.agencia.pagos.dtos.request.UserUpdateDTO;
 import com.agencia.pagos.dtos.response.TokenDTO;
+import com.agencia.pagos.entities.BankAccount;
+import com.agencia.pagos.entities.Currency;
+import com.agencia.pagos.entities.Installment;
+import com.agencia.pagos.entities.InstallmentStatus;
+import com.agencia.pagos.entities.PaymentMethod;
+import com.agencia.pagos.entities.PaymentReceipt;
+import com.agencia.pagos.entities.ReceiptStatus;
+import com.agencia.pagos.entities.Trip;
+import com.agencia.pagos.entities.user.User;
+import com.agencia.pagos.repositories.BankAccountRepository;
+import com.agencia.pagos.repositories.InstallmentRepository;
+import com.agencia.pagos.repositories.PaymentReceiptRepository;
+import com.agencia.pagos.repositories.StudentRepository;
+import com.agencia.pagos.repositories.TripRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.List;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -19,6 +40,28 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 @Import(TestcontainersConfiguration.class)
 class UserRestControllerTest extends ControllerIntegrationTestSupport {
+    @Autowired
+    private TripRepository tripRepository;
+
+    @Autowired
+    private InstallmentRepository installmentRepository;
+
+    @Autowired
+    private PaymentReceiptRepository paymentReceiptRepository;
+
+    @Autowired
+    private BankAccountRepository bankAccountRepository;
+
+    @Autowired
+    private StudentRepository studentRepository;
+
+    @AfterEach
+    void cleanDomainData() {
+        paymentReceiptRepository.deleteAll();
+        installmentRepository.deleteAll();
+        tripRepository.deleteAll();
+        bankAccountRepository.deleteAll();
+    }
 
     // ── GET /profile/{id} ───────────────────────────────────────────────────
 
@@ -222,6 +265,160 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
     void adminDelete_sinAutenticacion_devuelve401() throws Exception {
         mockMvc.perform(delete("/api/v1/users/admin/delete/1"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void adminSearch_porNombreDevuelveResultados() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-busca-nombre"));
+        signUp(buildUser("mariana-search", "Mariana", "Lopez"));
+        signUp(buildUser("pedro-search", "Pedro", "Suarez"));
+
+        mockMvc.perform(get("/api/v1/users/admin/search")
+                .param("q", "maria")
+                .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].name").value("Mariana"))
+                .andExpect(jsonPath("$[0].lastname").value("Lopez"))
+                .andExpect(jsonPath("$[0].studentsCount").value(1));
+    }
+
+    @Test
+    void adminSearch_porEmailYdniDevuelveResultados() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-busca-identidad"));
+        UserCreateDTO userDto = buildUser("lucia-search", "Lucia", "Mendez");
+        TokenDTO userTokens = signUp(userDto);
+        Long userId = extractId(userTokens.accessToken());
+        String userDni = userRepository.findById(userId).orElseThrow().getDni();
+
+        mockMvc.perform(get("/api/v1/users/admin/search")
+                .param("q", "lucia-search")
+                .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].email").value(userDto.email()));
+
+        mockMvc.perform(get("/api/v1/users/admin/search")
+                .param("q", userDni.substring(0, 5))
+                .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].dni").value(userDni));
+    }
+
+    @Test
+    void adminSearch_siendoUsuarioNormalDevuelve403() throws Exception {
+        TokenDTO userTokens = signUp(buildValidUser("user-no-busca"));
+
+        mockMvc.perform(get("/api/v1/users/admin/search")
+                .param("q", "test")
+                .header("Authorization", "Bearer " + userTokens.accessToken()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void adminDetail_devuelveDetalleCompleto() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-detalle"));
+        UserCreateDTO userDto = buildUser("detalle-user", "Clara", "Benitez");
+        TokenDTO userTokens = signUp(userDto);
+        Long userId = extractId(userTokens.accessToken());
+        User user = userRepository.findById(userId).orElseThrow();
+        var student = studentRepository.findByParentId(userId).get(0);
+
+        Trip trip = new Trip();
+        trip.setName("Viaje a Mendoza");
+        trip.setTotalAmount(BigDecimal.valueOf(120000));
+        trip.setInstallmentsCount(3);
+        trip.setDueDay(10);
+        trip.setYellowWarningDays(5);
+        trip.setFixedFineAmount(BigDecimal.valueOf(1000));
+        trip.setRetroactiveActive(true);
+        trip.setFirstDueDate(LocalDate.now().plusDays(10));
+        trip.setCurrency(Currency.ARS);
+        trip = tripRepository.save(trip);
+
+        Installment installment = new Installment();
+        installment.setTrip(trip);
+        installment.setUser(user);
+        installment.setStudent(student);
+        installment.setInstallmentNumber(1);
+        installment.setDueDate(LocalDate.now().plusDays(12));
+        installment.setCapitalAmount(BigDecimal.valueOf(40000));
+        installment.setFineAmount(BigDecimal.ZERO);
+        installment.setRetroactiveAmount(BigDecimal.ZERO);
+        installment.setPaidAmount(BigDecimal.valueOf(15000));
+        installment.setStatus(InstallmentStatus.YELLOW);
+        installment.recalculateTotalDue();
+        installment = installmentRepository.save(installment);
+
+        BankAccount bankAccount = BankAccount.builder()
+                .bankName("Banco Test")
+                .accountLabel("Cuenta corriente")
+                .accountHolder("Agencia")
+                .accountNumber("12345")
+                .taxId("20333444556")
+                .cbu("0000000000000000000001")
+                .alias("agencia.test")
+                .currency(Currency.ARS)
+                .active(true)
+                .displayOrder(1)
+                .build();
+        bankAccount = bankAccountRepository.save(bankAccount);
+
+        PaymentReceipt receipt = PaymentReceipt.builder()
+                .installment(installment)
+                .bankAccount(bankAccount)
+                .reportedAmount(BigDecimal.valueOf(15000))
+                .paymentCurrency(Currency.ARS)
+                .amountInTripCurrency(BigDecimal.valueOf(15000))
+                .reportedPaymentDate(LocalDate.now())
+                .paymentMethod(PaymentMethod.BANK_TRANSFER)
+                .status(ReceiptStatus.APPROVED)
+                .fileKey("https://example.com/comprobante.pdf")
+                .adminObservation("Pago verificado")
+                .build();
+        paymentReceiptRepository.save(receipt);
+
+        mockMvc.perform(get("/api/v1/users/admin/{id}/detail", userId)
+                .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(userId))
+                .andExpect(jsonPath("$.email").value(userDto.email()))
+                .andExpect(jsonPath("$.students[0].name").value("Alumno Clara"))
+                .andExpect(jsonPath("$.installments[0].tripName").value("Viaje a Mendoza"))
+                .andExpect(jsonPath("$.receipts[0].adminObservation").value("Pago verificado"));
+    }
+
+    @Test
+    void adminDetail_usuarioInexistenteDevuelve404() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-detalle-404"));
+
+        mockMvc.perform(get("/api/v1/users/admin/999999/detail")
+                .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void adminDetail_siendoUsuarioNormalDevuelve403() throws Exception {
+        TokenDTO userTokens = signUp(buildValidUser("user-no-detalle"));
+
+        mockMvc.perform(get("/api/v1/users/admin/1/detail")
+                .header("Authorization", "Bearer " + userTokens.accessToken()))
+                .andExpect(status().isForbidden());
+    }
+
+    private UserCreateDTO buildUser(String prefix, String name, String lastname) {
+        return new UserCreateDTO(
+                uniqueEmail(prefix),
+                "Password123!",
+                name,
+                lastname,
+                uniqueDni(),
+                "1133344455",
+                List.of(new StudentCreateDTO(
+                        "Alumno " + name,
+                        uniqueDni(),
+                        "Colegio Demo",
+                        "4to"
+                ))
+        );
     }
 
 }

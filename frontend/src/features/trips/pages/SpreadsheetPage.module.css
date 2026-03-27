@@ -30,6 +30,10 @@
   gap: 0.5rem;
 }
 
+.desktopExportWrapper {
+  display: flex;
+}
+
 .backButton {
   min-height: 44px;
   display: inline-flex;
@@ -117,12 +121,39 @@
   gap: 0.5rem;
 }
 
+.searchField {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
 .searchInput {
+  width: 100%;
   min-height: 44px;
   border-radius: 999px;
   border: 1px solid rgba(148, 163, 184, 0.9);
-  padding: 0.6rem 0.9rem;
+  padding: 0.6rem 3rem 0.6rem 0.9rem;
   font: inherit;
+}
+
+.clearSearchButton {
+  position: absolute;
+  right: 0.4rem;
+  top: 50%;
+  width: 2rem;
+  height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transform: translateY(-50%);
+  border: 0;
+  border-radius: 999px;
+  background: rgba(11, 91, 207, 0.08);
+  color: #0b5bcf;
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
 }
 
 .select {
@@ -135,6 +166,7 @@
 }
 
 .tableContainer {
+  position: relative;
   margin-top: 0.75rem;
   border-radius: 1rem;
   background: rgba(255, 255, 255, 0.98);
@@ -146,11 +178,25 @@
 }
 
 .scrollShell {
+  position: relative;
   width: 100%;
   overflow-x: auto;
 }
 
+.scrollShellFadeRight::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 1.8rem;
+  pointer-events: none;
+  display: none;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(240, 247, 255, 0.96) 82%);
+}
+
 .scrollHint {
+  display: none;
   padding: 0.4rem 0.75rem;
   font-size: 0.75rem;
   color: #64748b;
@@ -384,6 +430,10 @@
   color: #64748b;
 }
 
+.mobileExportBar {
+  display: none;
+}
+
 .pageButton {
   min-height: 44px;
   min-width: 44px;
@@ -397,6 +447,7 @@
   inset: 0;
   background: rgba(15, 23, 42, 0.5);
   display: flex;
+  align-items: stretch;
   justify-content: flex-end;
   z-index: 40;
 }
@@ -408,6 +459,7 @@
   box-shadow: -1.5rem 0 3rem rgba(15, 23, 42, 0.45);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   padding: 1rem 1.1rem 1.25rem;
 }
 
@@ -428,6 +480,8 @@
 .drawerBody {
   flex: 1;
   overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   font-size: 0.85rem;
   color: #475569;
 }
@@ -488,23 +542,125 @@
     padding-inline: 0.25rem;
   }
 
-  .toolbar {
-    grid-template-columns: minmax(0, 1fr);
+  .headerRow {
+    align-items: flex-start;
   }
 
   .titleBlock {
-    order: 2;
+    order: 1;
     width: 100%;
   }
 
-  .exportWrapper {
-    order: 3;
-    width: 100%;
+  .backButton {
+    order: 2;
+  }
+
+  .desktopExportWrapper {
+    display: none;
+  }
+
+  .toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .searchField {
+    grid-column: 1 / -1;
+  }
+
+  .titleBlock {
+    gap: 0.25rem;
+  }
+
+  .scrollHint {
+    display: flex;
+    align-items: center;
+    padding: 0.55rem 0.75rem 0.15rem;
+    font-size: 0.78rem;
+    color: #526883;
+  }
+
+  .scrollShellFadeRight::after {
+    display: block;
+  }
+
+  .tableContainerScrolled .userCol,
+  .tableContainerScrolled .userCell {
+    box-shadow: 10px 0 18px rgba(148, 163, 184, 0.22);
+  }
+
+  .th,
+  .amountCell {
+    min-width: 92px;
+    max-width: 104px;
   }
 
   .userCol,
   .userCell {
-    min-width: 160px;
+    min-width: 136px;
+    max-width: 152px;
+  }
+
+  .userMain {
+    max-width: 128px;
+  }
+
+  .pagination {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .mobileExportBar {
+    display: grid;
+    gap: 0.35rem;
+    padding: 0 0.75rem 0.85rem;
+  }
+
+  .mobileExportButton {
+    width: 100%;
+    justify-content: center;
+    border-color: rgba(11, 91, 207, 0.22);
+    background: rgba(11, 91, 207, 0.06);
+    color: #0b5bcf;
+  }
+
+  .mobileExportBar .exportError {
+    max-width: none;
+  }
+}
+
+@media (max-width: 479px) {
+  .toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .searchField {
+    grid-column: auto;
+  }
+
+  .drawerOverlay {
+    align-items: flex-end;
+    justify-content: stretch;
+    padding-top: 0.75rem;
+  }
+
+  .drawer {
+    width: 100%;
+    max-height: 85dvh;
+    border-radius: 1.25rem 1.25rem 0 0;
+    box-shadow: 0 -1.25rem 3rem rgba(15, 23, 42, 0.32);
+    padding: 1rem 1rem 0.75rem;
+  }
+
+  .drawerTitle {
+    font-size: 0.95rem;
+  }
+
+  .drawerCloseButton {
+    min-height: 44px;
+  }
+
+  .drawerBody {
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom));
   }
 }
 
