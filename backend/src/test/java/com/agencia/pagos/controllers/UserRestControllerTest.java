@@ -32,6 +32,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
+import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -314,6 +315,57 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
     }
 
     @Test
+    void adminSearch_conMenosDeDosCaracteresDevuelveListaVacia() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-busca-corto"));
+        signUp(buildUser("usuario-corto", "Ana", "Lopez"));
+
+        mockMvc.perform(get("/api/v1/users/admin/search")
+                .param("q", "a")
+                .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(0)));
+    }
+
+    @Test
+    void adminSearch_porApellidoEsCaseInsensitiveYExcluyeAdmins() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-busca-apellido"));
+        signUp(buildUser("usuario-apellido", "Camila", "Fernandez"));
+
+        UserCreateDTO adminDto = buildValidUser("otro-admin-buscable");
+        signUpAdmin(adminDto);
+
+        mockMvc.perform(get("/api/v1/users/admin/search")
+                .param("q", "FERNAN")
+                .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].lastname").value("Fernandez"))
+                .andExpect(jsonPath("$[0].role").value("USER"));
+    }
+
+    @Test
+    void adminSearch_ordenaResultadosPorApellidoNombreYEmail() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-busca-orden"));
+        UserCreateDTO zeta = buildUser("zeta-sort", "Zoe", "Perez");
+        UserCreateDTO ana = buildUser("ana-sort", "Ana", "Perez");
+        UserCreateDTO bruno = buildUser("bruno-sort", "Bruno", "Acosta");
+        signUp(zeta);
+        signUp(ana);
+        signUp(bruno);
+
+        mockMvc.perform(get("/api/v1/users/admin/search")
+                .param("q", "@agencia.com")
+                .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].lastname").value("Acosta"))
+                .andExpect(jsonPath("$[0].name").value("Bruno"))
+                .andExpect(jsonPath("$[1].lastname").value("Perez"))
+                .andExpect(jsonPath("$[1].name").value("Ana"))
+                .andExpect(jsonPath("$[2].lastname").value("Perez"))
+                .andExpect(jsonPath("$[2].name").value("Zoe"));
+    }
+
+    @Test
     void adminDetail_devuelveDetalleCompleto() throws Exception {
         TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-detalle"));
         UserCreateDTO userDto = buildUser("detalle-user", "Clara", "Benitez");
@@ -402,6 +454,34 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
         mockMvc.perform(get("/api/v1/users/admin/1/detail")
                 .header("Authorization", "Bearer " + userTokens.accessToken()))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void adminDetail_paraResponsableSinMovimientosDevuelveListasVacias() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-detalle-vacio"));
+        UserCreateDTO userDto = buildUser("detalle-vacio", "Julieta", "Mora");
+        TokenDTO userTokens = signUp(userDto);
+        Long userId = extractId(userTokens.accessToken());
+
+        mockMvc.perform(get("/api/v1/users/admin/{id}/detail", userId)
+                .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(userId))
+                .andExpect(jsonPath("$.students", hasSize(1)))
+                .andExpect(jsonPath("$.installments", hasSize(0)))
+                .andExpect(jsonPath("$.receipts", hasSize(0)));
+    }
+
+    @Test
+    void adminDetail_paraOtroAdminDevuelve404() throws Exception {
+        TokenDTO superAdminTokens = signUpAdmin(buildValidUser("admin-consulta-admin"));
+        UserCreateDTO targetAdminDto = buildValidUser("admin-destino");
+        TokenDTO targetAdminTokens = signUpAdmin(targetAdminDto);
+        Long targetAdminId = extractId(targetAdminTokens.accessToken());
+
+        mockMvc.perform(get("/api/v1/users/admin/{id}/detail", targetAdminId)
+                .header("Authorization", "Bearer " + superAdminTokens.accessToken()))
+                .andExpect(status().isNotFound());
     }
 
     private UserCreateDTO buildUser(String prefix, String name, String lastname) {
