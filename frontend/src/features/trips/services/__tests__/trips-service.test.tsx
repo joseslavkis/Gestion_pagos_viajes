@@ -470,8 +470,6 @@ describe("trips-service hooks", () => {
             email: "juan@example.com",
             studentName: null,
             studentDni: null,
-            schoolName: null,
-            courseName: null,
             userCompleted: false,
             installments: [
               {

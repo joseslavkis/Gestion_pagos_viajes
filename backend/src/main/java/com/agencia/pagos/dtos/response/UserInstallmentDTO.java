@@ -10,11 +10,10 @@ import java.time.LocalDate;
 
 public record UserInstallmentDTO(
         Long tripId,
+        String tripName,
         Long studentId,
         String studentName,
         String studentDni,
-        String schoolName,
-        String courseName,
         Long installmentId,
         Integer installmentNumber,
         LocalDate dueDate,

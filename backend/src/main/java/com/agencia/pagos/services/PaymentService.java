@@ -368,11 +368,10 @@ public class PaymentService {
 
                     return new UserInstallmentDTO(
                             installment.getTrip().getId(),
+                            installment.getTrip().getName(),
                             student != null ? student.getId() : null,
                             student != null ? student.getName() : null,
                             student != null ? student.getDni() : null,
-                            student != null ? student.getSchoolName() : null,
-                            student != null ? student.getCourseName() : null,
                             installment.getId(),
                             installment.getInstallmentNumber(),
                             installment.getDueDate(),

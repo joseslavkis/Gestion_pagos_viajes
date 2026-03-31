@@ -59,7 +59,6 @@ describe("UserServices Hook Error Handling", () => {
           {
             name: "Alumno Test",
             dni: "87654321",
-            schoolName: "Colegio Ward",
           },
         ],
       });

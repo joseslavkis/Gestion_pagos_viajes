@@ -82,8 +82,6 @@ export const TripStudentAdminDTOSchema = z.object({
   studentDni: z.string(),
   studentId: z.number().nullable(),
   studentName: z.string().nullable(),
-  schoolName: z.string().nullable(),
-  courseName: z.string().nullable(),
   parentUserId: z.number().nullable(),
   parentFullName: z.string().nullable(),
   parentEmail: z.string().nullable(),
@@ -167,8 +165,6 @@ export const SpreadsheetRowDTOSchema = z.object({
   email: z.string(),
   studentName: z.string().nullable(),
   studentDni: z.string().nullable(),
-  schoolName: z.string().nullable(),
-  courseName: z.string().nullable(),
   userCompleted: z.boolean(),
   installments: SpreadsheetRowInstallmentDTOSchema.array(),
 });

@@ -1,12 +1,9 @@
 import { screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
-import userEvent from "@testing-library/user-event";
 
 import { SignupPage } from "@/features/auth/pages/SignupPage";
 import { TokenProvider } from "@/lib/session";
-import { server } from "@/test/msw-server";
 import { render } from "@testing-library/react";
 
 function renderSignupPage() {
@@ -27,28 +24,14 @@ function renderSignupPage() {
 }
 
 describe("SignupPage", () => {
-  it("usa solo colegios cargados por administracion", async () => {
-    server.use(
-      http.get("http://localhost:30002/api/v1/schools", () =>
-        HttpResponse.json([
-          { id: 1, name: "Colegio Ward" },
-          { id: 2, name: "Colegio San Jose" },
-        ]),
-      ),
-    );
-
+  it("solicita solo nombre y DNI del hijo, sin colegio ni curso", async () => {
     renderSignupPage();
 
-    const user = userEvent.setup();
-    const schoolCombobox = await screen.findByRole("combobox", {
-      name: "Buscar colegio para hijo 1",
-    });
-
-    await user.click(schoolCombobox);
-
-    expect(await screen.findByRole("option", { name: "Colegio Ward" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Colegio San Jose" })).toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "Instituto San Martín de Tours" })).not.toBeInTheDocument();
+    expect(await screen.findByLabelText("Nombre completo")).toBeInTheDocument();
+    expect(screen.getByLabelText("DNI")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Colegio")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Curso")).not.toBeInTheDocument();
     expect(screen.getByText(/Solo podés cargar DNIs precargados por administración/i)).toBeInTheDocument();
+    expect(screen.getByText(/la referencia del viaje se vinculará automáticamente/i)).toBeInTheDocument();
   });
 });

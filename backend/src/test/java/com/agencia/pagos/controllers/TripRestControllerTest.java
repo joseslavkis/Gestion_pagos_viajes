@@ -600,8 +600,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 .parent(user)
                 .name("Segundo Hijo")
                 .dni(uniqueDni())
-                .schoolName("Colegio Demo")
-                .courseName("5A")
                 .build();
             secondStudent = studentRepository.save(secondStudent);
 

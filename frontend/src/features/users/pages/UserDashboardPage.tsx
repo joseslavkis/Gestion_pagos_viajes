@@ -40,11 +40,10 @@ const dateFormatter = new Intl.DateTimeFormat("es-AR", {
 type InstallmentGroup = {
   groupKey: string;
   tripId: number;
+  tripName: string;
   studentId: number | null;
   studentName: string | null;
   studentDni: string | null;
-  schoolName: string | null;
-  courseName: string | null;
   installments: UserInstallmentDTO[];
 };
 
@@ -87,11 +86,10 @@ function buildInstallmentGroups(installments: UserInstallmentDTO[]): Installment
     map.set(groupKey, {
       groupKey,
       tripId: installment.tripId,
+      tripName: installment.tripName,
       studentId: installment.studentId,
       studentName: installment.studentName,
       studentDni: installment.studentDni,
-      schoolName: installment.schoolName,
-      courseName: installment.courseName,
       installments: [installment],
     });
   }
@@ -199,7 +197,7 @@ function formatBankAccountTitle(account: BankAccountDTO): string {
 }
 
 function getGroupDisplayName(group: InstallmentGroup, index: number): string {
-  return group.studentName ? `Viaje ${index + 1} - ${group.studentName}` : `Viaje ${index + 1}`;
+  return group.studentName ? `${group.tripName} - ${group.studentName}` : group.tripName || `Viaje ${index + 1}`;
 }
 
 

@@ -70,8 +70,6 @@ export function AdminUserDetailPage({ userId }: AdminUserDetailPageProps) {
                         <article key={student.id} className={styles.studentCard}>
                           <h3 className={styles.cardTitle}>{student.name}</h3>
                           <p className={styles.cardMeta}>DNI: {student.dni}</p>
-                          <p className={styles.cardMeta}>Colegio: {student.schoolName ?? "Sin colegio"}</p>
-                          <p className={styles.cardMeta}>Curso: {student.courseName ?? "Sin curso"}</p>
                         </article>
                       ))}
                     </div>
@@ -104,10 +102,6 @@ export function AdminUserDetailPage({ userId }: AdminUserDetailPageProps) {
                             <div>
                               <span className={styles.identityLabel}>Alumno</span>
                               <strong>{installment.studentName ?? "Sin alumno"}</strong>
-                            </div>
-                            <div>
-                              <span className={styles.identityLabel}>Colegio</span>
-                              <strong>{installment.schoolName ?? "Sin colegio"}</strong>
                             </div>
                             <div>
                               <span className={styles.identityLabel}>Total</span>

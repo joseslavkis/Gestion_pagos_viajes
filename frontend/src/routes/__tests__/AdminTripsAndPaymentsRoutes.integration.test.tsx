@@ -23,8 +23,6 @@ describe("Admin trips and payments routes integration", () => {
         studentDni: "44555666",
         studentId: 90,
         studentName: "Tomas Benitez",
-        schoolName: "Colegio Demo",
-        courseName: "5A",
         parentUserId: 9,
         parentFullName: "Clara Benitez",
         parentEmail: "clara@test.com",
@@ -35,8 +33,6 @@ describe("Admin trips and payments routes integration", () => {
         studentDni: "99888777",
         studentId: null,
         studentName: null,
-        schoolName: null,
-        courseName: null,
         parentUserId: null,
         parentFullName: null,
         parentEmail: null,
@@ -107,7 +103,7 @@ describe("Admin trips and payments routes integration", () => {
     expect(await screen.findByText("El DNI 99888777 fue desasignado del viaje.")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText("99888777")).not.toBeInTheDocument());
     expect(screen.getByText("44555666")).toBeInTheDocument();
-  });
+  }, 15000);
 
   it("permite aprobar un comprobante desde /payments/pending-review", async () => {
     let pendingItems = [

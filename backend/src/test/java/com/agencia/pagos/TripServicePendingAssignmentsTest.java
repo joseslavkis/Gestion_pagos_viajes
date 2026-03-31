@@ -153,8 +153,6 @@ class TripServicePendingAssignmentsTest {
                 .parent(parent)
                 .name("Tomi Perez")
                 .dni("33444555")
-                .schoolName("Colegio Test")
-                .courseName("5A")
                 .build();
         student.setId(10L);
 
@@ -193,8 +191,6 @@ class TripServicePendingAssignmentsTest {
                 .parent(parent)
                 .name("Tomi Perez")
                 .dni("46113387")
-                .schoolName("Colegio Test")
-                .courseName("5A")
                 .build();
         student.setId(22L);
 
@@ -229,8 +225,6 @@ class TripServicePendingAssignmentsTest {
                 .parent(parent)
                 .name("Tomi Perez")
                 .dni("33444555")
-                .schoolName("Colegio Test")
-                .courseName("5A")
                 .build();
         student.setId(11L);
 
@@ -268,8 +262,6 @@ class TripServicePendingAssignmentsTest {
                 .parent(parent)
                 .name("Tomi Perez")
                 .dni("33444555")
-                .schoolName("Colegio Test")
-                .courseName("5A")
                 .build();
         student.setId(19L);
 

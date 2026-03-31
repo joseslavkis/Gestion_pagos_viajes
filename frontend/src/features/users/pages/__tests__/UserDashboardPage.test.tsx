@@ -13,11 +13,10 @@ const PAYMENTS_URL = "http://localhost:30002/api/v1/payments";
 
 const makeInstallment = (overrides: Record<string, unknown> = {}) => ({
   tripId: 77,
+  tripName: "Mendoza 2026",
   studentId: 501,
   studentName: "Martina Slavkis",
   studentDni: "45678901",
-  schoolName: "Colegio Test",
-  courseName: "5A",
   installmentId: 101,
   installmentNumber: 1,
   dueDate: "2026-03-25",
@@ -86,6 +85,7 @@ describe("UserDashboardPage", () => {
           }),
           makeInstallment({
             tripId: 88,
+            tripName: "Bariloche 2026",
             studentId: 502,
             studentName: "Bruno Slavkis",
             studentDni: "45678902",
@@ -98,6 +98,7 @@ describe("UserDashboardPage", () => {
           }),
           makeInstallment({
             tripId: 88,
+            tripName: "Bariloche 2026",
             studentId: 502,
             studentName: "Bruno Slavkis",
             studentDni: "45678902",
@@ -229,7 +230,7 @@ describe("UserDashboardPage", () => {
     fireEvent.click(submitBtn);
 
     await screen.findByText("¡Comprobante adjuntado!");
-    expect(screen.getAllByText("Viaje 2 - Bruno Slavkis").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Bariloche 2026 - Bruno Slavkis").length).toBeGreaterThan(0);
     expect(screen.getAllByText("#1, #2").length).toBeGreaterThan(0);
     expect(screen.getByText("comprobante.jpg")).toBeInTheDocument();
 

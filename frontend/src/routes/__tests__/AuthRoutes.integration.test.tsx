@@ -47,9 +47,6 @@ async function completeSignupForm() {
   await user.type(screen.getByLabelText("Teléfono"), "1133344455");
   await user.type(screen.getByLabelText("Nombre completo"), "Tomas Benitez");
   await user.type(screen.getByLabelText("DNI"), "44555666");
-  await user.click(screen.getByRole("combobox", { name: "Buscar colegio para hijo 1" }));
-  await user.click(await screen.findByRole("option", { name: "Colegio Demo" }));
-  await user.type(screen.getByLabelText("Curso"), "5A");
 
   return user;
 }
@@ -63,11 +60,6 @@ describe("Auth routes integration", () => {
     let signupBody: unknown = null;
 
     server.use(
-      http.get("http://localhost:30002/api/v1/schools", () =>
-        HttpResponse.json([
-          { id: 10, name: "Colegio Demo" },
-        ]),
-      ),
       http.post("http://localhost:30002/api/v1/auth/signup", async ({ request }) => {
         signupBody = await request.json();
         return HttpResponse.json({
@@ -83,8 +75,6 @@ describe("Auth routes integration", () => {
             id: 77,
             name: "Tomas Benitez",
             dni: "44555666",
-            schoolName: "Colegio Demo",
-            courseName: "5A",
           },
         ]),
       ),
@@ -108,8 +98,6 @@ describe("Auth routes integration", () => {
           {
             name: "Tomas Benitez",
             dni: "44555666",
-            schoolName: "Colegio Demo",
-            courseName: "5A",
           },
         ],
       }),
@@ -118,11 +106,6 @@ describe("Auth routes integration", () => {
 
   it("muestra el error del backend si el DNI del hijo no fue precargado", async () => {
     server.use(
-      http.get("http://localhost:30002/api/v1/schools", () =>
-        HttpResponse.json([
-          { id: 10, name: "Colegio Demo" },
-        ]),
-      ),
       http.post("http://localhost:30002/api/v1/auth/signup", () =>
         new HttpResponse(
           "El DNI de alumno 44555666 no está habilitado todavía. Pedile a la agencia que lo cargue primero.",
