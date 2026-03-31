@@ -1,0 +1,137 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
+import { HttpResponse, http } from "msw";
+import { afterEach, describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+
+import { AppRoutes } from "@/routes/AppRoutes";
+import { TokenProvider } from "@/lib/session";
+import { server } from "@/test/msw-server";
+import { createJwt } from "@/test/test-utils";
+
+function renderLoggedOutRoutes(path = "/signup") {
+  window.history.replaceState({}, "", path);
+
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <TokenProvider>
+        <AppRoutes />
+      </TokenProvider>
+    </QueryClientProvider>,
+  );
+}
+
+async function completeSignupForm() {
+  const user = userEvent.setup();
+
+  await user.type(screen.getByLabelText("Nombre"), "Clara");
+  await user.type(screen.getByLabelText("Apellido"), "Benitez");
+  await user.type(screen.getByLabelText("Email"), "clara@test.com");
+  await user.type(screen.getByLabelText("Contraseña"), "Password123!");
+  await user.type(screen.getByLabelText("DNI del padre / tutor"), "33444555");
+  await user.type(screen.getByLabelText("Teléfono"), "1133344455");
+  await user.type(screen.getByLabelText("Nombre completo"), "Tomas Benitez");
+  await user.type(screen.getByLabelText("DNI"), "44555666");
+  await user.click(screen.getByRole("combobox", { name: "Buscar colegio para hijo 1" }));
+  await user.click(await screen.findByRole("option", { name: "Colegio Demo" }));
+  await user.type(screen.getByLabelText("Curso"), "5A");
+
+  return user;
+}
+
+afterEach(() => {
+  window.history.replaceState({}, "", "/");
+});
+
+describe("Auth routes integration", () => {
+  it("recorre signup exitoso y entra al dashboard del usuario", async () => {
+    let signupBody: unknown = null;
+
+    server.use(
+      http.get("http://localhost:30002/api/v1/schools", () =>
+        HttpResponse.json([
+          { id: 10, name: "Colegio Demo" },
+        ]),
+      ),
+      http.post("http://localhost:30002/api/v1/auth/signup", async ({ request }) => {
+        signupBody = await request.json();
+        return HttpResponse.json({
+          accessToken: createJwt("ROLE_USER"),
+          refreshToken: "refresh-token",
+        }, { status: 201 });
+      }),
+      http.get("http://localhost:30002/api/v1/payments/my/installments", () => HttpResponse.json([])),
+      http.get("http://localhost:30002/api/v1/bank-accounts", () => HttpResponse.json([])),
+      http.get("http://localhost:30002/api/v1/users/students", () =>
+        HttpResponse.json([
+          {
+            id: 77,
+            name: "Tomas Benitez",
+            dni: "44555666",
+            schoolName: "Colegio Demo",
+            courseName: "5A",
+          },
+        ]),
+      ),
+    );
+
+    renderLoggedOutRoutes("/signup");
+
+    const user = await completeSignupForm();
+    await user.click(screen.getByRole("button", { name: "Crear cuenta" }));
+
+    await screen.findByRole("heading", { name: "Mis hijos" });
+    expect(await screen.findByText("Tomas Benitez")).toBeInTheDocument();
+    expect(screen.getByText("Podés reclamar hijos solo si la agencia precargó su DNI en algún viaje.")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(signupBody).toEqual({
+        email: "clara@test.com",
+        password: "Password123!",
+        name: "Clara",
+        lastname: "Benitez",
+        dni: "33444555",
+        phone: "1133344455",
+        students: [
+          {
+            name: "Tomas Benitez",
+            dni: "44555666",
+            schoolName: "Colegio Demo",
+            courseName: "5A",
+          },
+        ],
+      }),
+    );
+  }, 15000);
+
+  it("muestra el error del backend si el DNI del hijo no fue precargado", async () => {
+    server.use(
+      http.get("http://localhost:30002/api/v1/schools", () =>
+        HttpResponse.json([
+          { id: 10, name: "Colegio Demo" },
+        ]),
+      ),
+      http.post("http://localhost:30002/api/v1/auth/signup", () =>
+        new HttpResponse(
+          "El DNI de alumno 44555666 no está habilitado todavía. Pedile a la agencia que lo cargue primero.",
+          { status: 409 },
+        ),
+      ),
+    );
+
+    renderLoggedOutRoutes("/signup");
+
+    const user = await completeSignupForm();
+    await user.click(screen.getByRole("button", { name: "Crear cuenta" }));
+
+    expect(
+      await screen.findByText("El DNI de alumno 44555666 no está habilitado todavía. Pedile a la agencia que lo cargue primero."),
+    ).toBeInTheDocument();
+  }, 15000);
+});

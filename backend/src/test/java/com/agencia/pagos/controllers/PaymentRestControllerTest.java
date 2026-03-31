@@ -12,11 +12,13 @@ import com.agencia.pagos.entities.InstallmentStatus;
 import com.agencia.pagos.entities.PaymentMethod;
 import com.agencia.pagos.entities.PaymentReceipt;
 import com.agencia.pagos.entities.ReceiptStatus;
+import com.agencia.pagos.entities.Student;
 import com.agencia.pagos.entities.Trip;
 import com.agencia.pagos.repositories.BankAccountRepository;
 import com.agencia.pagos.entities.user.User;
 import com.agencia.pagos.repositories.InstallmentRepository;
 import com.agencia.pagos.repositories.PaymentReceiptRepository;
+import com.agencia.pagos.repositories.StudentRepository;
 import com.agencia.pagos.repositories.TripRepository;
 import com.agencia.pagos.repositories.UserRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -68,6 +70,9 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
 
     @Autowired
     private BankAccountRepository bankAccountRepository;
+
+    @Autowired
+    private StudentRepository studentRepository;
 
     @AfterEach
     void cleanUpPayments() {
@@ -319,6 +324,262 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
     }
 
     @Test
+    void reviewPayment_aprobar_cubreUnaCuotaYParteDeLaSiguiente() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-review-cascade-partial-next"));
+        User participant = createSignedUpUser("cascade-partial-next");
+        Student student = getFirstStudent(participant);
+        Trip trip = createTripForUser(participant, "cascade-partial-next", Currency.ARS);
+
+        Installment firstInstallment = createInstallment(trip, participant, student, 1, "100.00", InstallmentStatus.YELLOW);
+        Installment secondInstallment = createInstallment(trip, participant, student, 2, "100.00", InstallmentStatus.YELLOW);
+        Installment thirdInstallment = createInstallment(trip, participant, student, 3, "100.00", InstallmentStatus.YELLOW);
+
+        PaymentReceipt receipt = paymentReceiptRepository.save(PaymentReceipt.builder()
+                .installment(firstInstallment)
+                .bankAccount(createBankAccount(Currency.ARS))
+                .reportedAmount(new BigDecimal("150.00"))
+                .paymentCurrency(Currency.ARS)
+                .amountInTripCurrency(new BigDecimal("150.00"))
+                .reportedPaymentDate(LocalDate.now())
+                .paymentMethod(PaymentMethod.BANK_TRANSFER)
+                .status(ReceiptStatus.PENDING)
+                .fileKey("")
+                .build());
+
+        mockMvc.perform(patch("/api/v1/payments/{id}/review", receipt.getId())
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new ReviewPaymentDTO(ReceiptStatus.APPROVED, null))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("APPROVED"));
+
+        Installment persistedFirst = installmentRepository.findById(firstInstallment.getId()).orElseThrow();
+        Installment persistedSecond = installmentRepository.findById(secondInstallment.getId()).orElseThrow();
+        Installment persistedThird = installmentRepository.findById(thirdInstallment.getId()).orElseThrow();
+
+        assertEquals(InstallmentStatus.GREEN, persistedFirst.getStatus());
+        assertEquals(0, persistedFirst.getPaidAmount().compareTo(new BigDecimal("100.00")));
+        assertEquals(InstallmentStatus.YELLOW, persistedSecond.getStatus());
+        assertEquals(0, persistedSecond.getPaidAmount().compareTo(new BigDecimal("50.00")));
+        assertEquals(0, persistedThird.getPaidAmount().compareTo(BigDecimal.ZERO));
+    }
+
+    @Test
+    void reviewPayment_aprobar_cubreMultiplesCuotasCompletas() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-review-cascade-multi"));
+        User participant = createSignedUpUser("cascade-multi");
+        Student student = getFirstStudent(participant);
+        Trip trip = createTripForUser(participant, "cascade-multi", Currency.ARS);
+
+        Installment firstInstallment = createInstallment(trip, participant, student, 1, "100.00", InstallmentStatus.YELLOW);
+        Installment secondInstallment = createInstallment(trip, participant, student, 2, "100.00", InstallmentStatus.YELLOW);
+        Installment thirdInstallment = createInstallment(trip, participant, student, 3, "100.00", InstallmentStatus.YELLOW);
+
+        PaymentReceipt receipt = paymentReceiptRepository.save(PaymentReceipt.builder()
+                .installment(firstInstallment)
+                .bankAccount(createBankAccount(Currency.ARS))
+                .reportedAmount(new BigDecimal("250.00"))
+                .paymentCurrency(Currency.ARS)
+                .amountInTripCurrency(new BigDecimal("250.00"))
+                .reportedPaymentDate(LocalDate.now())
+                .paymentMethod(PaymentMethod.BANK_TRANSFER)
+                .status(ReceiptStatus.PENDING)
+                .fileKey("")
+                .build());
+
+        mockMvc.perform(patch("/api/v1/payments/{id}/review", receipt.getId())
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new ReviewPaymentDTO(ReceiptStatus.APPROVED, null))))
+                .andExpect(status().isOk());
+
+        assertEquals(InstallmentStatus.GREEN, installmentRepository.findById(firstInstallment.getId()).orElseThrow().getStatus());
+        assertEquals(InstallmentStatus.GREEN, installmentRepository.findById(secondInstallment.getId()).orElseThrow().getStatus());
+        assertEquals(0, installmentRepository.findById(thirdInstallment.getId()).orElseThrow().getPaidAmount().compareTo(new BigDecimal("50.00")));
+    }
+
+    @Test
+    void reviewPayment_aprobar_montoParcial_noMarcaGreen() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-review-cascade-partial"));
+        User participant = createSignedUpUser("cascade-partial");
+        Student student = getFirstStudent(participant);
+        Trip trip = createTripForUser(participant, "cascade-partial", Currency.ARS);
+        Installment installment = createInstallment(trip, participant, student, 1, "100.00", InstallmentStatus.YELLOW);
+
+        PaymentReceipt receipt = paymentReceiptRepository.save(PaymentReceipt.builder()
+                .installment(installment)
+                .bankAccount(createBankAccount(Currency.ARS))
+                .reportedAmount(new BigDecimal("40.00"))
+                .paymentCurrency(Currency.ARS)
+                .amountInTripCurrency(new BigDecimal("40.00"))
+                .reportedPaymentDate(LocalDate.now())
+                .paymentMethod(PaymentMethod.BANK_TRANSFER)
+                .status(ReceiptStatus.PENDING)
+                .fileKey("")
+                .build());
+
+        mockMvc.perform(patch("/api/v1/payments/{id}/review", receipt.getId())
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new ReviewPaymentDTO(ReceiptStatus.APPROVED, null))))
+                .andExpect(status().isOk());
+
+        Installment persisted = installmentRepository.findById(installment.getId()).orElseThrow();
+        assertEquals(InstallmentStatus.YELLOW, persisted.getStatus());
+        assertEquals(0, persisted.getPaidAmount().compareTo(new BigDecimal("40.00")));
+    }
+
+    @Test
+    void reviewPayment_aprobar_noCruzaAOtroAlumnoDelMismoPadre() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-review-cascade-no-cross-student"));
+        User participant = createSignedUpUser("cascade-no-cross-student");
+        Student firstStudent = getFirstStudent(participant);
+        Student secondStudent = studentRepository.save(Student.builder()
+                .parent(participant)
+                .name("Segundo Alumno")
+                .dni(uniqueDni())
+                .schoolName("Colegio Demo")
+                .courseName("5A")
+                .build());
+        Trip trip = createTripForUser(participant, "cascade-no-cross-student", Currency.ARS);
+
+        Installment firstStudentInstallment = createInstallment(trip, participant, firstStudent, 1, "100.00", InstallmentStatus.YELLOW);
+        Installment secondStudentInstallment = createInstallment(trip, participant, secondStudent, 1, "100.00", InstallmentStatus.YELLOW);
+
+        PaymentReceipt receipt = paymentReceiptRepository.save(PaymentReceipt.builder()
+                .installment(firstStudentInstallment)
+                .bankAccount(createBankAccount(Currency.ARS))
+                .reportedAmount(new BigDecimal("150.00"))
+                .paymentCurrency(Currency.ARS)
+                .amountInTripCurrency(new BigDecimal("150.00"))
+                .reportedPaymentDate(LocalDate.now())
+                .paymentMethod(PaymentMethod.BANK_TRANSFER)
+                .status(ReceiptStatus.PENDING)
+                .fileKey("")
+                .build());
+
+        mockMvc.perform(patch("/api/v1/payments/{id}/review", receipt.getId())
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new ReviewPaymentDTO(ReceiptStatus.APPROVED, null))))
+                .andExpect(status().isOk());
+
+        Installment persistedFirst = installmentRepository.findById(firstStudentInstallment.getId()).orElseThrow();
+        Installment persistedSecond = installmentRepository.findById(secondStudentInstallment.getId()).orElseThrow();
+        assertEquals(InstallmentStatus.GREEN, persistedFirst.getStatus());
+        assertEquals(0, persistedFirst.getPaidAmount().compareTo(new BigDecimal("100.00")));
+        assertEquals(0, persistedSecond.getPaidAmount().compareTo(BigDecimal.ZERO));
+        assertEquals(InstallmentStatus.YELLOW, persistedSecond.getStatus());
+    }
+
+    @Test
+    void reviewPayment_aprobar_noCruzaAOtroViaje() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-review-cascade-no-cross-trip"));
+        User participant = createSignedUpUser("cascade-no-cross-trip");
+        Student student = getFirstStudent(participant);
+        Trip firstTrip = createTripForUser(participant, "cascade-no-cross-trip-1", Currency.ARS);
+        Trip secondTrip = createTripForUser(participant, "cascade-no-cross-trip-2", Currency.ARS);
+
+        Installment firstTripInstallment = createInstallment(firstTrip, participant, student, 1, "100.00", InstallmentStatus.YELLOW);
+        Installment secondTripInstallment = createInstallment(secondTrip, participant, student, 1, "100.00", InstallmentStatus.YELLOW);
+
+        PaymentReceipt receipt = paymentReceiptRepository.save(PaymentReceipt.builder()
+                .installment(firstTripInstallment)
+                .bankAccount(createBankAccount(Currency.ARS))
+                .reportedAmount(new BigDecimal("150.00"))
+                .paymentCurrency(Currency.ARS)
+                .amountInTripCurrency(new BigDecimal("150.00"))
+                .reportedPaymentDate(LocalDate.now())
+                .paymentMethod(PaymentMethod.BANK_TRANSFER)
+                .status(ReceiptStatus.PENDING)
+                .fileKey("")
+                .build());
+
+        mockMvc.perform(patch("/api/v1/payments/{id}/review", receipt.getId())
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new ReviewPaymentDTO(ReceiptStatus.APPROVED, null))))
+                .andExpect(status().isOk());
+
+        assertEquals(0, installmentRepository.findById(secondTripInstallment.getId()).orElseThrow().getPaidAmount().compareTo(BigDecimal.ZERO));
+    }
+
+    @Test
+    void reviewPayment_aprobar_conMonedaDistinta_usaAmountInTripCurrency() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-review-cascade-exchange"));
+        User participant = createSignedUpUser("cascade-exchange");
+        Student student = getFirstStudent(participant);
+        Trip trip = createTripForUser(participant, "cascade-exchange", Currency.USD);
+
+        Installment firstInstallment = createInstallment(trip, participant, student, 1, "10.00", InstallmentStatus.YELLOW);
+        Installment secondInstallment = createInstallment(trip, participant, student, 2, "10.00", InstallmentStatus.YELLOW);
+
+        PaymentReceipt receipt = paymentReceiptRepository.save(PaymentReceipt.builder()
+                .installment(firstInstallment)
+                .bankAccount(createBankAccount(Currency.ARS))
+                .reportedAmount(new BigDecimal("10000.00"))
+                .paymentCurrency(Currency.ARS)
+                .exchangeRate(new BigDecimal("1000.00"))
+                .amountInTripCurrency(new BigDecimal("10.00"))
+                .reportedPaymentDate(LocalDate.now())
+                .paymentMethod(PaymentMethod.BANK_TRANSFER)
+                .status(ReceiptStatus.PENDING)
+                .fileKey("")
+                .build());
+
+        mockMvc.perform(patch("/api/v1/payments/{id}/review", receipt.getId())
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new ReviewPaymentDTO(ReceiptStatus.APPROVED, null))))
+                .andExpect(status().isOk());
+
+        Installment persistedFirst = installmentRepository.findById(firstInstallment.getId()).orElseThrow();
+        Installment persistedSecond = installmentRepository.findById(secondInstallment.getId()).orElseThrow();
+        assertEquals(InstallmentStatus.GREEN, persistedFirst.getStatus());
+        assertEquals(0, persistedFirst.getPaidAmount().compareTo(new BigDecimal("10.00")));
+        assertEquals(0, persistedSecond.getPaidAmount().compareTo(BigDecimal.ZERO));
+    }
+
+    @Test
+    void voidPayment_revierteExactoUnaCascadaParcial() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-void-cascade-partial"));
+        User participant = createSignedUpUser("void-cascade-partial");
+        Student student = getFirstStudent(participant);
+        Trip trip = createTripForUser(participant, "void-cascade-partial", Currency.ARS);
+
+        Installment firstInstallment = createInstallment(trip, participant, student, 1, "100.00", InstallmentStatus.GREEN);
+        firstInstallment.setPaidAmount(new BigDecimal("100.00"));
+        firstInstallment = installmentRepository.save(firstInstallment);
+
+        Installment secondInstallment = createInstallment(trip, participant, student, 2, "100.00", InstallmentStatus.YELLOW);
+        secondInstallment.setPaidAmount(new BigDecimal("50.00"));
+        secondInstallment = installmentRepository.save(secondInstallment);
+
+        PaymentReceipt receipt = paymentReceiptRepository.save(PaymentReceipt.builder()
+                .installment(firstInstallment)
+                .bankAccount(createBankAccount(Currency.ARS))
+                .reportedAmount(new BigDecimal("150.00"))
+                .paymentCurrency(Currency.ARS)
+                .amountInTripCurrency(new BigDecimal("150.00"))
+                .reportedPaymentDate(LocalDate.now())
+                .paymentMethod(PaymentMethod.BANK_TRANSFER)
+                .status(ReceiptStatus.APPROVED)
+                .fileKey("")
+                .build());
+
+        mockMvc.perform(post("/api/v1/payments/{id}/void", receipt.getId())
+                        .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("REJECTED"));
+
+        Installment revertedFirst = installmentRepository.findById(firstInstallment.getId()).orElseThrow();
+        Installment revertedSecond = installmentRepository.findById(secondInstallment.getId()).orElseThrow();
+        assertEquals(InstallmentStatus.YELLOW, revertedFirst.getStatus());
+        assertEquals(0, revertedFirst.getPaidAmount().compareTo(BigDecimal.ZERO));
+        assertEquals(0, revertedSecond.getPaidAmount().compareTo(BigDecimal.ZERO));
+    }
+
+    @Test
     void getReceiptsForInstallment_devuelveLista() throws Exception {
         TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-list-receipts"));
         Installment installment = createInstallmentWithStatus("list-receipts", InstallmentStatus.YELLOW);
@@ -445,6 +706,60 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 .andExpect(jsonPath("$[0].uiStatusCode").value("UNDER_REVIEW"))
                 .andExpect(jsonPath("$[0].uiStatusLabel").value("En revisión"))
                 .andExpect(jsonPath("$[0].uiStatusTone").value("yellow"));
+    }
+
+    @Test
+    void getMyInstallments_conComprobanteRechazado_devuelveUiStatusReceiptRejected() throws Exception {
+        signUpAdmin(buildValidUser("admin-payment-rejected"));
+        UserCreateDTO participantDto = buildValidUser("payment-rejected-user");
+        TokenDTO userTokens = signUp(participantDto);
+        User user = userRepository.findByEmail(participantDto.email()).orElseThrow();
+
+        Trip trip = new Trip();
+        trip.setName("Trip payment rejected");
+        trip.setCurrency(Currency.ARS);
+        trip.setTotalAmount(BigDecimal.valueOf(120000));
+        trip.setInstallmentsCount(12);
+        trip.setDueDay(10);
+        trip.setYellowWarningDays(5);
+        trip.setFixedFineAmount(BigDecimal.valueOf(5000));
+        trip.setRetroactiveActive(false);
+        trip.setFirstDueDate(LocalDate.now().plusMonths(1));
+        trip.getAssignedUsers().add(user);
+        trip = tripRepository.save(trip);
+
+        Installment installment = new Installment();
+        installment.setTrip(trip);
+        installment.setUser(user);
+        installment.setInstallmentNumber(1);
+        installment.setDueDate(LocalDate.now().plusDays(2));
+        installment.setCapitalAmount(BigDecimal.valueOf(10000));
+        installment.setRetroactiveAmount(BigDecimal.ZERO);
+        installment.setFineAmount(BigDecimal.ZERO);
+        installment.setStatus(InstallmentStatus.YELLOW);
+        installment.recalculateTotalDue();
+        installment = installmentRepository.save(installment);
+
+        paymentReceiptRepository.save(PaymentReceipt.builder()
+                .installment(installment)
+                .bankAccount(createBankAccount(Currency.ARS))
+                .reportedAmount(BigDecimal.valueOf(10000))
+                .paymentCurrency(Currency.ARS)
+                .amountInTripCurrency(BigDecimal.valueOf(10000))
+                .reportedPaymentDate(LocalDate.now())
+                .paymentMethod(PaymentMethod.BANK_TRANSFER)
+                .status(ReceiptStatus.REJECTED)
+                .fileKey("")
+                .adminObservation("El comprobante está borroso.")
+                .build());
+
+        mockMvc.perform(get("/api/v1/payments/my/installments")
+                        .header("Authorization", "Bearer " + userTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].uiStatusCode").value("RECEIPT_REJECTED"))
+                .andExpect(jsonPath("$[0].uiStatusLabel").value("Comprobante rechazado"))
+                .andExpect(jsonPath("$[0].uiStatusTone").value("red"))
+                .andExpect(jsonPath("$[0].latestReceiptObservation").value("El comprobante está borroso."));
     }
 
     @Test
@@ -590,6 +905,53 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
         installment.setInstallmentNumber(1);
         installment.setDueDate(LocalDate.now().plusDays(10));
         installment.setCapitalAmount(BigDecimal.valueOf(10000));
+        installment.setRetroactiveAmount(BigDecimal.ZERO);
+        installment.setFineAmount(BigDecimal.ZERO);
+        installment.setStatus(status);
+        installment.recalculateTotalDue();
+        return installmentRepository.save(installment);
+    }
+
+    private User createSignedUpUser(String prefix) throws Exception {
+        UserCreateDTO participantDto = buildValidUser("payment-user-" + prefix);
+        signUp(participantDto);
+        return userRepository.findByEmail(participantDto.email()).orElseThrow();
+    }
+
+    private Student getFirstStudent(User user) {
+        return studentRepository.findByParentId(user.getId()).stream().findFirst().orElseThrow();
+    }
+
+    private Trip createTripForUser(User user, String prefix, Currency currency) {
+        Trip trip = new Trip();
+        trip.setName("Trip payment " + prefix);
+        trip.setCurrency(currency);
+        trip.setTotalAmount(BigDecimal.valueOf(120000));
+        trip.setInstallmentsCount(12);
+        trip.setDueDay(10);
+        trip.setYellowWarningDays(5);
+        trip.setFixedFineAmount(BigDecimal.valueOf(5000));
+        trip.setRetroactiveActive(false);
+        trip.setFirstDueDate(LocalDate.now().plusMonths(1));
+        trip.getAssignedUsers().add(user);
+        return tripRepository.save(trip);
+    }
+
+    private Installment createInstallment(
+            Trip trip,
+            User user,
+            Student student,
+            int installmentNumber,
+            String capitalAmount,
+            InstallmentStatus status
+    ) {
+        Installment installment = new Installment();
+        installment.setTrip(trip);
+        installment.setUser(user);
+        installment.setStudent(student);
+        installment.setInstallmentNumber(installmentNumber);
+        installment.setDueDate(LocalDate.now().plusDays(installmentNumber));
+        installment.setCapitalAmount(new BigDecimal(capitalAmount));
         installment.setRetroactiveAmount(BigDecimal.ZERO);
         installment.setFineAmount(BigDecimal.ZERO);
         installment.setStatus(status);

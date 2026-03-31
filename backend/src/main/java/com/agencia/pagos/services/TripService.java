@@ -8,16 +8,19 @@ import com.agencia.pagos.dtos.response.SpreadsheetDTO;
 import com.agencia.pagos.dtos.response.SpreadsheetRowDTO;
 import com.agencia.pagos.dtos.response.SpreadsheetRowInstallmentDTO;
 import com.agencia.pagos.dtos.response.TripDetailDTO;
+import com.agencia.pagos.dtos.response.TripStudentAdminDTO;
 import com.agencia.pagos.dtos.response.TripSummaryDTO;
 import com.agencia.pagos.entities.Currency;
 import com.agencia.pagos.entities.Installment;
 import com.agencia.pagos.entities.InstallmentStatus;
+import com.agencia.pagos.entities.PendingTripStudent;
 import com.agencia.pagos.entities.PaymentReceipt;
 import com.agencia.pagos.entities.Student;
 import com.agencia.pagos.entities.Trip;
 import com.agencia.pagos.entities.user.User;
 import com.agencia.pagos.repositories.InstallmentRepository;
 import com.agencia.pagos.repositories.InstallmentReminderNotificationRepository;
+import com.agencia.pagos.repositories.PendingTripStudentRepository;
 import com.agencia.pagos.repositories.PaymentReceiptRepository;
 import com.agencia.pagos.repositories.StudentRepository;
 import com.agencia.pagos.repositories.TripRepository;
@@ -34,7 +37,9 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -56,6 +61,7 @@ public class TripService {
     private final InstallmentRepository installmentRepository;
     private final PaymentReceiptRepository paymentReceiptRepository;
     private final InstallmentReminderNotificationRepository installmentReminderNotificationRepository;
+    private final PendingTripStudentRepository pendingTripStudentRepository;
     private final InstallmentStatusResolver installmentStatusResolver;
     private final InstallmentUiStatusResolver installmentUiStatusResolver;
     private final TripExcelExporter tripExcelExporter;
@@ -68,6 +74,7 @@ public class TripService {
             InstallmentRepository installmentRepository,
             PaymentReceiptRepository paymentReceiptRepository,
             InstallmentReminderNotificationRepository installmentReminderNotificationRepository,
+            PendingTripStudentRepository pendingTripStudentRepository,
             InstallmentStatusResolver installmentStatusResolver,
             InstallmentUiStatusResolver installmentUiStatusResolver,
             TripExcelExporter tripExcelExporter
@@ -78,6 +85,7 @@ public class TripService {
         this.installmentRepository = installmentRepository;
         this.paymentReceiptRepository = paymentReceiptRepository;
         this.installmentReminderNotificationRepository = installmentReminderNotificationRepository;
+        this.pendingTripStudentRepository = pendingTripStudentRepository;
         this.installmentStatusResolver = installmentStatusResolver;
         this.installmentUiStatusResolver = installmentUiStatusResolver;
         this.tripExcelExporter = tripExcelExporter;
@@ -94,6 +102,7 @@ public class TripService {
                 userRepository,
                 null,
                 installmentRepository,
+                null,
                 null,
                 null,
                 new InstallmentStatusResolver(),
@@ -166,6 +175,9 @@ public class TripService {
         if (installmentReminderNotificationRepository != null) {
             installmentReminderNotificationRepository.deleteByInstallmentTripId(trip.getId());
         }
+        if (pendingTripStudentRepository != null) {
+            pendingTripStudentRepository.deleteByTripId(trip.getId());
+        }
         installmentRepository.deleteByTripId(trip.getId());
 
         trip.getAssignedUsers().clear();
@@ -200,8 +212,8 @@ public class TripService {
         Trip trip = tripRepository.findByIdForUpdate(tripId)
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found"));
 
-        if (studentRepository == null) {
-            throw new IllegalStateException("StudentRepository is not available");
+        if (studentRepository == null || pendingTripStudentRepository == null) {
+            throw new IllegalStateException("Student repositories are not available");
         }
 
         List<String> requestedDnis = dto.studentDnis().stream()
@@ -211,91 +223,225 @@ public class TripService {
         Map<String, Student> studentsByDni = studentRepository.findByDniIn(requestedDnis).stream()
                 .collect(Collectors.toMap(Student::getDni, Function.identity()));
 
-        for (String requestedDni : requestedDnis) {
-            if (!studentsByDni.containsKey(requestedDni)) {
-                throw new EntityNotFoundException("Alumno no encontrado con DNI: " + requestedDni);
-            }
-        }
-
         Set<Long> alreadyAssignedParentIds = trip.getAssignedUsers().stream()
                 .map(User::getId)
                 .collect(Collectors.toSet());
         Set<Long> alreadyAssignedStudentIds = new HashSet<>(installmentRepository.findAssignedStudentIdsByTripId(tripId));
+        Map<String, PendingTripStudent> pendingByDni = pendingTripStudentRepository
+                .findByTripIdAndStudentDniIn(tripId, requestedDnis)
+                .stream()
+                .collect(Collectors.toMap(PendingTripStudent::getStudentDni, Function.identity()));
 
-        List<Student> studentsToAssign = requestedDnis.stream()
-                .map(studentsByDni::get)
-                .filter(student -> !alreadyAssignedStudentIds.contains(student.getId()))
+        List<String> rejectedDnis = requestedDnis.stream()
+                .filter(requestedDni -> {
+                    Student student = studentsByDni.get(requestedDni);
+                    boolean alreadyAssigned = student != null && alreadyAssignedStudentIds.contains(student.getId());
+                    return alreadyAssigned || pendingByDni.containsKey(requestedDni);
+                })
+                .distinct()
                 .toList();
 
-        if (studentsToAssign.isEmpty()) {
-            return new BulkAssignResultDTO("success", "All students were already assigned", 0);
+        if (!rejectedDnis.isEmpty()) {
+            throw new IllegalStateException(buildBulkAssignRejectedMessage(rejectedDnis));
         }
 
         List<BigDecimal> amounts = splitAmount(trip.getTotalAmount(), trip.getInstallmentsCount());
-
-        List<Installment> installmentsToSave = new ArrayList<>();
         LocalDate now = LocalDate.now(BUSINESS_ZONE);
+        List<Installment> installmentsToSave = new ArrayList<>();
+        List<PendingTripStudent> pendingToSave = new ArrayList<>();
+        int assignedCount = 0;
+        int pendingCount = 0;
 
-        for (Student student : studentsToAssign) {
-            User user = student.getParent();
-            if (!alreadyAssignedParentIds.contains(user.getId())) {
-                trip.getAssignedUsers().add(user);
-                alreadyAssignedParentIds.add(user.getId());
-            }
-
-            for (int i = 1; i <= trip.getInstallmentsCount(); i++) {
-                LocalDate rawDueDate = trip.getFirstDueDate().plusMonths(i - 1);
-                int validDay = Math.min(trip.getDueDay(), rawDueDate.lengthOfMonth());
-                LocalDate currentDueDate = rawDueDate.withDayOfMonth(validDay);
-                BigDecimal installmentCapital = amounts.get(i - 1);
-
-                if (!currentDueDate.isBefore(now)) {
-                    Installment installment = new Installment();
-                    installment.setTrip(trip);
-                    installment.setUser(user);
-                    installment.setStudent(student);
-                    installment.setInstallmentNumber(i);
-                    installment.setDueDate(currentDueDate);
-                    installment.setCapitalAmount(installmentCapital);
-                    installment.setRetroactiveAmount(BigDecimal.ZERO);
-                    installment.setFineAmount(BigDecimal.ZERO);
-                    installment.setStatus(InstallmentStatus.YELLOW);
-                    installment.recalculateTotalDue();
-                    installmentsToSave.add(installment);
-                } else if (trip.getRetroactiveActive()) {
-                    Installment retroInstallment = new Installment();
-                    retroInstallment.setTrip(trip);
-                    retroInstallment.setUser(user);
-                    retroInstallment.setStudent(student);
-                    retroInstallment.setInstallmentNumber(i);
-                    retroInstallment.setDueDate(currentDueDate);
-                    retroInstallment.setCapitalAmount(installmentCapital);
-                    retroInstallment.setRetroactiveAmount(BigDecimal.ZERO);
-                    retroInstallment.setFineAmount(BigDecimal.ZERO);
-                    retroInstallment.setStatus(InstallmentStatus.RETROACTIVE);
-                    retroInstallment.recalculateTotalDue();
-                    installmentsToSave.add(retroInstallment);
-                } else {
-                    Installment installment = new Installment();
-                    installment.setTrip(trip);
-                    installment.setUser(user);
-                    installment.setStudent(student);
-                    installment.setInstallmentNumber(i);
-                    installment.setDueDate(currentDueDate);
-                    installment.setCapitalAmount(installmentCapital);
-                    installment.setRetroactiveAmount(BigDecimal.ZERO);
-                    installment.setFineAmount(trip.getFixedFineAmount());
-                    installment.setStatus(InstallmentStatus.RED);
-                    installment.recalculateTotalDue();
-                    installmentsToSave.add(installment);
+        for (String requestedDni : requestedDnis) {
+            Student student = studentsByDni.get(requestedDni);
+            if (student != null) {
+                if (assignStudentToTrip(
+                        trip,
+                        student,
+                        amounts,
+                        now,
+                        alreadyAssignedParentIds,
+                        alreadyAssignedStudentIds,
+                        installmentsToSave
+                )) {
+                    assignedCount++;
                 }
+                continue;
             }
+
+            PendingTripStudent pendingTripStudent = new PendingTripStudent();
+            pendingTripStudent.setTrip(trip);
+            pendingTripStudent.setStudentDni(requestedDni);
+            pendingToSave.add(pendingTripStudent);
+            pendingCount++;
         }
 
-        installmentRepository.saveAll(installmentsToSave);
+        if (!pendingToSave.isEmpty()) {
+            pendingTripStudentRepository.saveAll(pendingToSave);
+        }
+        if (!installmentsToSave.isEmpty()) {
+            installmentRepository.saveAll(installmentsToSave);
+        }
         tripRepository.save(trip);
 
-        return new BulkAssignResultDTO("success", "Students assigned successfully", studentsToAssign.size());
+        return new BulkAssignResultDTO(
+                "success",
+                buildBulkAssignMessage(assignedCount, pendingCount),
+                assignedCount,
+                pendingCount
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public List<TripStudentAdminDTO> getTripStudentsAdmin(Long tripId) {
+        Trip trip = tripRepository.findById(tripId)
+                .orElseThrow(() -> new EntityNotFoundException("Trip not found"));
+
+        List<Installment> installments = installmentRepository.findByTripIdWithUsers(trip.getId());
+        Map<String, TripStudentAdminDTO> studentsByDni = new HashMap<>();
+        Map<String, Integer> installmentsCountByDni = new HashMap<>();
+
+        for (Installment installment : installments) {
+            Student student = installment.getStudent();
+            if (student == null || student.getDni() == null) {
+                continue;
+            }
+
+            String studentDni = student.getDni();
+            installmentsCountByDni.merge(studentDni, 1, Integer::sum);
+            studentsByDni.putIfAbsent(studentDni, toTripStudentAdminDTO(student, installment.getUser(), "ASSIGNED", 0));
+        }
+
+        List<PendingTripStudent> pendingStudents = pendingTripStudentRepository.findByTripIdOrderByStudentDniAsc(tripId);
+        for (PendingTripStudent pendingStudent : pendingStudents) {
+            studentsByDni.putIfAbsent(
+                    pendingStudent.getStudentDni(),
+                    new TripStudentAdminDTO(
+                            pendingStudent.getStudentDni(),
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            "PENDING",
+                            0
+                    )
+            );
+        }
+
+        return studentsByDni.values().stream()
+                .map(item -> {
+                    int installmentsCount = "ASSIGNED".equals(item.status())
+                            ? installmentsCountByDni.getOrDefault(item.studentDni(), item.installmentsCount())
+                            : 0;
+                    return new TripStudentAdminDTO(
+                            item.studentDni(),
+                            item.studentId(),
+                            item.studentName(),
+                            item.schoolName(),
+                            item.courseName(),
+                            item.parentUserId(),
+                            item.parentFullName(),
+                            item.parentEmail(),
+                            item.status(),
+                            installmentsCount
+                    );
+                })
+                .sorted(Comparator.comparing(TripStudentAdminDTO::studentDni))
+                .toList();
+    }
+
+    public void unassignStudentByDni(Long tripId, String studentDni) {
+        Trip trip = tripRepository.findByIdForUpdate(tripId)
+                .orElseThrow(() -> new EntityNotFoundException("Trip not found"));
+
+        String normalizedDni = studentDni == null ? "" : studentDni.trim();
+        List<PendingTripStudent> pendingStudents = pendingTripStudentRepository.findByTripIdAndStudentDni(tripId, normalizedDni);
+        List<Installment> installments = installmentRepository.findByTripIdAndStudentDni(tripId, normalizedDni);
+
+        if (pendingStudents.isEmpty() && installments.isEmpty()) {
+            throw new EntityNotFoundException("No existe una asignación para el DNI " + normalizedDni + " en este viaje.");
+        }
+
+        if (!pendingStudents.isEmpty()) {
+            pendingTripStudentRepository.deleteAll(pendingStudents);
+        }
+
+        if (installments.isEmpty()) {
+            return;
+        }
+
+        List<Long> installmentIds = installments.stream()
+                .map(Installment::getId)
+                .toList();
+
+        if (installmentReminderNotificationRepository != null && !installmentIds.isEmpty()) {
+            installmentReminderNotificationRepository.deleteByInstallmentIdIn(installmentIds);
+        }
+        if (paymentReceiptRepository != null && !installmentIds.isEmpty()) {
+            paymentReceiptRepository.deleteByInstallmentIdIn(installmentIds);
+        }
+
+        User parent = installments.get(0).getUser();
+        installmentRepository.deleteAll(installments);
+
+        if (parent != null && !installmentRepository.existsByTripIdAndUserId(tripId, parent.getId())) {
+            trip.getAssignedUsers().removeIf(user -> user.getId().equals(parent.getId()));
+            tripRepository.save(trip);
+        }
+    }
+
+    public void materializePendingAssignmentsForStudent(Student student) {
+        if (student == null) {
+            throw new IllegalArgumentException("Student is required");
+        }
+        if (student.getId() == null) {
+            throw new IllegalArgumentException("Student must be persisted before assigning trips");
+        }
+        if (pendingTripStudentRepository == null) {
+            throw new IllegalStateException("PendingTripStudentRepository is not available");
+        }
+
+        List<PendingTripStudent> pendingTrips = pendingTripStudentRepository.findByStudentDniWithTripForUpdate(student.getDni());
+        if (pendingTrips.isEmpty()) {
+            return;
+        }
+
+        LocalDate now = LocalDate.now(BUSINESS_ZONE);
+        List<Installment> installmentsToSave = new ArrayList<>();
+        Map<Long, Trip> lockedTripsById = new HashMap<>();
+
+        for (PendingTripStudent pendingTripStudent : pendingTrips) {
+            Trip trip = lockedTripsById.computeIfAbsent(
+                    pendingTripStudent.getTrip().getId(),
+                    tripId -> tripRepository.findByIdForUpdate(tripId)
+                            .orElseThrow(() -> new EntityNotFoundException("Trip not found"))
+            );
+            List<BigDecimal> amounts = splitAmount(trip.getTotalAmount(), trip.getInstallmentsCount());
+            Set<Long> alreadyAssignedParentIds = trip.getAssignedUsers().stream()
+                    .map(User::getId)
+                    .collect(Collectors.toSet());
+            Set<Long> alreadyAssignedStudentIds = new HashSet<>(installmentRepository.findAssignedStudentIdsByTripId(trip.getId()));
+            assignStudentToTrip(
+                    trip,
+                    student,
+                    amounts,
+                    now,
+                    alreadyAssignedParentIds,
+                    alreadyAssignedStudentIds,
+                    installmentsToSave
+            );
+        }
+
+        if (!installmentsToSave.isEmpty()) {
+            installmentRepository.saveAll(installmentsToSave);
+        }
+        pendingTripStudentRepository.deleteAll(pendingTrips);
+        if (!lockedTripsById.isEmpty()) {
+            tripRepository.saveAll(lockedTripsById.values());
+        }
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
@@ -313,6 +459,100 @@ public class TripService {
         List<BigDecimal> amounts = new ArrayList<>(Collections.nCopies(count, base));
         amounts.set(count - 1, base.add(remainder));
         return amounts;
+    }
+
+    private boolean assignStudentToTrip(
+            Trip trip,
+            Student student,
+            List<BigDecimal> amounts,
+            LocalDate now,
+            Set<Long> alreadyAssignedParentIds,
+            Set<Long> alreadyAssignedStudentIds,
+            List<Installment> installmentsToSave
+    ) {
+        if (alreadyAssignedStudentIds.contains(student.getId())) {
+            return false;
+        }
+
+        User user = student.getParent();
+        if (!alreadyAssignedParentIds.contains(user.getId())) {
+            trip.getAssignedUsers().add(user);
+            alreadyAssignedParentIds.add(user.getId());
+        }
+
+        for (int i = 1; i <= trip.getInstallmentsCount(); i++) {
+            LocalDate rawDueDate = trip.getFirstDueDate().plusMonths(i - 1);
+            int validDay = Math.min(trip.getDueDay(), rawDueDate.lengthOfMonth());
+            LocalDate currentDueDate = rawDueDate.withDayOfMonth(validDay);
+            BigDecimal installmentCapital = amounts.get(i - 1);
+
+            Installment installment = new Installment();
+            installment.setTrip(trip);
+            installment.setUser(user);
+            installment.setStudent(student);
+            installment.setInstallmentNumber(i);
+            installment.setDueDate(currentDueDate);
+            installment.setCapitalAmount(installmentCapital);
+            installment.setRetroactiveAmount(BigDecimal.ZERO);
+
+            if (!currentDueDate.isBefore(now)) {
+                installment.setFineAmount(BigDecimal.ZERO);
+                installment.setStatus(InstallmentStatus.YELLOW);
+            } else if (trip.getRetroactiveActive()) {
+                installment.setFineAmount(BigDecimal.ZERO);
+                installment.setStatus(InstallmentStatus.RETROACTIVE);
+            } else {
+                installment.setFineAmount(trip.getFixedFineAmount());
+                installment.setStatus(InstallmentStatus.RED);
+            }
+
+            installment.recalculateTotalDue();
+            installmentsToSave.add(installment);
+        }
+
+        alreadyAssignedStudentIds.add(student.getId());
+        return true;
+    }
+
+    private String buildBulkAssignMessage(int assignedCount, int pendingCount) {
+        if (assignedCount == 0 && pendingCount == 0) {
+            return "Todos los DNIs indicados ya estaban asignados o pendientes.";
+        }
+        if (assignedCount > 0 && pendingCount > 0) {
+            return "Se asignaron " + assignedCount + " alumnos y " + pendingCount
+                    + " DNI quedaron pendientes hasta que el padre se registre.";
+        }
+        if (assignedCount > 0) {
+            return "Se asignaron " + assignedCount + " alumnos correctamente.";
+        }
+        return "Se cargaron " + pendingCount + " DNI pendientes hasta que el padre se registre.";
+    }
+
+    private String buildBulkAssignRejectedMessage(List<String> rejectedDnis) {
+        String listedDnis = new LinkedHashSet<>(rejectedDnis).stream()
+                .collect(Collectors.joining(", "));
+        if (rejectedDnis.size() == 1) {
+            return "El DNI " + listedDnis + " ya está cargado en este viaje y fue rechazado.";
+        }
+        return "Los siguientes DNIs ya están cargados en este viaje y fueron rechazados: " + listedDnis + ".";
+    }
+
+    private TripStudentAdminDTO toTripStudentAdminDTO(Student student, User parent, String status, int installmentsCount) {
+        String parentFullName = parent == null
+                ? null
+                : (parent.getName() + " " + parent.getLastname()).trim();
+        return new TripStudentAdminDTO(
+                student.getDni(),
+                student.getId(),
+                student.getName(),
+                student.getSchoolName(),
+                student.getCourseName(),
+                parent != null ? parent.getId() : null,
+                parentFullName == null || parentFullName.isBlank() ? null : parentFullName,
+                parent != null ? parent.getEmail() : null,
+                status,
+                installmentsCount
+        );
     }
 
     // ── Mappers ─────────────────────────────────────────────────────────────

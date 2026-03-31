@@ -7,6 +7,51 @@ import { server } from "@/test/msw-server";
 import { renderWithProviders } from "@/test/test-utils";
 
 describe("UserDashboardPage", () => {
+  it("muestra una notificacion de exito al agregar un alumno", async () => {
+    server.use(
+      http.get("http://localhost:30002/api/v1/payments/my/installments", () => HttpResponse.json([])),
+      http.get("http://localhost:30002/api/v1/bank-accounts", () => HttpResponse.json([])),
+      http.get("http://localhost:30002/api/v1/users/students", () => HttpResponse.json([])),
+      http.get("http://localhost:30002/api/v1/schools", () =>
+        HttpResponse.json([
+          { id: 10, name: "Colegio Test" },
+        ]),
+      ),
+      http.post("http://localhost:30002/api/v1/users/students", async ({ request }) => {
+        const body = await request.json() as {
+          name: string;
+          dni: string;
+          schoolName: string;
+          courseName: string;
+        };
+
+        return HttpResponse.json({
+          id: 999,
+          ...body,
+        }, { status: 201 });
+      }),
+    );
+
+    renderWithProviders(<UserDashboardPage />);
+
+    fireEvent.change(await screen.findByLabelText("Nombre completo"), {
+      target: { value: "Lucia Perez" },
+    });
+    fireEvent.change(screen.getByLabelText("DNI"), {
+      target: { value: "40111222" },
+    });
+    fireEvent.change(screen.getByLabelText("Colegio"), {
+      target: { value: "Colegio Test" },
+    });
+    fireEvent.change(screen.getByLabelText("Curso"), {
+      target: { value: "5A" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Agregar hijo" }));
+
+    expect(await screen.findByText("El alumno Lucia Perez se agrego con exito.")).toBeInTheDocument();
+  });
+
   it("renderiza estados resueltos por backend y permite reportar un pago", async () => {
     let paymentPayload: Record<string, string> | null = null;
 
@@ -177,6 +222,7 @@ describe("UserDashboardPage", () => {
     expect(await screen.findByText("Vence pronto")).toBeInTheDocument();
     expect(screen.getByText("En revisión")).toBeInTheDocument();
     expect(screen.getByText("⚠ El comprobante está borroso.")).toBeInTheDocument();
+    expect(screen.getByText("Podés reclamar hijos solo si la agencia precargó su DNI en algún viaje.")).toBeInTheDocument();
     expect(
       screen.getByText("Tu comprobante está siendo revisado por el administrador"),
     ).toBeInTheDocument();

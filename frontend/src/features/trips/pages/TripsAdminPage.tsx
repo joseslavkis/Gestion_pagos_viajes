@@ -6,6 +6,7 @@ import { useLocation } from "wouter";
 import { useAppForm } from "@/config/use-app-form";
 import {
   TripCreateDTOSchema,
+  type BulkAssignResultDTO,
   type TripCreateDTO,
   type TripSummaryDTO,
   UserAssignBulkDTOSchema,
@@ -14,7 +15,9 @@ import {
   useAssignUsersBulk,
   useCreateTrip,
   useDeleteTrip,
+  useTripStudentsAdmin,
   useTrips,
+  useUnassignTripStudent,
 } from "@/features/trips/services/trips-service";
 
 import styles from "./TripsAdminPage.module.css";
@@ -33,22 +36,60 @@ type ModalState =
   | { type: "none" }
   | { type: "create" }
   | { type: "assign"; tripId: number; tripName: string }
+  | { type: "students"; tripId: number; tripName: string }
   | { type: "delete"; trip: TripSummaryDTO };
 
 export function TripsAdminPage() {
   const { data, isLoading, error, refetch } = useTrips();
   const [modalState, setModalState] = useState<ModalState>({ type: "none" });
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const openCreate = () => setModalState({ type: "create" });
   const closeModal = () => setModalState({ type: "none" });
 
   const handleAssign = (trip: TripSummaryDTO) =>
     setModalState({ type: "assign", tripId: trip.id, tripName: trip.name });
+  const handleManageStudents = (trip: TripSummaryDTO) =>
+    setModalState({ type: "students", tripId: trip.id, tripName: trip.name });
   const handleDelete = (trip: TripSummaryDTO) => setModalState({ type: "delete", trip });
 
   const trips = data ?? [];
 
   const totalTrips = trips.length;
+
+  useEffect(() => {
+    if (!successMessage) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setSuccessMessage(null);
+    }, 4000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [successMessage]);
+
+  const handleAssignSuccess = (result: BulkAssignResultDTO) => {
+    const parts: string[] = [];
+
+    if (result.assignedCount > 0) {
+      parts.push(
+        `${result.assignedCount} alumno${result.assignedCount === 1 ? "" : "s"} asignado${result.assignedCount === 1 ? "" : "s"}`,
+      );
+    }
+
+    if (result.pendingCount > 0) {
+      parts.push(
+        `${result.pendingCount} DNI${result.pendingCount === 1 ? "" : "s"} pendiente${result.pendingCount === 1 ? "" : "s"}`,
+      );
+    }
+
+    setSuccessMessage(
+      parts.length > 0
+        ? `Asignacion realizada con exito: ${parts.join(" · ")}.`
+        : "Asignacion realizada con exito.",
+    );
+  };
 
   return (
     <CommonLayout>
@@ -68,6 +109,16 @@ export function TripsAdminPage() {
             </button>
           </div>
         </header>
+
+        {successMessage ? (
+          <div className={styles.successBanner} role="status" aria-live="polite">
+            <span className={styles.successIcon} aria-hidden="true">✓</span>
+            <div className={styles.successContent}>
+              <strong className={styles.successTitle}>Asignacion completada</strong>
+              <p className={styles.successMessage}>{successMessage}</p>
+            </div>
+          </div>
+        ) : null}
 
         <RequestState isLoading={isLoading} error={error ?? null} loadingLabel="Cargando viajes...">
           {isLoading ? (
@@ -114,6 +165,7 @@ export function TripsAdminPage() {
                   key={trip.id}
                   trip={trip}
                   onAssign={handleAssign}
+                  onManageStudents={handleManageStudents}
                   onDelete={handleDelete}
                 />
               ))}
@@ -125,6 +177,13 @@ export function TripsAdminPage() {
           <TripModalCreate onClose={closeModal} />
         ) : modalState.type === "assign" ? (
           <AssignUsersModal
+            tripId={modalState.tripId}
+            tripName={modalState.tripName}
+            onSuccess={handleAssignSuccess}
+            onClose={closeModal}
+          />
+        ) : modalState.type === "students" ? (
+          <ManageTripStudentsModal
             tripId={modalState.tripId}
             tripName={modalState.tripName}
             onClose={closeModal}
@@ -146,10 +205,11 @@ export function TripsAdminPage() {
 type TripCardProps = {
   trip: TripSummaryDTO;
   onAssign: (trip: TripSummaryDTO) => void;
+  onManageStudents: (trip: TripSummaryDTO) => void;
   onDelete: (trip: TripSummaryDTO) => void;
 };
 
-function TripCard({ trip, onAssign, onDelete }: TripCardProps) {
+function TripCard({ trip, onAssign, onManageStudents, onDelete }: TripCardProps) {
   const [, setLocation] = useLocation();
   const status = trip.assignedParticipantsCount > 0 ? "active" : "configuring";
   const isActive = status === "active";
@@ -203,6 +263,14 @@ function TripCard({ trip, onAssign, onDelete }: TripCardProps) {
           aria-label={`Asignar usuarios al viaje ${trip.name}`}
         >
           👥 Asignar usuarios
+        </button>
+        <button
+          type="button"
+          className={styles.chipButton}
+          onClick={() => onManageStudents(trip)}
+          aria-label={`Ver chicos del viaje ${trip.name}`}
+        >
+          🧾 Ver chicos
         </button>
         <TooltipWrapper
           disabled={trip.assignedParticipantsCount > 0}
@@ -519,10 +587,11 @@ function TripModalCreate({ onClose }: TripModalCreateProps) {
 type AssignUsersModalProps = {
   tripId: number;
   tripName: string;
+  onSuccess: (result: BulkAssignResultDTO) => void;
   onClose: () => void;
 };
 
-function AssignUsersModal({ tripId, tripName, onClose }: AssignUsersModalProps) {
+function AssignUsersModal({ tripId, tripName, onSuccess, onClose }: AssignUsersModalProps) {
   const { mutateAsync, error, isPending, data } = useAssignUsersBulk();
   const [rawInput, setRawInput] = useState("");
 
@@ -531,38 +600,57 @@ function AssignUsersModal({ tripId, tripName, onClose }: AssignUsersModalProps) 
       .split(/[\s,]+/)
       .map((part) => part.trim())
       .filter((part) => part.length > 0);
-    const validDnis = parts.filter((part) => /^\d{7,8}$/.test(part));
-    const unique = Array.from(new Set(validDnis));
-    return unique.slice(0, 500);
+    return parts.filter((part) => /^\d{7,8}$/.test(part)).slice(0, 500);
   }, [rawInput]);
 
-  const parsedDtoResult = useMemo(() => {
+  const parsedDtoState = useMemo(() => {
     try {
-      return UserAssignBulkDTOSchema.parse({ studentDnis: parsedDnis });
-    } catch {
-      return null;
+      return {
+        data: UserAssignBulkDTOSchema.parse({ studentDnis: parsedDnis }),
+        issues: [] as string[],
+      };
+    } catch (currentError) {
+      if (currentError instanceof Error && "issues" in currentError) {
+        const issues = (currentError as { issues?: Array<{ message?: string }> }).issues ?? [];
+        return {
+          data: null,
+          issues: issues
+            .map((issue) => issue.message)
+            .filter((message): message is string => Boolean(message)),
+        };
+      }
+
+      return {
+        data: null,
+        issues: [],
+      };
     }
   }, [parsedDnis]);
 
-  const hasValidIds = parsedDtoResult !== null && parsedDtoResult.studentDnis.length > 0;
+  const hasValidIds = parsedDtoState.data !== null && parsedDtoState.data.studentDnis.length > 0;
 
   const handleSubmit = async () => {
-    if (!parsedDtoResult) {
+    if (!parsedDtoState.data) {
       return;
     }
-    await mutateAsync({ id: tripId, data: parsedDtoResult });
+    try {
+      await mutateAsync({ id: tripId, data: parsedDtoState.data });
+    } catch {
+      // RequestState renders the API error; we only prevent an unhandled rejection here.
+    }
   };
 
   useEffect(() => {
     if (data && !isPending) {
+      onSuccess(data);
       onClose();
     }
-  }, [data, isPending, onClose]);
+  }, [data, isPending, onClose, onSuccess]);
 
   return (
     <ModalShell
       title={`Asignar usuarios a ${tripName}`}
-      description="Pega los DNIs de los alumnos separados por coma, espacio o salto de línea. Máximo 500 DNIs, sin duplicados."
+      description="Pega los DNIs de los alumnos separados por coma, espacio o salto de línea. Si un DNI todavía no tiene padre registrado, quedará pendiente hasta que el padre cree su cuenta. Máximo 500 DNIs, sin duplicados."
       onClose={onClose}
     >
       <RequestState
@@ -580,12 +668,19 @@ function AssignUsersModal({ tripId, tripName, onClose }: AssignUsersModalProps) 
               placeholder="Ej: 45678901, 45678902 o uno por línea"
             />
             <p className={styles.idsHelper}>
-              Ingresá los DNIs de los alumnos. Solo números de 7-8 dígitos.
+              Ingresá los DNIs de los alumnos. Solo números de 7-8 dígitos. Los DNIs sin padre asociado quedarán pendientes.
             </p>
             <p className={styles.idsPreview}>
               DNIs válidos detectados: {parsedDnis.length}
               {parsedDnis.length > 0 ? ` · Se enviarán ${Math.min(parsedDnis.length, 500)} DNIs` : ""}
             </p>
+            {parsedDtoState.issues.length > 0 ? (
+              <ul className={styles.fieldErrorList}>
+                {parsedDtoState.issues.map((message) => (
+                  <li key={message}>{message}</li>
+                ))}
+              </ul>
+            ) : null}
           </label>
           <div className={styles.modalFooter}>
             <button
@@ -597,6 +692,151 @@ function AssignUsersModal({ tripId, tripName, onClose }: AssignUsersModalProps) 
               Confirmar asignación
             </button>
           </div>
+        </>
+      </RequestState>
+    </ModalShell>
+  );
+}
+
+type ManageTripStudentsModalProps = {
+  tripId: number;
+  tripName: string;
+  onClose: () => void;
+};
+
+function ManageTripStudentsModal({ tripId, tripName, onClose }: ManageTripStudentsModalProps) {
+  const { data, isLoading, error } = useTripStudentsAdmin(tripId);
+  const { mutateAsync, isPending, error: unassignError } = useUnassignTripStudent();
+  const [confirmingDni, setConfirmingDni] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!successMessage) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setSuccessMessage(null);
+    }, 4000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [successMessage]);
+
+  const studentItems = data ?? [];
+
+  const handleConfirmUnassign = async (studentDni: string) => {
+    try {
+      await mutateAsync({ tripId, studentDni });
+      setConfirmingDni(null);
+      setSuccessMessage(`El DNI ${studentDni} fue desasignado del viaje.`);
+    } catch {
+      // The mutation error is rendered in the modal itself.
+    }
+  };
+
+  return (
+    <ModalShell
+      title={`Chicos cargados en ${tripName}`}
+      description="Ves tanto DNIs pendientes como alumnos ya reclamados. Si desasignás un DNI, se eliminan sus cuotas o pendientes de este viaje."
+      onClose={onClose}
+    >
+      <RequestState
+        isLoading={isLoading}
+        error={error ?? null}
+        loadingLabel="Cargando chicos del viaje..."
+      >
+        <>
+          {successMessage ? <p className={styles.inlineSuccess}>{successMessage}</p> : null}
+          {unassignError ? <p className={styles.inlineError}>{unassignError.message}</p> : null}
+          {!isLoading && !error && studentItems.length === 0 ? (
+            <p className={styles.emptyStudentsState}>Todavía no hay DNIs cargados en este viaje.</p>
+          ) : null}
+
+          {studentItems.length > 0 ? (
+            <div className={styles.studentAdminList}>
+              {studentItems.map((student) => {
+                const isPendingStudent = student.status === "PENDING";
+                const isConfirming = confirmingDni === student.studentDni;
+
+                return (
+                  <article key={`${student.status}-${student.studentDni}`} className={styles.studentAdminCard}>
+                    <div className={styles.studentAdminHeader}>
+                      <div className={styles.studentAdminTitleBlock}>
+                        <strong className={styles.studentAdminDni}>{student.studentDni}</strong>
+                        <span
+                          className={`${styles.studentStatusBadge} ${
+                            isPendingStudent ? styles.studentStatusPending : styles.studentStatusAssigned
+                          }`}
+                        >
+                          {isPendingStudent ? "Pendiente" : "Reclamado"}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className={`${styles.chipButton} ${styles.chipDanger}`}
+                        onClick={() => setConfirmingDni(student.studentDni)}
+                        disabled={isPending}
+                      >
+                        Desasignar
+                      </button>
+                    </div>
+
+                    <div className={styles.studentAdminMetaGrid}>
+                      <div>
+                        <span className={styles.metaLabel}>Alumno</span>
+                        <strong>{student.studentName ?? "Todavía sin reclamar"}</strong>
+                      </div>
+                      <div>
+                        <span className={styles.metaLabel}>Colegio</span>
+                        <strong>{student.schoolName ?? "Sin dato"}</strong>
+                      </div>
+                      <div>
+                        <span className={styles.metaLabel}>Curso</span>
+                        <strong>{student.courseName ?? "Sin dato"}</strong>
+                      </div>
+                      <div>
+                        <span className={styles.metaLabel}>Padre</span>
+                        <strong>{student.parentFullName ?? "Sin vincular"}</strong>
+                      </div>
+                      <div>
+                        <span className={styles.metaLabel}>Email</span>
+                        <strong>{student.parentEmail ?? "Sin vincular"}</strong>
+                      </div>
+                      <div>
+                        <span className={styles.metaLabel}>Cuotas generadas</span>
+                        <strong>{student.installmentsCount}</strong>
+                      </div>
+                    </div>
+
+                    {isConfirming ? (
+                      <div className={styles.confirmBox} role="alert">
+                        <strong>Advertencia:</strong> vas a desasignar el DNI {student.studentDni} de este viaje.
+                        Esto elimina sus cuotas generadas o su pendiente actual y no se puede deshacer.
+                        <div className={styles.confirmActions}>
+                          <button
+                            type="button"
+                            className={`${styles.chipButton} ${styles.chipDanger}`}
+                            onClick={() => handleConfirmUnassign(student.studentDni)}
+                            disabled={isPending}
+                          >
+                            {isPending ? "Desasignando..." : "Sí, desasignar"}
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.chipButton}
+                            onClick={() => setConfirmingDni(null)}
+                            disabled={isPending}
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })}
+            </div>
+          ) : null}
         </>
       </RequestState>
     </ModalShell>

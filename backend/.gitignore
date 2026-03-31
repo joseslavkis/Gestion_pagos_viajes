@@ -52,5 +52,6 @@ secrets/
 *.secret
 *.credentials
 *.sql
+!sql/*.sql
 *.dump
 *.bak

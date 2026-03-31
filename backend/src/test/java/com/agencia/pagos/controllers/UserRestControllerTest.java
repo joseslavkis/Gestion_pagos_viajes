@@ -32,8 +32,12 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -171,6 +175,67 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
     void deleteMe_sinAutenticacion_devuelve401() throws Exception {
         mockMvc.perform(delete("/api/v1/users/delete/me"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    // ── POST /students ──────────────────────────────────────────────────────
+
+    @Test
+    void addStudent_conDniPendiente_creaAlumnoYCuotasDeTodosLosViajesPendientes() throws Exception {
+        UserCreateDTO parentDto = buildValidUser("add-student-parent");
+        TokenDTO parentTokens = signUp(parentDto);
+
+        StudentCreateDTO newStudentDto = new StudentCreateDTO("Luca Perez", uniqueDni(), "Colegio Norte", "5A");
+        var firstTrip = seedPendingTrip("add-student-pending-1", List.of(newStudentDto.dni()));
+        var secondTrip = seedPendingTrip("add-student-pending-2", List.of(newStudentDto.dni()));
+
+        mockMvc.perform(post("/api/v1/users/students")
+                .header("Authorization", "Bearer " + parentTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(newStudentDto)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.name").value("Luca Perez"))
+                .andExpect(jsonPath("$.dni").value(newStudentDto.dni()));
+
+        User parent = userRepository.findByEmail(parentDto.email()).orElseThrow();
+        List<Installment> newStudentInstallments = installmentRepository.findByUserIdWithTrip(parent.getId()).stream()
+                .filter(installment -> installment.getStudent() != null && newStudentDto.dni().equals(installment.getStudent().getDni()))
+                .toList();
+
+        assertEquals(6, newStudentInstallments.size());
+        assertTrue(newStudentInstallments.stream().anyMatch(installment -> installment.getTrip().getId().equals(firstTrip.getId())));
+        assertTrue(newStudentInstallments.stream().anyMatch(installment -> installment.getTrip().getId().equals(secondTrip.getId())));
+        assertTrue(pendingTripStudentRepository.findByStudentDniWithTrip(newStudentDto.dni()).isEmpty());
+    }
+
+    @Test
+    void addStudent_conDniNoPrecargado_devuelve409ConMensajeDelBackend() throws Exception {
+        TokenDTO parentTokens = signUp(buildValidUser("add-student-no-pending"));
+        StudentCreateDTO newStudentDto = new StudentCreateDTO("Luca Perez", uniqueDni(), "Colegio Norte", "5A");
+
+        mockMvc.perform(post("/api/v1/users/students")
+                .header("Authorization", "Bearer " + parentTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(newStudentDto)))
+                .andExpect(status().isConflict())
+                .andExpect(content().string(containsString(newStudentDto.dni())))
+                .andExpect(content().string(containsString("no está habilitado todavía")));
+    }
+
+    @Test
+    void addStudent_conDniYaReclamadoPorOtroUsuario_devuelve409() throws Exception {
+        UserCreateDTO firstParentDto = buildValidUser("add-student-already-claimed-a");
+        signUp(firstParentDto);
+        TokenDTO secondParentTokens = signUp(buildValidUser("add-student-already-claimed-b"));
+
+        String claimedDni = firstParentDto.students().get(0).dni();
+        StudentCreateDTO duplicateStudentDto = new StudentCreateDTO("Alumno Duplicado", claimedDni, "Colegio Demo", "4to");
+
+        mockMvc.perform(post("/api/v1/users/students")
+                .header("Authorization", "Bearer " + secondParentTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(duplicateStudentDto)))
+                .andExpect(status().isConflict())
+                .andExpect(content().string("El DNI de alumno " + claimedDni + " ya fue reclamado por otro usuario."));
     }
 
     // ── POST /admin/create ──────────────────────────────────────────────────

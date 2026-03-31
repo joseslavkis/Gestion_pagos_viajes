@@ -70,9 +70,27 @@ export const BulkAssignResultDTOSchema = z.object({
   status: z.string(),
   message: z.string(),
   assignedCount: z.number(),
+  pendingCount: z.number(),
 });
 
 export type BulkAssignResultDTO = z.infer<typeof BulkAssignResultDTOSchema>;
+
+export const TripStudentAdminStatusSchema = z.enum(["ASSIGNED", "PENDING"]);
+
+export const TripStudentAdminDTOSchema = z.object({
+  studentDni: z.string(),
+  studentId: z.number().nullable(),
+  studentName: z.string().nullable(),
+  schoolName: z.string().nullable(),
+  courseName: z.string().nullable(),
+  parentUserId: z.number().nullable(),
+  parentFullName: z.string().nullable(),
+  parentEmail: z.string().nullable(),
+  status: TripStudentAdminStatusSchema,
+  installmentsCount: z.number(),
+});
+
+export type TripStudentAdminDTO = z.infer<typeof TripStudentAdminDTOSchema>;
 
 export { StatusResponseDTOSchema };
 export type { StatusResponseDTO };

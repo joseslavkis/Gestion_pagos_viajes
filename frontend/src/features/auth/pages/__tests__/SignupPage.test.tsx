@@ -49,5 +49,6 @@ describe("SignupPage", () => {
     expect(await screen.findByRole("option", { name: "Colegio Ward" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Colegio San Jose" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Instituto San Martín de Tours" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Solo podés cargar DNIs precargados por administración/i)).toBeInTheDocument();
   });
 });
