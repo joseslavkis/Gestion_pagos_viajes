@@ -9,7 +9,7 @@ import { useLogin } from "@/features/auth/services/auth-service";
 import styles from "./LoginPage.module.css";
 
 export function LoginPage() {
-  const { mutate, error, isPending } = useLogin();
+  const { mutate, isPending } = useLogin();
 
   const formData = useAppForm({
     defaultValues: {
@@ -31,7 +31,7 @@ export function LoginPage() {
           <p className={styles.description}>Ingresa para gestionar pagos de viajes de forma confiable.</p>
         </header>
 
-        <RequestState isLoading={isPending} error={error ?? null} loadingLabel="Verificando credenciales...">
+        <RequestState isLoading={isPending} loadingLabel="Verificando credenciales...">
           <formData.AppForm>
             <formData.FormContainer
               submitLabel="Entrar"

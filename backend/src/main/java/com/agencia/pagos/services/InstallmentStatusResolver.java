@@ -3,6 +3,7 @@ package com.agencia.pagos.services;
 import com.agencia.pagos.entities.InstallmentStatus;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.ZoneId;
 
@@ -15,11 +16,13 @@ public class InstallmentStatusResolver {
     public InstallmentStatus computeEffective(
             InstallmentStatus storedStatus,
             LocalDate dueDate,
-            int yellowWarningDays
+            int yellowWarningDays,
+            BigDecimal paidAmount,
+            BigDecimal totalDue
     ) {
-        // Cuota realmente pagada: aprobacion de comprobante persiste GREEN.
-        // No recalcular por fecha porque ya esta saldada.
-        if (storedStatus == InstallmentStatus.GREEN) {
+        BigDecimal paid = paidAmount == null ? BigDecimal.ZERO : paidAmount;
+        BigDecimal total = totalDue == null ? BigDecimal.ZERO : totalDue;
+        if (total.compareTo(BigDecimal.ZERO) > 0 && paid.compareTo(total) >= 0) {
             return InstallmentStatus.GREEN;
         }
 

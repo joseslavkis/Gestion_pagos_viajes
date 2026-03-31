@@ -1,7 +1,8 @@
 import type { ReactElement, ReactNode } from "react";
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, MutationCache } from "@tanstack/react-query";
 import { render } from "@testing-library/react";
+import { Toaster, toast } from "sonner";
 
 import { TokenProvider } from "@/lib/session";
 
@@ -34,6 +35,12 @@ export function renderWithProviders(ui: ReactElement, role: "ROLE_ADMIN" | "ROLE
   setLoggedInToken(role);
 
   const queryClient = new QueryClient({
+    mutationCache: new MutationCache({
+      onError: (error) => {
+        const message = error instanceof Error ? error.message : "Ocurrió un error inesperado al procesar tu solicitud.";
+        toast.error(message);
+      },
+    }),
     defaultOptions: {
       queries: { retry: false },
       mutations: { retry: false },
@@ -42,7 +49,10 @@ export function renderWithProviders(ui: ReactElement, role: "ROLE_ADMIN" | "ROLE
 
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={queryClient}>
-      <TokenProvider>{children}</TokenProvider>
+      <TokenProvider>
+        {children}
+        <Toaster />
+      </TokenProvider>
     </QueryClientProvider>
   );
 

@@ -455,6 +455,31 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             }
 
             @Test
+            void assignUsersInBulk_dnisEquivalentesConFormato_devuelve409PorDuplicadosNormalizados() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-bulk-normalized-duplicates"));
+            Trip trip = buildTripForBulk(
+                "Trip Normalized Duplicate IDs",
+                BigDecimal.valueOf(2000),
+                2,
+                10,
+                BigDecimal.valueOf(100),
+                false,
+                LocalDate.now().plusMonths(2)
+            );
+
+            String canonicalDni = uniqueDni();
+            String formattedDni = canonicalDni.substring(0, 2) + "." + canonicalDni.substring(2, 5) + "." + canonicalDni.substring(5);
+            UserAssignBulkDTO dto = new UserAssignBulkDTO(List.of(formattedDni, canonicalDni));
+
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isConflict())
+                .andExpect(content().string(containsString("Los DNIs no deben repetirse")));
+            }
+
+            @Test
     void assignUsersInBulk_reasignacion_devuelve409ConElDniRechazado() throws Exception {
             TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-bulk-idempotent"));
             UserCreateDTO userDto = buildValidUser("user-bulk-idempotent");

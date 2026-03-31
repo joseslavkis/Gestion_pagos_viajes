@@ -11,19 +11,23 @@
   cursor: pointer;
 }
 
-.folder:not(.folder--click):hover {
+.folder:not(.folder--click):hover,
+.folder.is-hovered {
   transform: translateY(-8px);
 }
 
-.folder:not(.folder--click):hover .paper {
+.folder:not(.folder--click):hover .paper,
+.folder.is-hovered .paper {
   transform: translate(-50%, 0%);
 }
 
-.folder:not(.folder--click):hover .folder__front {
+.folder:not(.folder--click):hover .folder__front,
+.folder.is-hovered .folder__front {
   transform: skew(15deg) scaleY(0.6);
 }
 
-.folder:not(.folder--click):hover .right {
+.folder:not(.folder--click):hover .right,
+.folder.is-hovered .right {
   transform: skew(-15deg) scaleY(0.6);
 }
 

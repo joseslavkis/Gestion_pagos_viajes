@@ -1,0 +1,149 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(135deg, #e8f4ff 0%, #dbeafe 50%, #ede9fe 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  z-index: 100;
+  animation: fadeIn 0.35s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.card {
+  background: #ffffff;
+  border-radius: 1.5rem;
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  box-shadow:
+    0 20px 60px rgba(15, 23, 42, 0.12),
+    0 0 0 1px rgba(148, 163, 184, 0.08);
+  padding: 2.5rem 2rem;
+  width: min(480px, 100%);
+  display: grid;
+  gap: 1.25rem;
+  text-align: center;
+  animation: slideUp 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(24px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ---- Animated SVG checkmark ---- */
+.iconWrap {
+  display: flex;
+  justify-content: center;
+}
+
+.checkIcon {
+  width: 72px;
+  height: 72px;
+}
+
+.checkCircle {
+  stroke: #22c55e;
+  stroke-width: 2;
+  stroke-dasharray: 166;
+  stroke-dashoffset: 166;
+  stroke-linecap: round;
+  animation: drawCircle 0.6s cubic-bezier(0.65, 0, 0.45, 1) 0.1s forwards;
+}
+
+@keyframes drawCircle {
+  to { stroke-dashoffset: 0; }
+}
+
+.checkMark {
+  stroke: #22c55e;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 48;
+  stroke-dashoffset: 48;
+  animation: drawCheck 0.4s cubic-bezier(0.65, 0, 0.45, 1) 0.65s forwards;
+}
+
+@keyframes drawCheck {
+  to { stroke-dashoffset: 0; }
+}
+
+/* ---- Text ---- */
+.title {
+  margin: 0;
+  font-size: clamp(1.4rem, 3vw, 1.75rem);
+  font-weight: 700;
+  color: #0d3657;
+}
+
+.subtitle {
+  margin: 0;
+  color: #526883;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+/* ---- Details grid ---- */
+.detailsGrid {
+  display: grid;
+  gap: 0;
+  border: 1px solid #e2eaf6;
+  border-radius: 0.85rem;
+  overflow: hidden;
+  text-align: left;
+}
+
+.detailRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid #f0f5ff;
+  flex-wrap: wrap;
+}
+
+.detailRow:last-child {
+  border-bottom: none;
+}
+
+.detailLabel {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #526883;
+  white-space: nowrap;
+}
+
+.detailValue {
+  font-size: 0.9rem;
+  color: #0f2f57;
+  font-weight: 500;
+  text-align: right;
+  word-break: break-word;
+}
+
+/* ---- Back button ---- */
+.backButton {
+  margin-top: 0.25rem;
+  align-self: center;
+  justify-self: center;
+  border: 1.5px solid #b5cde9;
+  background: transparent;
+  color: #0f4f8c;
+  border-radius: 0.65rem;
+  padding: 0.6rem 1.6rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.18s, border-color 0.18s;
+}
+
+.backButton:hover {
+  background: #eff6ff;
+  border-color: #0b77d5;
+}

@@ -179,10 +179,6 @@ public class InstallmentReminderScheduler {
     }
 
     private InstallmentReminderNotificationType classifyInstallment(Installment installment, LocalDate today) {
-        if (installment.getStatus() == InstallmentStatus.GREEN) {
-            return null;
-        }
-
         int yellowWarningDays = installment.getTrip().getYellowWarningDays() == null
                 ? 0
                 : installment.getTrip().getYellowWarningDays();
@@ -190,7 +186,9 @@ public class InstallmentReminderScheduler {
         InstallmentStatus effectiveStatus = installmentStatusResolver.computeEffective(
                 installment.getStatus(),
                 installment.getDueDate(),
-                yellowWarningDays
+                yellowWarningDays,
+                installment.getPaidAmount(),
+                installment.getTotalDue()
         );
         if (effectiveStatus == InstallmentStatus.RED
                 || effectiveStatus == InstallmentStatus.RETROACTIVE) {

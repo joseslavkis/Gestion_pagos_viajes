@@ -217,8 +217,12 @@ public class TripService {
         }
 
         List<String> requestedDnis = dto.studentDnis().stream()
-                .map(String::trim)
+                .map(StudentDniNormalizer::normalizeAndValidate)
                 .toList();
+
+        if (new LinkedHashSet<>(requestedDnis).size() != requestedDnis.size()) {
+            throw new IllegalStateException("Los DNIs no deben repetirse");
+        }
 
         Map<String, Student> studentsByDni = studentRepository.findByDniIn(requestedDnis).stream()
                 .collect(Collectors.toMap(Student::getDni, Function.identity()));
@@ -357,7 +361,7 @@ public class TripService {
         Trip trip = tripRepository.findByIdForUpdate(tripId)
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found"));
 
-        String normalizedDni = studentDni == null ? "" : studentDni.trim();
+        String normalizedDni = StudentDniNormalizer.normalizeAndValidate(studentDni);
         List<PendingTripStudent> pendingStudents = pendingTripStudentRepository.findByTripIdAndStudentDni(tripId, normalizedDni);
         List<Installment> installments = installmentRepository.findByTripIdAndStudentDni(tripId, normalizedDni);
 
@@ -597,7 +601,9 @@ public class TripService {
         InstallmentStatus effectiveStatus = computeEffectiveStatus(
                 installment.getStatus(),
                 installment.getDueDate(),
-                yellowWarningDays
+                yellowWarningDays,
+                installment.getPaidAmount(),
+                installment.getTotalDue()
         );
         InstallmentUiStatus uiStatus = installmentUiStatusResolver.resolve(
                 effectiveStatus,
@@ -627,9 +633,11 @@ public class TripService {
     private InstallmentStatus computeEffectiveStatus(
             InstallmentStatus storedStatus,
             LocalDate dueDate,
-            int yellowWarningDays
+            int yellowWarningDays,
+            BigDecimal paidAmount,
+            BigDecimal totalDue
     ) {
-        return installmentStatusResolver.computeEffective(storedStatus, dueDate, yellowWarningDays);
+        return installmentStatusResolver.computeEffective(storedStatus, dueDate, yellowWarningDays, paidAmount, totalDue);
     }
 
     private static String normalizeSortBy(String sortBy) {
@@ -648,6 +656,12 @@ public class TripService {
 
     private int getAssignedParticipantsCount(Long tripId) {
         return tripId == null ? 0 : Math.toIntExact(installmentRepository.countDistinctStudentsByTripId(tripId));
+    }
+
+    private boolean hasNoRemainingBalance(Installment installment) {
+        BigDecimal totalDue = installment.getTotalDue() == null ? BigDecimal.ZERO : installment.getTotalDue();
+        BigDecimal paidAmount = installment.getPaidAmount() == null ? BigDecimal.ZERO : installment.getPaidAmount();
+        return paidAmount.compareTo(totalDue) >= 0;
     }
 
     private static boolean rowMatchesSearch(SpreadsheetRowDTO row, String search) {
@@ -748,7 +762,7 @@ public class TripService {
                     Student student = firstInstallment.getStudent();
 
                     boolean userCompleted = participantInstallments.stream()
-                            .allMatch(i -> i.getStatus() == InstallmentStatus.GREEN);
+                            .allMatch(this::hasNoRemainingBalance);
 
                     List<SpreadsheetRowInstallmentDTO> rowInstallments = participantInstallments.stream()
                             .sorted(Comparator.comparing(Installment::getInstallmentNumber))

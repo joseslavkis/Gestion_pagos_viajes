@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   useInstallmentReceipts,
@@ -13,6 +13,7 @@ import type {
   SpreadsheetRowDTO,
   SpreadsheetRowInstallmentDTO,
 } from "@/features/trips/types/trips-dtos";
+import { createGsapMatchMedia, getMotionProfile, gsap, useGSAP } from "@/lib/gsap";
 
 import styles from "@/features/trips/pages/SpreadsheetPage.module.css";
 
@@ -30,7 +31,7 @@ const receiptStatusLabels: Record<string, string> = {
 const paymentMethodLabels: Record<string, string> = {
   BANK_TRANSFER: "Transferencia bancaria",
   CASH: "Efectivo",
-  CARD: "Tarjeta",
+  DEPOSIT: "Depósito",
   OTHER: "Otro",
 };
 
@@ -73,6 +74,54 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [voidError, setVoidError] = useState<string | null>(null);
   const titleId = `payment-drawer-title-${installment.id}`;
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+  const drawerRef = useRef<HTMLElement | null>(null);
+
+  useGSAP(
+    () => {
+      if (!overlayRef.current || !drawerRef.current) {
+        return;
+      }
+
+      const motion = getMotionProfile();
+      const mm = createGsapMatchMedia();
+
+      if (!mm) {
+        gsap.set([overlayRef.current, drawerRef.current], {
+          clearProps: "opacity,visibility,transform",
+        });
+        return;
+      }
+
+      mm.add("(prefers-reduced-motion: reduce)", () => {
+        gsap.set([overlayRef.current, drawerRef.current], {
+          clearProps: "opacity,visibility,transform",
+        });
+      });
+
+      mm.add("(prefers-reduced-motion: no-preference)", () => {
+        gsap.fromTo(
+          overlayRef.current,
+          { autoAlpha: 0 },
+          { autoAlpha: 1, duration: motion.durationFast, ease: "power1.out" },
+        );
+        gsap.fromTo(
+          drawerRef.current,
+          { x: motion.distanceMd * (motion.isCompact ? 1.6 : 2.1), autoAlpha: 0 },
+          {
+            x: 0,
+            autoAlpha: 1,
+            duration: motion.durationBase,
+            ease: "power2.out",
+            clearProps: "opacity,visibility,transform",
+          },
+        );
+      });
+
+      return () => mm.revert();
+    },
+    { scope: overlayRef },
+  );
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -139,6 +188,7 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
 
   return (
     <div
+      ref={overlayRef}
       className={styles.drawerOverlay}
       role="presentation"
       onClick={(event) => {
@@ -148,6 +198,7 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
       }}
     >
       <aside
+        ref={drawerRef}
         className={styles.drawer}
         role="dialog"
         aria-modal="true"

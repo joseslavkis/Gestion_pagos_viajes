@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { StatusResponseDTOSchema } from "@/lib/backend-dtos";
 import type { StatusResponseDTO } from "@/lib/backend-dtos";
+import { isCanonicalStudentDni, normalizeStudentDniInput } from "@/lib/dni";
 
 const MoneySchema = z.union([z.string(), z.number()])
   .transform((val) => {
@@ -123,7 +124,12 @@ export type TripUpdateDTO = z.infer<typeof TripUpdateDTOSchema>;
 
 export const UserAssignBulkDTOSchema = z.object({
   studentDnis: z
-    .array(z.string().regex(/^\d{7,8}$/, "DNI inválido"))
+    .array(
+      z
+        .string()
+        .transform(normalizeStudentDniInput)
+        .refine(isCanonicalStudentDni, "DNI inválido"),
+    )
     .min(1)
     .max(500)
     .refine((dnis) => new Set(dnis).size === dnis.length, {

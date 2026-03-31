@@ -14,6 +14,7 @@ import com.agencia.pagos.repositories.BankAccountRepository;
 import com.agencia.pagos.repositories.InstallmentReminderNotificationRepository;
 import com.agencia.pagos.repositories.InstallmentRepository;
 import com.agencia.pagos.repositories.PasswordResetTokenRepository;
+import com.agencia.pagos.repositories.PaymentBatchRepository;
 import com.agencia.pagos.repositories.PaymentReceiptRepository;
 import com.agencia.pagos.repositories.PendingTripStudentRepository;
 import com.agencia.pagos.repositories.RefreshTokenRepository;
@@ -70,6 +71,9 @@ abstract class ControllerIntegrationTestSupport {
     protected PaymentReceiptRepository paymentReceiptRepository;
 
     @Autowired
+    protected PaymentBatchRepository paymentBatchRepository;
+
+    @Autowired
     protected InstallmentReminderNotificationRepository installmentReminderNotificationRepository;
 
     @Autowired
@@ -94,6 +98,7 @@ abstract class ControllerIntegrationTestSupport {
     void cleanDatabase() {
         installmentReminderNotificationRepository.deleteAll();
         paymentReceiptRepository.deleteAll();
+        paymentBatchRepository.deleteAll();
         installmentRepository.deleteAll();
         pendingTripStudentRepository.deleteAll();
         bankAccountRepository.deleteAll();
@@ -177,7 +182,9 @@ abstract class ControllerIntegrationTestSupport {
     protected void purgeTripData(Long tripId) {
         transactionTemplate.executeWithoutResult(status -> {
             installmentReminderNotificationRepository.deleteByInstallmentTripId(tripId);
+            List<Long> batchIds = paymentReceiptRepository.findDistinctBatchIdsByInstallmentTripId(tripId);
             paymentReceiptRepository.deleteByInstallmentTripId(tripId);
+            paymentBatchRepository.deleteAllById(batchIds);
             installmentRepository.deleteByTripId(tripId);
             pendingTripStudentRepository.deleteByTripId(tripId);
             tripRepository.deleteById(tripId);

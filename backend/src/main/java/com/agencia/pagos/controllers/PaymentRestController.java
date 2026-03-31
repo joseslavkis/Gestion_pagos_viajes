@@ -1,8 +1,11 @@
 package com.agencia.pagos.controllers;
 
+import com.agencia.pagos.dtos.request.PaymentPreviewRequestDTO;
 import com.agencia.pagos.dtos.request.RegisterPaymentDTO;
 import com.agencia.pagos.dtos.request.ReviewPaymentDTO;
 import com.agencia.pagos.dtos.response.PendingPaymentReviewDTO;
+import com.agencia.pagos.dtos.response.PaymentBatchDTO;
+import com.agencia.pagos.dtos.response.PaymentBatchPreviewDTO;
 import com.agencia.pagos.dtos.response.PaymentReceiptDTO;
 import com.agencia.pagos.dtos.response.UserInstallmentDTO;
 import com.agencia.pagos.entities.Currency;
@@ -19,7 +22,6 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.bind.annotation.*;
 
-import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -34,23 +36,33 @@ class PaymentRestController {
         this.paymentService = paymentService;
     }
 
-        @PreAuthorize("hasAnyRole('USER','ADMIN')")
-        @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE,
+    @PreAuthorize("hasAnyRole('USER','ADMIN')")
+    @PostMapping(value = "/preview", consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE)
-        ResponseEntity<PaymentReceiptDTO> registerPaymentJson(
+    ResponseEntity<PaymentBatchPreviewDTO> previewPayment(
+            @Valid @RequestBody PaymentPreviewRequestDTO dto,
+            @AuthenticationPrincipal(expression = "username") String email
+    ) {
+        return ResponseEntity.ok(paymentService.previewPayment(dto, email));
+    }
+
+    @PreAuthorize("hasAnyRole('USER','ADMIN')")
+    @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    ResponseEntity<PaymentBatchDTO> registerPaymentJson(
             @Valid @RequestBody RegisterPaymentDTO dto,
             @AuthenticationPrincipal(expression = "username") String email
-        ) {
+    ) {
         return ResponseEntity.status(HttpStatus.CREATED)
-            .body(paymentService.registerPayment(dto, email));
-        }
+                .body(paymentService.registerPayment(dto, email));
+    }
 
-        @PreAuthorize("hasAnyRole('USER','ADMIN')")
-        @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE,
+    @PreAuthorize("hasAnyRole('USER','ADMIN')")
+    @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE)
-    ResponseEntity<PaymentReceiptDTO> registerPayment(
-            @RequestParam("installmentId") Long installmentId,
-            @RequestParam("reportedAmount") BigDecimal reportedAmount,
+    ResponseEntity<PaymentBatchDTO> registerPayment(
+            @RequestParam("anchorInstallmentId") Long anchorInstallmentId,
+            @RequestParam("installmentsCount") Integer installmentsCount,
             @RequestParam("reportedPaymentDate") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate reportedPaymentDate,
             @RequestParam("paymentCurrency") Currency paymentCurrency,
             @RequestParam("paymentMethod") PaymentMethod paymentMethod,
@@ -59,15 +71,15 @@ class PaymentRestController {
             @AuthenticationPrincipal(expression = "username") String email
     ) {
         return ResponseEntity.status(HttpStatus.CREATED)
-            .body(paymentService.registerPayment(
-                installmentId,
-                reportedAmount,
-                reportedPaymentDate,
-                paymentCurrency,
-                paymentMethod,
-                bankAccountId,
-                file,
-                email));
+                .body(paymentService.registerPayment(
+                        anchorInstallmentId,
+                        installmentsCount,
+                        reportedPaymentDate,
+                        paymentCurrency,
+                        paymentMethod,
+                        bankAccountId,
+                        file,
+                        email));
     }
 
     @PreAuthorize("hasRole('ADMIN')")

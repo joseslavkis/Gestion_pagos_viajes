@@ -1,4 +1,5 @@
 import { QueryClientProvider } from "@tanstack/react-query";
+import { Toaster } from "sonner";
 
 import { Navigation } from "@/Navigation";
 import { appQueryClient } from "@/config/app-query-client";
@@ -9,6 +10,7 @@ export function App() {
     <QueryClientProvider client={appQueryClient}>
       <TokenProvider>
         <Navigation />
+        <Toaster richColors position="bottom-right" />
       </TokenProvider>
     </QueryClientProvider>
   );

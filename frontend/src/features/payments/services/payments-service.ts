@@ -1,6 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type {
+  PaymentBatchDTO,
+  PaymentBatchPreviewDTO,
+  PaymentPreviewRequestDTO,
   PendingPaymentReviewDTO,
   PaymentReceiptDTO,
   RegisterPaymentFormData,
@@ -8,6 +11,8 @@ import type {
   UserInstallmentDTO,
 } from "@/features/payments/types/payments-dtos";
 import {
+  PaymentBatchDTOSchema,
+  PaymentBatchPreviewDTOSchema,
   PendingPaymentReviewDTOSchema,
   PaymentReceiptDTOSchema,
   UserInstallmentDTOSchema,
@@ -20,11 +25,11 @@ export function useRegisterPayment() {
   const [tokenState] = useToken();
   const queryClient = useQueryClient();
 
-  return useMutation<PaymentReceiptDTO, ApiError, RegisterPaymentFormData>({
+  return useMutation<PaymentBatchDTO, ApiError, RegisterPaymentFormData>({
     mutationFn: async (payload) => {
       const formData = new FormData();
-      formData.append("installmentId", String(payload.installmentId));
-      formData.append("reportedAmount", String(payload.reportedAmount));
+      formData.append("anchorInstallmentId", String(payload.anchorInstallmentId));
+      formData.append("installmentsCount", String(payload.installmentsCount));
       formData.append("reportedPaymentDate", payload.reportedPaymentDate);
       formData.append("paymentCurrency", payload.paymentCurrency);
       formData.append("paymentMethod", payload.paymentMethod);
@@ -46,19 +51,59 @@ export function useRegisterPayment() {
 
       if (response.ok) {
         const json: unknown = await response.json();
-        return PaymentReceiptDTOSchema.parse(json);
+        return PaymentBatchDTOSchema.parse(json);
       }
 
       return handleApiResponse(response);
     },
-    onSuccess: async (_data, variables) => {
+    onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["trips"] }),
-        queryClient.invalidateQueries({ queryKey: ["installments", variables.installmentId] }),
         queryClient.invalidateQueries({ queryKey: ["spreadsheet"] }),
         queryClient.invalidateQueries({ queryKey: ["payments", "my", "installments"] }),
+        queryClient.invalidateQueries({ queryKey: ["payments", "preview"] }),
         queryClient.invalidateQueries({ queryKey: ["payments", "pending-review"] }),
       ]);
+    },
+  });
+}
+
+export function usePaymentPreview(payload: PaymentPreviewRequestDTO | null) {
+  const [tokenState] = useToken();
+
+  return useQuery<PaymentBatchPreviewDTO, ApiError>({
+    queryKey: [
+      "payments",
+      "preview",
+      payload?.anchorInstallmentId ?? null,
+      payload?.installmentsCount ?? null,
+      payload?.reportedPaymentDate ?? null,
+      payload?.paymentCurrency ?? null,
+    ],
+    enabled:
+      payload != null &&
+      payload.anchorInstallmentId > 0 &&
+      payload.installmentsCount > 0 &&
+      payload.reportedPaymentDate.length > 0,
+    staleTime: 0,
+    queryFn: async () => {
+      if (payload == null) {
+        throw new Error("Payment preview requires a payload.");
+      }
+
+      return apiPost(
+        "/api/v1/payments/preview",
+        payload,
+        (json) => PaymentBatchPreviewDTOSchema.parse(json),
+        {
+          headers:
+            tokenState.state === "LOGGED_IN"
+              ? {
+                  Authorization: `Bearer ${tokenState.accessToken}`,
+                }
+              : undefined,
+        },
+      );
     },
   });
 }
@@ -89,6 +134,7 @@ export function useReviewPayment() {
         }),
         queryClient.invalidateQueries({ queryKey: ["payments", "pending-review"] }),
         queryClient.invalidateQueries({ queryKey: ["spreadsheet"] }),
+        queryClient.invalidateQueries({ queryKey: ["payments", "my", "installments"] }),
       ]);
     },
   });
@@ -114,7 +160,9 @@ export function useVoidPayment() {
         queryClient.invalidateQueries({
           queryKey: ["payments", "installment", variables.installmentId],
         }),
+        queryClient.invalidateQueries({ queryKey: ["payments", "pending-review"] }),
         queryClient.invalidateQueries({ queryKey: ["spreadsheet"] }),
+        queryClient.invalidateQueries({ queryKey: ["payments", "my", "installments"] }),
       ]);
     },
   });

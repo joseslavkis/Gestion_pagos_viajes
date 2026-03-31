@@ -171,7 +171,7 @@ export function useUnassignTripStudent() {
 
   return useMutation<StatusResponseDTO, ApiError, { tripId: number; studentDni: string }>({
     mutationFn: async ({ tripId, studentDni }) =>
-      apiDelete(`/api/v1/trips/${tripId}/students/${studentDni}`, (json) => StatusResponseDTOSchema.parse(json), {
+      apiDelete(`/api/v1/trips/${tripId}/students/${encodeURIComponent(studentDni)}`, (json) => StatusResponseDTOSchema.parse(json), {
         headers:
           tokenState.state === "LOGGED_IN"
             ? {

@@ -19,6 +19,8 @@ import {
   useTrips,
   useUnassignTripStudent,
 } from "@/features/trips/services/trips-service";
+import { isCanonicalStudentDni, normalizeStudentDniInput } from "@/lib/dni";
+import { createGsapMatchMedia, getMotionProfile, gsap, useGSAP } from "@/lib/gsap";
 
 import styles from "./TripsAdminPage.module.css";
 
@@ -43,6 +45,7 @@ export function TripsAdminPage() {
   const { data, isLoading, error, refetch } = useTrips();
   const [modalState, setModalState] = useState<ModalState>({ type: "none" });
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const sectionRef = useRef<HTMLElement | null>(null);
 
   const openCreate = () => setModalState({ type: "create" });
   const closeModal = () => setModalState({ type: "none" });
@@ -91,9 +94,96 @@ export function TripsAdminPage() {
     );
   };
 
+  useGSAP(
+    () => {
+      if (!sectionRef.current) {
+        return;
+      }
+
+      const section = sectionRef.current;
+      const motion = getMotionProfile();
+
+      const mm = createGsapMatchMedia();
+
+      if (!mm) {
+        gsap.set(
+          [
+            section.querySelector(`.${styles.header}`),
+            ...Array.from(section.querySelectorAll(`.${styles.card}`)),
+            section.querySelector(`.${styles.successBanner}`),
+          ],
+          { clearProps: "opacity,visibility,transform" },
+        );
+        return;
+      }
+
+      mm.add("(prefers-reduced-motion: reduce)", () => {
+        gsap.set(
+          [
+            section.querySelector(`.${styles.header}`),
+            ...Array.from(section.querySelectorAll(`.${styles.card}`)),
+            section.querySelector(`.${styles.successBanner}`),
+          ],
+          { clearProps: "opacity,visibility,transform" },
+        );
+      });
+
+      mm.add("(prefers-reduced-motion: no-preference)", () => {
+        const header = section.querySelector(`.${styles.header}`);
+        const successBanner = section.querySelector(`.${styles.successBanner}`);
+        const cards = section.querySelectorAll(`.${styles.card}`);
+
+        if (header) {
+          gsap.fromTo(
+            header,
+            { autoAlpha: 0, y: motion.distanceSm },
+            { autoAlpha: 1, y: 0, duration: motion.durationBase, ease: "power2.out" },
+          );
+        }
+
+        if (successBanner) {
+          gsap.fromTo(
+            successBanner,
+            { autoAlpha: 0, y: -motion.distanceSm },
+            {
+              autoAlpha: 1,
+              y: 0,
+              duration: motion.durationFast,
+              ease: "power2.out",
+              delay: motion.durationFast / 2,
+            },
+          );
+        }
+
+        if (cards && cards.length > 0) {
+          gsap.fromTo(
+            cards,
+            { autoAlpha: 0, y: motion.distanceMd },
+            {
+              autoAlpha: 1,
+              y: 0,
+              duration: motion.durationBase,
+              stagger: motion.staggerBase,
+              ease: "power2.out",
+              delay: motion.durationFast / 2,
+              clearProps: "opacity,visibility,transform",
+            },
+          );
+        }
+      });
+
+      return () => mm.revert();
+    },
+    {
+      dependencies: [isLoading, trips.length, successMessage],
+      scope: sectionRef,
+      revertOnUpdate: true,
+    },
+  );
+
   return (
     <CommonLayout>
-      <section className={styles.page}>
+      <section ref={sectionRef} className={styles.page}>
         <header className={styles.header}>
           <div className={styles.titleRow}>
             <div className={styles.titleBlock}>
@@ -270,7 +360,7 @@ function TripCard({ trip, onAssign, onManageStudents, onDelete }: TripCardProps)
           onClick={() => onManageStudents(trip)}
           aria-label={`Ver chicos del viaje ${trip.name}`}
         >
-          🧾 Ver chicos
+          🧾 Ver alumnos
         </button>
         <TooltipWrapper
           disabled={trip.assignedParticipantsCount > 0}
@@ -319,6 +409,53 @@ type ModalProps = {
 function ModalShell({ title, description, onClose, children }: ModalProps) {
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
+
+  useGSAP(
+    () => {
+      if (!overlayRef.current || !dialogRef.current) {
+        return;
+      }
+
+      const motion = getMotionProfile();
+      const mm = createGsapMatchMedia();
+
+      if (!mm) {
+        gsap.set([overlayRef.current, dialogRef.current], {
+          clearProps: "opacity,visibility,transform",
+        });
+        return;
+      }
+
+      mm.add("(prefers-reduced-motion: reduce)", () => {
+        gsap.set([overlayRef.current, dialogRef.current], {
+          clearProps: "opacity,visibility,transform",
+        });
+      });
+
+      mm.add("(prefers-reduced-motion: no-preference)", () => {
+        gsap.fromTo(
+          overlayRef.current,
+          { autoAlpha: 0 },
+          { autoAlpha: 1, duration: motion.durationFast, ease: "power1.out" },
+        );
+        gsap.fromTo(
+          dialogRef.current,
+          { autoAlpha: 0, y: motion.distanceMd, scale: motion.isCompact ? 0.992 : 0.985 },
+          {
+            autoAlpha: 1,
+            y: 0,
+            scale: 1,
+            duration: motion.durationBase,
+            ease: "power2.out",
+            clearProps: "opacity,visibility,transform",
+          },
+        );
+      });
+
+      return () => mm.revert();
+    },
+    { scope: overlayRef },
+  );
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -404,7 +541,7 @@ type TripModalCreateProps = {
 };
 
 function TripModalCreate({ onClose }: TripModalCreateProps) {
-  const { mutateAsync, error, isPending } = useCreateTrip();
+  const { mutateAsync, isPending } = useCreateTrip();
   const createDefaults: TripCreateDTO = {
     name: "",
     totalAmount: 0,
@@ -434,7 +571,7 @@ function TripModalCreate({ onClose }: TripModalCreateProps) {
       description="Define el monto total, cuotas y parámetros de vencimiento. Podrás asignar usuarios luego."
       onClose={onClose}
     >
-      <RequestState isLoading={isPending} error={error ?? null} loadingLabel="Creando viaje...">
+      <RequestState isLoading={isPending} loadingLabel="Creando viaje...">
         <formData.AppForm>
           <formData.FormContainer submitLabel="Crear viaje" pendingLabel="Creando viaje..." isPending={isPending}>
             <div className={styles.fieldGroup}>
@@ -569,13 +706,7 @@ function TripModalCreate({ onClose }: TripModalCreateProps) {
                 )}
               />
 
-              {error?.fieldErrors?.length ? (
-                <ul className={styles.fieldErrorList}>
-                  {error.fieldErrors.map((message) => (
-                    <li key={message}>{message}</li>
-                  ))}
-                </ul>
-              ) : null}
+              {/* Mutation errors handled by global MutationCache toast */}
             </div>
           </formData.FormContainer>
         </formData.AppForm>
@@ -592,15 +723,16 @@ type AssignUsersModalProps = {
 };
 
 function AssignUsersModal({ tripId, tripName, onSuccess, onClose }: AssignUsersModalProps) {
-  const { mutateAsync, error, isPending, data } = useAssignUsersBulk();
+  const { mutateAsync, isPending, data } = useAssignUsersBulk();
   const [rawInput, setRawInput] = useState("");
 
   const parsedDnis = useMemo(() => {
-    const parts = rawInput
-      .split(/[\s,]+/)
-      .map((part) => part.trim())
-      .filter((part) => part.length > 0);
-    return parts.filter((part) => /^\d{7,8}$/.test(part)).slice(0, 500);
+    const matches = rawInput.match(/(?<!\d)(?:\d[.\-\s]?){7,8}(?!\d)/g) ?? [];
+
+    return matches
+      .map((match) => normalizeStudentDniInput(match))
+      .filter((dni) => isCanonicalStudentDni(dni))
+      .slice(0, 500);
   }, [rawInput]);
 
   const parsedDtoState = useMemo(() => {
@@ -655,7 +787,6 @@ function AssignUsersModal({ tripId, tripName, onSuccess, onClose }: AssignUsersM
     >
       <RequestState
         isLoading={isPending}
-        error={error ?? null}
         loadingLabel="Asignando alumnos al viaje..."
       >
         <>
@@ -668,7 +799,7 @@ function AssignUsersModal({ tripId, tripName, onSuccess, onClose }: AssignUsersM
               placeholder="Ej: 45678901, 45678902 o uno por línea"
             />
             <p className={styles.idsHelper}>
-              Ingresá los DNIs de los alumnos. Solo números de 7-8 dígitos. Los DNIs sin padre asociado quedarán pendientes.
+              Ingresá los DNIs de los alumnos. Acepta puntos, guiones y espacios; se envían sin formato. Los DNIs sin padre asociado quedarán pendientes.
             </p>
             <p className={styles.idsPreview}>
               DNIs válidos detectados: {parsedDnis.length}
@@ -849,7 +980,7 @@ type DeleteTripModalProps = {
 };
 
 function DeleteTripModal({ trip, onClose }: DeleteTripModalProps) {
-  const { mutateAsync, error, isPending } = useDeleteTrip();
+  const { mutateAsync, isPending } = useDeleteTrip();
 
   const handleConfirm = async () => {
     await mutateAsync({ id: trip.id });
@@ -864,7 +995,6 @@ function DeleteTripModal({ trip, onClose }: DeleteTripModalProps) {
     >
       <RequestState
         isLoading={isPending}
-        error={error ?? null}
         loadingLabel="Eliminando viaje..."
       >
         {trip.assignedParticipantsCount > 0 ? (

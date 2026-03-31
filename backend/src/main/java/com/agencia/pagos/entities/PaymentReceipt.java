@@ -28,6 +28,10 @@ public class PaymentReceipt {
     private Installment installment; // La cuota a la que pertenece este pago
 
     @ManyToOne
+    @JoinColumn(name = "batch_id")
+    private PaymentBatch batch;
+
+    @ManyToOne
     @JoinColumn(name = "bank_account_id")
     private BankAccount bankAccount;
 
@@ -69,6 +73,9 @@ public class PaymentReceipt {
         }
         if (amountInTripCurrency == null) {
             amountInTripCurrency = reportedAmount;
+        }
+        if (fileKey == null) {
+            fileKey = "";
         }
     }
 }

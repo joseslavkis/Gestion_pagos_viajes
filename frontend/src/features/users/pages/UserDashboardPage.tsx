@@ -1,28 +1,22 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 
 import { useQueryClient } from "@tanstack/react-query";
 
 import { CommonLayout } from "@/components/CommonLayout/CommonLayout";
 import { useBankAccounts } from "@/features/bank-accounts/services/bank-accounts-service";
 import type { BankAccountDTO } from "@/features/bank-accounts/types/bank-accounts-dtos";
-import type { StudentCreateDTO } from "@/features/auth/types/auth-dtos";
-import { StudentCreateSchema } from "@/features/auth/types/auth-dtos";
 import { Folder } from "@/features/payments/components/Folder";
 import {
   useMyInstallments,
+  usePaymentPreview,
   useRegisterPayment,
 } from "@/features/payments/services/payments-service";
 import type {
   PaymentMethod,
   UserInstallmentDTO,
 } from "@/features/payments/types/payments-dtos";
-import { useSchools } from "@/features/schools/services/schools-service";
-import type { SchoolDTO } from "@/features/schools/types/schools-dtos";
-import {
-  useAddStudent,
-  useDeleteStudent,
-  useStudents,
-} from "@/features/users/services/users-service";
+import { type ReceiptSuccessData, ReceiptSuccessScreen } from "@/features/payments/components/ReceiptSuccessScreen";
 
 import styles from "./UserDashboardPage.module.css";
 
@@ -42,20 +36,6 @@ const dateFormatter = new Intl.DateTimeFormat("es-AR", {
   year: "numeric",
 });
 
-const studentCardStyle: CSSProperties = {
-  border: "1px solid #dbe5f0",
-  borderRadius: 16,
-  padding: "1rem",
-  background: "#fff",
-  display: "grid",
-  gap: "0.45rem",
-};
-
-const studentActionsStyle: CSSProperties = {
-  display: "flex",
-  gap: 8,
-  flexWrap: "wrap",
-};
 
 type InstallmentGroup = {
   groupKey: string;
@@ -123,6 +103,10 @@ function buildInstallmentGroups(installments: UserInstallmentDTO[]): Installment
 }
 
 function getGroupBadgeColor(group: InstallmentGroup): "green" | "yellow" | "red" {
+  if (groupHasPendingReview(group)) {
+    return "yellow";
+  }
+
   const colors = group.installments.map((installment) => installment.uiStatusTone);
   if (colors.includes("red")) {
     return "red";
@@ -135,34 +119,30 @@ function getGroupBadgeColor(group: InstallmentGroup): "green" | "yellow" | "red"
   return "green";
 }
 
+function isInstallmentCovered(installment: Pick<UserInstallmentDTO, "totalDue" | "paidAmount">): boolean {
+  return getInstallmentRemainingAmount(installment) <= 0;
+}
+
+function getPayableInstallments(group: InstallmentGroup): UserInstallmentDTO[] {
+  return [...group.installments]
+    .filter((installment) => !isInstallmentCovered(installment))
+    .sort((a, b) => a.installmentNumber - b.installmentNumber);
+}
+
+function groupHasPendingReview(group: InstallmentGroup): boolean {
+  return group.installments.some((installment) => installment.latestReceiptStatus === "PENDING");
+}
+
 function findNextDueDate(group: InstallmentGroup): string | null {
-  const pending = group.installments.filter(
-    (installment) =>
-      installment.uiStatusCode !== "PAID" &&
-      !(installment.uiStatusCode === "UP_TO_DATE" && installment.paidAmount >= installment.totalDue),
-  );
+  const pending = getPayableInstallments(group);
   if (pending.length === 0) {
     return group.installments[group.installments.length - 1]?.dueDate ?? null;
   }
-  return [...pending].sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0]?.dueDate ?? null;
+  return pending[0]?.dueDate ?? null;
 }
 
 function findPendingInstallment(group: InstallmentGroup): UserInstallmentDTO | null {
-  const pending = group.installments
-    .filter(
-      (installment) =>
-        installment.uiStatusCode !== "PAID" &&
-        installment.uiStatusCode !== "UNDER_REVIEW",
-    )
-    .sort((a, b) => {
-      if (a.dueDate === b.dueDate) {
-        return a.installmentNumber - b.installmentNumber;
-      }
-
-      return a.dueDate.localeCompare(b.dueDate);
-    });
-
-  return pending[0] ?? null;
+  return getPayableInstallments(group)[0] ?? null;
 }
 
 function roundMoney(value: number): number {
@@ -177,6 +157,20 @@ function formatInstallmentAmount(installment: Pick<UserInstallmentDTO, "tripCurr
   return installment.tripCurrency === "USD" ? usdFormatter.format(amount) : currencyFormatter.format(amount);
 }
 
+function formatAmountByCurrency(currency: "ARS" | "USD", amount: number): string {
+  return currency === "USD" ? usdFormatter.format(amount) : currencyFormatter.format(amount);
+}
+
+function formatInstallmentsLabel(installments: Array<{ installmentNumber: number }>): string {
+  if (installments.length === 0) {
+    return "";
+  }
+  if (installments.length === 1) {
+    return `#${installments[0].installmentNumber}`;
+  }
+  return installments.map((installment) => `#${installment.installmentNumber}`).join(", ");
+}
+
 function formatBankAccountTitle(account: BankAccountDTO): string {
   return `${account.bankName} - ${account.accountLabel}`;
 }
@@ -185,47 +179,21 @@ function getGroupDisplayName(group: InstallmentGroup, index: number): string {
   return group.studentName ? `Viaje ${index + 1} - ${group.studentName}` : `Viaje ${index + 1}`;
 }
 
-function hasSelectedSchool(schools: SchoolDTO[], schoolName: string | undefined) {
-  if (!schoolName) {
-    return false;
-  }
-
-  return schools.some((school) => school.name === schoolName);
-}
-
-const emptyStudent = (): StudentCreateDTO => ({
-  name: "",
-  dni: "",
-  schoolName: "",
-  courseName: "",
-});
 
 export function UserDashboardPage() {
   const queryClient = useQueryClient();
   const registerPayment = useRegisterPayment();
-  const addStudent = useAddStudent();
-  const deleteStudent = useDeleteStudent();
   const { data: installments, isLoading, error } = useMyInstallments();
   const {
     data: bankAccounts,
     isLoading: isBankAccountsLoading,
     error: bankAccountsError,
   } = useBankAccounts();
-  const {
-    data: students,
-    isLoading: isStudentsLoading,
-    error: studentsError,
-  } = useStudents();
-  const {
-    data: schools,
-    isLoading: isSchoolsLoading,
-    error: schoolsError,
-  } = useSchools();
 
   const [expandedGroupKeys, setExpandedGroupKeys] = useState<string[]>([]);
   const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null);
-  const [selectedInstallmentId, setSelectedInstallmentId] = useState<number | null>(null);
-  const [reportedAmount, setReportedAmount] = useState("");
+  const [selectedAnchorInstallmentId, setSelectedAnchorInstallmentId] = useState<number | null>(null);
+  const [selectedInstallmentsCount, setSelectedInstallmentsCount] = useState(1);
   const [reportedPaymentDate, setReportedPaymentDate] = useState(getTodayDate);
   const [paymentCurrency, setPaymentCurrency] = useState<"ARS" | "USD">("ARS");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("BANK_TRANSFER");
@@ -233,37 +201,9 @@ export function UserDashboardPage() {
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [receiptPreviewUrl, setReceiptPreviewUrl] = useState<string | null>(null);
   const [closeFolderSignal, setCloseFolderSignal] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [newStudent, setNewStudent] = useState<StudentCreateDTO>(emptyStudent());
-  const [studentFormError, setStudentFormError] = useState<string | null>(null);
-  const [studentSuccessMessage, setStudentSuccessMessage] = useState<string | null>(null);
-  const [deletingStudentId, setDeletingStudentId] = useState<number | null>(null);
+  const [isDropzoneHovered, setIsDropzoneHovered] = useState(false);
+  const [receiptSuccessData, setReceiptSuccessData] = useState<ReceiptSuccessData | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    if (!successMessage) {
-      return;
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      setSuccessMessage(null);
-    }, 4000);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [successMessage]);
-
-  useEffect(() => {
-    if (!studentSuccessMessage) {
-      return;
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      setStudentSuccessMessage(null);
-    }, 4000);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [studentSuccessMessage]);
 
   useEffect(() => {
     return () => {
@@ -275,13 +215,7 @@ export function UserDashboardPage() {
 
   const installmentItems = useMemo(() => installments ?? [], [installments]);
   const bankAccountItems = useMemo(() => bankAccounts ?? [], [bankAccounts]);
-  const studentItems = useMemo(() => students ?? [], [students]);
-  const schoolItems = useMemo(() => schools ?? [], [schools]);
   const groups = useMemo(() => buildInstallmentGroups(installmentItems), [installmentItems]);
-  const completedGroups = useMemo(
-    () => groups.filter((group) => group.installments.every((installment) => installment.userCompletedTrip)),
-    [groups],
-  );
   const allInstallments = useMemo(() => groups.flatMap((group) => group.installments), [groups]);
 
   const selectedGroup = selectedGroupKey != null
@@ -290,17 +224,31 @@ export function UserDashboardPage() {
 
   const selectedInstallment = useMemo(
     () =>
-      selectedInstallmentId != null
-        ? allInstallments.find((installment) => installment.installmentId === selectedInstallmentId) ?? null
+      selectedAnchorInstallmentId != null
+        ? allInstallments.find((installment) => installment.installmentId === selectedAnchorInstallmentId) ?? null
         : null,
-    [selectedInstallmentId, allInstallments],
+    [selectedAnchorInstallmentId, allInstallments],
   );
 
   const selectedInstallmentDisplay = selectedInstallment ? resolveInstallmentDisplay(selectedInstallment) : null;
   const selectedInstallmentRemaining = selectedInstallment ? getInstallmentRemainingAmount(selectedInstallment) : 0;
+  const selectedGroupHasPendingReview = selectedGroup != null ? groupHasPendingReview(selectedGroup) : false;
+  const selectableInstallments = selectedGroup != null ? getPayableInstallments(selectedGroup) : [];
+  const selectedTripHasPending = selectableInstallments.length > 0;
 
-  const selectedTripHasPending =
-    selectedGroup != null ? findPendingInstallment(selectedGroup) != null : false;
+  const previewPayload = selectedAnchorInstallmentId != null && !selectedGroupHasPendingReview
+    ? {
+        anchorInstallmentId: selectedAnchorInstallmentId,
+        installmentsCount: selectedInstallmentsCount,
+        reportedPaymentDate,
+        paymentCurrency,
+      }
+    : null;
+  const {
+    data: paymentPreview,
+    isLoading: isPaymentPreviewLoading,
+    error: paymentPreviewError,
+  } = usePaymentPreview(previewPayload);
 
   const availableBankAccounts = useMemo(
     () => bankAccountItems.filter((account) => account.currency === paymentCurrency),
@@ -317,10 +265,14 @@ export function UserDashboardPage() {
 
   const canSubmitPayment =
     selectedTripHasPending &&
+    !selectedGroupHasPendingReview &&
     !registerPayment.isPending &&
+    !isPaymentPreviewLoading &&
+    paymentPreview != null &&
     !isBankAccountsLoading &&
     availableBankAccounts.length > 0 &&
-    selectedBankAccountId != null;
+    selectedBankAccountId != null &&
+    receiptFile != null;
 
   useEffect(() => {
     if (groups.length === 0) {
@@ -364,28 +316,41 @@ export function UserDashboardPage() {
 
   useEffect(() => {
     if (selectedGroupKey == null) {
-      setSelectedInstallmentId(null);
-      setReportedAmount("");
+      setSelectedAnchorInstallmentId(null);
+      setSelectedInstallmentsCount(1);
       return;
     }
 
     const group = groups.find((item) => item.groupKey === selectedGroupKey) ?? null;
     if (!group) {
-      setSelectedInstallmentId(null);
-      setReportedAmount("");
+      setSelectedAnchorInstallmentId(null);
+      setSelectedInstallmentsCount(1);
       return;
     }
 
     const pendingInstallment = findPendingInstallment(group);
     if (!pendingInstallment) {
-      setSelectedInstallmentId(null);
-      setReportedAmount("");
+      setSelectedAnchorInstallmentId(null);
+      setSelectedInstallmentsCount(1);
       return;
     }
 
-    setSelectedInstallmentId(pendingInstallment.installmentId);
-    setReportedAmount(getInstallmentRemainingAmount(pendingInstallment).toFixed(2));
+    setSelectedAnchorInstallmentId(pendingInstallment.installmentId);
+    setSelectedInstallmentsCount(1);
   }, [selectedGroupKey, groups]);
+
+  useEffect(() => {
+    if (selectableInstallments.length === 0) {
+      if (selectedInstallmentsCount !== 1) {
+        setSelectedInstallmentsCount(1);
+      }
+      return;
+    }
+
+    if (selectedInstallmentsCount > selectableInstallments.length) {
+      setSelectedInstallmentsCount(selectableInstallments.length);
+    }
+  }, [selectableInstallments, selectedInstallmentsCount]);
 
   const toggleGroup = (groupKey: string) => {
     setExpandedGroupKeys((current) => {
@@ -410,29 +375,49 @@ export function UserDashboardPage() {
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setSubmitError(null);
-    setSuccessMessage(null);
 
-    if (selectedInstallmentId == null) {
-      setSubmitError("Seleccioná una inscripción con cuotas pendientes antes de enviar el comprobante.");
+    if (selectedAnchorInstallmentId == null) {
+      toast.error("Seleccioná una inscripción con cuotas pendientes antes de enviar el comprobante.");
+      return;
+    }
+
+    if (selectedGroupHasPendingReview) {
+      toast.error("Esta inscripción tiene comprobantes pendientes de revisión y no admite nuevos pagos.");
       return;
     }
 
     if (selectedBankAccountId == null) {
-      setSubmitError("Selecciona la cuenta donde acreditaste el pago.");
+      toast.error("Selecciona la cuenta donde acreditaste el pago.");
       return;
     }
 
-    const parsedAmount = Number(reportedAmount);
-    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
-      setSubmitError("Ingresá un monto válido mayor a 0.");
+    if (!receiptFile) {
+      toast.error("Debés adjuntar el comprobante de pago antes de enviar.");
       return;
     }
+
+    if (!paymentPreview) {
+      toast.error("Todavía no pudimos calcular el total exacto del pago. Reintentá en unos segundos.");
+      return;
+    }
+
+    // Capture display data before resetting state
+    const groupIndex = groups.findIndex((g) => g.groupKey === selectedGroupKey);
+    const tripDisplayName = selectedGroup ? getGroupDisplayName(selectedGroup, groupIndex) : "";
+    const installmentsLabelSnapshot = formatInstallmentsLabel(paymentPreview.installments);
+    const amountSnapshot = formatAmountByCurrency(paymentPreview.paymentCurrency, paymentPreview.totalReportedAmount);
+    const dateSnapshot = formatReportedDate(reportedPaymentDate);
+    const methodSnapshot = paymentMethod;
+    const bankSnapshot =
+      availableBankAccounts.find((a) => a.id === selectedBankAccountId)?.accountLabel ??
+      availableBankAccounts.find((a) => a.id === selectedBankAccountId)?.bankName ??
+      "";
+    const fileNameSnapshot = receiptFile.name;
 
     try {
       await registerPayment.mutateAsync({
-        installmentId: selectedInstallmentId,
-        reportedAmount: parsedAmount,
+        anchorInstallmentId: selectedAnchorInstallmentId,
+        installmentsCount: selectedInstallmentsCount,
         reportedPaymentDate,
         paymentCurrency,
         paymentMethod,
@@ -440,8 +425,8 @@ export function UserDashboardPage() {
         file: receiptFile,
       });
 
-      setSelectedInstallmentId(null);
-      setReportedAmount("");
+      setSelectedAnchorInstallmentId(null);
+      setSelectedInstallmentsCount(1);
       setReportedPaymentDate(getTodayDate());
       setPaymentCurrency("ARS");
       setPaymentMethod("BANK_TRANSFER");
@@ -450,67 +435,32 @@ export function UserDashboardPage() {
       if (receiptPreviewUrl) URL.revokeObjectURL(receiptPreviewUrl);
       setReceiptPreviewUrl(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
-      setSuccessMessage("Comprobante enviado. El administrador lo revisará pronto.");
+
+      setReceiptSuccessData({
+        tripDisplayName,
+        installmentsLabel: installmentsLabelSnapshot,
+        amount: amountSnapshot,
+        paymentDate: dateSnapshot,
+        paymentMethod: methodSnapshot,
+        bankAccountName: bankSnapshot,
+        fileName: fileNameSnapshot,
+      });
 
       await queryClient.invalidateQueries({ queryKey: ["payments", "my"] });
       await queryClient.invalidateQueries({ queryKey: ["payments", "my", "installments"] });
-    } catch (currentError) {
-      setSubmitError(
-        currentError instanceof Error
-          ? currentError.message
-          : "No se pudo enviar el comprobante. Intentá nuevamente.",
-      );
-    }
-  };
-
-  const handleAddStudent = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setStudentFormError(null);
-    setStudentSuccessMessage(null);
-
-    const parsed = StudentCreateSchema.safeParse(newStudent);
-    if (!parsed.success) {
-      setStudentFormError(parsed.error.issues[0]?.message ?? "Revisá los datos del alumno.");
-      return;
-    }
-
-    if (!hasSelectedSchool(schoolItems, parsed.data.schoolName)) {
-      setStudentFormError("Seleccioná un colegio cargado por administración.");
-      return;
-    }
-
-    try {
-      const createdStudent = await addStudent.mutateAsync(parsed.data);
-      setNewStudent(emptyStudent());
-      setStudentSuccessMessage(`El alumno ${createdStudent.name} se agrego con exito.`);
-    } catch (currentError) {
-      setStudentFormError(
-        currentError instanceof Error
-          ? currentError.message
-          : "No se pudo agregar el alumno.",
-      );
-    }
-  };
-
-  const handleDeleteStudent = async (studentId: number) => {
-    setStudentFormError(null);
-    setStudentSuccessMessage(null);
-
-    try {
-      await deleteStudent.mutateAsync(studentId);
-      setDeletingStudentId(null);
-      setStudentSuccessMessage("Alumno eliminado correctamente.");
-    } catch (currentError) {
-      setStudentFormError(
-        currentError instanceof Error
-          ? currentError.message
-          : "No se pudo eliminar el alumno.",
-      );
+    } catch {
+      // API errors are handled by global MutationCache
     }
   };
 
   return (
     <CommonLayout>
+      {receiptSuccessData ? (
+        <ReceiptSuccessScreen
+          data={receiptSuccessData}
+          onBack={() => setReceiptSuccessData(null)}
+        />
+      ) : null}
       <section className={styles.page}>
         <div className={styles.container}>
           <h1 className={styles.title}>Panel de pagos</h1>
@@ -612,143 +562,6 @@ export function UserDashboardPage() {
           </section>
 
           <section className={styles.section}>
-            <h2 className={styles.sectionTitle}>Historial de viajes</h2>
-            {completedGroups.length === 0 ? (
-              <p className={styles.helperText}>Todavía no tenés viajes completados.</p>
-            ) : (
-              <div className={styles.historyList}>
-                {completedGroups.map((group, index) => (
-                  <div key={group.groupKey} className={styles.historyItem}>
-                    <span className={styles.historyTripName}>{getGroupDisplayName(group, index)}</span>
-                    <span className={styles.historyBadge}>✓ Pagado</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-
-          <section className={styles.section}>
-            <h2 className={styles.sectionTitle}>Mis hijos</h2>
-            <p className={styles.helperText}>Podés reclamar hijos solo si la agencia precargó su DNI en algún viaje.</p>
-
-            {isStudentsLoading ? <p className={styles.helperText}>Cargando alumnos...</p> : null}
-            {studentsError ? <p className={styles.errorText}>{studentsError.message}</p> : null}
-            {isSchoolsLoading ? <p className={styles.helperText}>Cargando colegios disponibles...</p> : null}
-            {schoolsError ? <p className={styles.errorText}>{schoolsError.message}</p> : null}
-
-            {!isStudentsLoading && !studentsError && studentItems.length === 0 ? (
-              <p className={styles.helperText}>Todavía no reclamaste hijos en tu cuenta.</p>
-            ) : null}
-
-            <div style={{ display: "grid", gap: "0.85rem", marginBottom: "1rem" }}>
-              {studentItems.map((student) => (
-                <div key={student.id} style={studentCardStyle}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                    <strong>{student.name}</strong>
-                    {deletingStudentId === student.id ? (
-                      <div style={studentActionsStyle}>
-                        <button
-                          type="button"
-                          className={styles.submitButton}
-                          onClick={() => handleDeleteStudent(student.id)}
-                          disabled={deleteStudent.isPending}
-                        >
-                          Confirmar
-                        </button>
-                        <button
-                          type="button"
-                          className={styles.select}
-                          onClick={() => setDeletingStudentId(null)}
-                          disabled={deleteStudent.isPending}
-                        >
-                          Cancelar
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        className={styles.select}
-                        onClick={() => setDeletingStudentId(student.id)}
-                        disabled={deleteStudent.isPending}
-                      >
-                        ✕
-                      </button>
-                    )}
-                  </div>
-                  <div>DNI: <strong>{student.dni}</strong></div>
-                  {student.schoolName ? <div>Colegio: <strong>{student.schoolName}</strong></div> : null}
-                  {student.courseName ? <div>Curso: <strong>{student.courseName}</strong></div> : null}
-                  {deletingStudentId === student.id ? (
-                    <p className={styles.helperWarning}>
-                      ¿Eliminar a {student.name}? Esta acción no se puede deshacer si no tiene cuotas.
-                    </p>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-
-            <form className={styles.form} onSubmit={handleAddStudent}>
-              <label className={styles.formField}>
-                <span className={styles.label}>Nombre completo</span>
-                <input
-                  className={styles.input}
-                  value={newStudent.name}
-                  onChange={(event) => setNewStudent((current) => ({ ...current, name: event.target.value }))}
-                />
-              </label>
-              <label className={styles.formField}>
-                <span className={styles.label}>DNI</span>
-                <input
-                  className={styles.input}
-                  value={newStudent.dni}
-                  onChange={(event) => setNewStudent((current) => ({ ...current, dni: event.target.value }))}
-                />
-              </label>
-              <label className={styles.formField}>
-                <span className={styles.label}>Colegio</span>
-                <div className={styles.schoolSelectWrap}>
-                  <select
-                    className={styles.schoolSelect}
-                    value={newStudent.schoolName ?? ""}
-                    onChange={(event) => setNewStudent((current) => ({ ...current, schoolName: event.target.value }))}
-                    disabled={isSchoolsLoading || schoolItems.length === 0}
-                  >
-                    <option value="">
-                      {schoolItems.length === 0 ? "No hay colegios cargados" : "Seleccioná un colegio"}
-                    </option>
-                    {schoolItems.map((school) => (
-                      <option key={school.id} value={school.name}>
-                        {school.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </label>
-              {!isSchoolsLoading && !schoolsError && schoolItems.length === 0 ? (
-                <p className={styles.helperWarning}>
-                  Aún no hay colegios cargados por administración para seleccionar.
-                </p>
-              ) : null}
-              <label className={styles.formField}>
-                <span className={styles.label}>Curso</span>
-                <input
-                  className={styles.input}
-                  value={newStudent.courseName ?? ""}
-                  onChange={(event) => setNewStudent((current) => ({ ...current, courseName: event.target.value }))}
-                />
-              </label>
-
-              <button type="submit" className={styles.submitButton} disabled={addStudent.isPending}>
-                {addStudent.isPending ? "Agregando..." : "Agregar hijo"}
-              </button>
-              <p className={styles.helperText}>Solo se aceptan DNIs que administración haya cargado previamente.</p>
-
-              {studentFormError ? <p className={styles.errorText}>{studentFormError}</p> : null}
-              {studentSuccessMessage ? <p className={styles.successText}>{studentSuccessMessage}</p> : null}
-            </form>
-          </section>
-
-          <section className={styles.section}>
             <h2 className={styles.sectionTitle}>Reportar un pago</h2>
 
             <div className={styles.bankDetailsContainer}>
@@ -797,13 +610,18 @@ export function UserDashboardPage() {
               {selectedGroupKey != null && !selectedTripHasPending ? (
                 <p className={styles.helperWarning}>Esta inscripción no tiene cuotas pendientes</p>
               ) : null}
+              {selectedGroupHasPendingReview ? (
+                <p className={styles.helperWarning}>
+                  Esta inscripción tiene comprobantes pendientes de revisión. Hasta que el administrador los revise no podés enviar un nuevo pago.
+                </p>
+              ) : null}
 
               {selectedInstallment ? (
                 <div className={styles.selectedInfoBox}>
                   <div className={styles.selectedInfoHeader}>
                     <span>
                       {selectedGroup?.studentName ? `${selectedGroup.studentName} · ` : ""}
-                      Cuota {selectedInstallment.installmentNumber} · vence {formatReportedDate(selectedInstallment.dueDate)} ·{" "}
+                      Primera cuota pendiente #{selectedInstallment.installmentNumber} · vence {formatReportedDate(selectedInstallment.dueDate)} ·{" "}
                       saldo {formatInstallmentAmount(selectedInstallment, selectedInstallmentRemaining)}
                     </span>
                     {selectedInstallmentDisplay ? (
@@ -815,7 +633,12 @@ export function UserDashboardPage() {
                 </div>
               ) : null}
 
-              <label className={styles.folderContainer} style={{ cursor: "pointer" }}>
+              <label
+                className={styles.folderContainer}
+                style={{ cursor: "pointer" }}
+                onMouseEnter={() => setIsDropzoneHovered(true)}
+                onMouseLeave={() => setIsDropzoneHovered(false)}
+              >
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -827,6 +650,7 @@ export function UserDashboardPage() {
                   size={1}
                   color="#0b77d5"
                   forceClose={closeFolderSignal}
+                  isHovered={isDropzoneHovered}
                   items={
                     receiptPreviewUrl
                       ? [
@@ -841,27 +665,54 @@ export function UserDashboardPage() {
                   }
                 />
                 <p className={styles.folderHint}>
-                  {receiptFile ? receiptFile.name : "Hacé click para adjuntar el comprobante (opcional)"}
+                  {receiptFile
+                    ? receiptFile.name
+                    : <span style={{ color: "#b45309", fontWeight: 600 }}>Hacé click para adjuntar el comprobante (obligatorio)</span>}
                 </p>
               </label>
 
               <label className={styles.formField}>
-                <span className={styles.label}>Monto pagado</span>
-                <input
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={reportedAmount}
-                  onChange={(event) => setReportedAmount(event.target.value)}
-                  className={styles.input}
-                  disabled={!selectedTripHasPending}
-                  required
-                />
+                <span className={styles.label}>Cantidad de cuotas consecutivas</span>
+                <select
+                  value={selectedInstallmentsCount}
+                  onChange={(event) => setSelectedInstallmentsCount(Number(event.target.value))}
+                  className={styles.select}
+                  disabled={!selectedTripHasPending || selectedGroupHasPendingReview}
+                >
+                  {Array.from({ length: selectableInstallments.length }, (_, index) => index + 1).map((count) => (
+                    <option key={count} value={count}>
+                      {count} {count === 1 ? "cuota" : "cuotas"}
+                    </option>
+                  ))}
+                </select>
               </label>
-              {selectedInstallment ? (
-                <p className={styles.helperText}>
-                  Saldo restante sugerido: {formatInstallmentAmount(selectedInstallment, selectedInstallmentRemaining)} · Si pagás más, el excedente se aplica en cascada a cuotas siguientes.
-                </p>
+              {paymentPreview ? (
+                <div className={styles.selectedInfoBox}>
+                  <div className={styles.selectedInfoHeader}>
+                    <span>
+                      Cubrís {formatInstallmentsLabel(paymentPreview.installments)} · total exacto{" "}
+                      {formatAmountByCurrency(paymentPreview.paymentCurrency, paymentPreview.totalReportedAmount)}
+                    </span>
+                    <span className={`${styles.statusBadge} ${styles.statusgreen}`}>Exacto</span>
+                  </div>
+                  <p className={styles.helperText}>
+                    El sistema solo admite la suma exacta de cuotas consecutivas desde la primera pendiente.
+                  </p>
+                  {paymentPreview.paymentCurrency !== paymentPreview.tripCurrency ? (
+                    <p className={styles.helperText}>
+                      Equivale a {formatAmountByCurrency(paymentPreview.tripCurrency, paymentPreview.totalAmountInTripCurrency)} del viaje
+                      {paymentPreview.exchangeRate != null
+                        ? ` · tipo de cambio BNA ${formatAmountByCurrency("ARS", paymentPreview.exchangeRate)}`
+                        : ""}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              {paymentPreviewError ? (
+                <p className={styles.errorText}>{paymentPreviewError.message}</p>
+              ) : null}
+              {isPaymentPreviewLoading && !paymentPreviewError ? (
+                <p className={styles.helperText}>Calculando total exacto...</p>
               ) : null}
 
               <label className={styles.formField}>
@@ -871,7 +722,7 @@ export function UserDashboardPage() {
                   value={reportedPaymentDate}
                   onChange={(event) => setReportedPaymentDate(event.target.value)}
                   className={styles.input}
-                  disabled={!selectedTripHasPending}
+                  disabled={!selectedTripHasPending || selectedGroupHasPendingReview}
                   required
                 />
               </label>
@@ -882,7 +733,7 @@ export function UserDashboardPage() {
                   value={paymentCurrency}
                   onChange={(event) => setPaymentCurrency(event.target.value as "ARS" | "USD")}
                   className={styles.select}
-                  disabled={!selectedTripHasPending}
+                  disabled={!selectedTripHasPending || selectedGroupHasPendingReview}
                 >
                   <option value="ARS">Pesos (ARS)</option>
                   <option value="USD">Dólares (USD)</option>
@@ -901,7 +752,7 @@ export function UserDashboardPage() {
                   value={selectedBankAccountId ?? ""}
                   onChange={(event) => setSelectedBankAccountId(event.target.value === "" ? null : Number(event.target.value))}
                   className={styles.select}
-                  disabled={!selectedTripHasPending || isBankAccountsLoading || availableBankAccounts.length === 0}
+                  disabled={!selectedTripHasPending || selectedGroupHasPendingReview || isBankAccountsLoading || availableBankAccounts.length === 0}
                 >
                   <option value="">Elegí una cuenta</option>
                   {availableBankAccounts.map((account) => (
@@ -924,11 +775,11 @@ export function UserDashboardPage() {
                   value={paymentMethod}
                   onChange={(event) => setPaymentMethod(event.target.value as PaymentMethod)}
                   className={styles.select}
-                  disabled={!selectedTripHasPending}
+                  disabled={!selectedTripHasPending || selectedGroupHasPendingReview}
                 >
                   <option value="BANK_TRANSFER">Transferencia bancaria</option>
                   <option value="CASH">Efectivo</option>
-                  <option value="CARD">Tarjeta</option>
+                  <option value="DEPOSIT">Depósito</option>
                   <option value="OTHER">Otro</option>
                 </select>
               </label>
@@ -936,9 +787,6 @@ export function UserDashboardPage() {
               <button type="submit" className={styles.submitButton} disabled={!canSubmitPayment}>
                 {registerPayment.isPending ? "Enviando..." : "Enviar comprobante"}
               </button>
-
-              {submitError ? <p className={styles.errorText}>{submitError}</p> : null}
-              {successMessage ? <p className={styles.successText}>{successMessage}</p> : null}
             </form>
           </section>
         </div>
