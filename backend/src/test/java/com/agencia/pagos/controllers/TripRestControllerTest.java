@@ -17,6 +17,7 @@ import com.agencia.pagos.entities.user.User;
 import com.agencia.pagos.repositories.InstallmentRepository;
 import com.agencia.pagos.repositories.InstallmentReminderNotificationRepository;
 import com.agencia.pagos.repositories.PaymentReceiptRepository;
+import com.agencia.pagos.repositories.StudentRepository;
 import com.agencia.pagos.repositories.TripRepository;
 import com.agencia.pagos.repositories.UserRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -68,6 +69,9 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
 
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private StudentRepository studentRepository;
 
     @AfterEach
     void cleanUpTrips() {
@@ -398,7 +402,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             }
 
             @Test
-            void assignUsersInBulk_usuarioNoExiste_devuelve404() throws Exception {
+            void assignUsersInBulk_usuarioNoExiste_loCargaComoPendiente() throws Exception {
             TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-bulk-user-not-found"));
 
             Trip trip = buildTripForBulk(
@@ -417,7 +421,9 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 .header("Authorization", "Bearer " + adminTokens.accessToken())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(dto)))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assignedCount").value(0))
+                .andExpect(jsonPath("$.pendingCount").value(1));
             }
 
             @Test
@@ -449,7 +455,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             }
 
             @Test
-            void assignUsersInBulk_reasignacion_noDuplicaAsignacionesNiCuotas() throws Exception {
+    void assignUsersInBulk_reasignacion_devuelve409ConElDniRechazado() throws Exception {
             TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-bulk-idempotent"));
             UserCreateDTO userDto = buildValidUser("user-bulk-idempotent");
             signUp(userDto);
@@ -476,14 +482,133 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 .header("Authorization", "Bearer " + adminTokens.accessToken())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(dto)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.assignedCount").value(0));
+                .andExpect(status().isConflict())
+                .andExpect(content().string(org.hamcrest.Matchers.containsString(userDto.students().get(0).dni())));
 
             List<Installment> installments = installmentRepository.findByTripIdWithUsers(trip.getId());
             assertEquals(3, installments.size());
 
             Trip persistedTrip = tripRepository.findByIdWithUsers(trip.getId()).orElseThrow();
             assertEquals(1, persistedTrip.getAssignedUsers().size());
+            }
+
+            @Test
+            void getTripStudents_mezclaAsignadosYPendientes() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-students"));
+            UserCreateDTO userDto = buildValidUser("user-trip-students");
+            signUp(userDto);
+            Trip trip = buildTripForBulk(
+                "Trip Students",
+                BigDecimal.valueOf(1200),
+                3,
+                10,
+                BigDecimal.valueOf(100),
+                false,
+                LocalDate.now().plusMonths(2)
+            );
+
+            String assignedDni = userDto.students().get(0).dni();
+            String pendingDni = uniqueDni();
+
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new UserAssignBulkDTO(List.of(assignedDni, pendingDni)))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assignedCount").value(1))
+                .andExpect(jsonPath("$.pendingCount").value(1));
+
+            mockMvc.perform(get("/api/v1/trips/{id}/students", trip.getId())
+                .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[0].studentDni").value(assignedDni))
+                .andExpect(jsonPath("$[0].status").value("ASSIGNED"))
+                .andExpect(jsonPath("$[0].installmentsCount").value(3))
+                .andExpect(jsonPath("$[1].studentDni").value(pendingDni))
+                .andExpect(jsonPath("$[1].status").value("PENDING"))
+                .andExpect(jsonPath("$[1].installmentsCount").value(0));
+            }
+
+            @Test
+            void unassignStudent_pendingOnly_eliminaSoloElPendiente() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-unassign-pending"));
+            Trip trip = buildTripForBulk(
+                "Trip Pending Only",
+                BigDecimal.valueOf(1200),
+                3,
+                10,
+                BigDecimal.valueOf(100),
+                false,
+                LocalDate.now().plusMonths(2)
+            );
+
+            String pendingDni = uniqueDni();
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new UserAssignBulkDTO(List.of(pendingDni)))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assignedCount").value(0))
+                .andExpect(jsonPath("$.pendingCount").value(1));
+
+            mockMvc.perform(delete("/api/v1/trips/{id}/students/{studentDni}", trip.getId(), pendingDni)
+                .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("success"));
+
+            mockMvc.perform(get("/api/v1/trips/{id}/students", trip.getId())
+                .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(0)));
+            assertTrue(installmentRepository.findByTripIdWithUsers(trip.getId()).isEmpty());
+            }
+
+            @Test
+            void unassignStudent_siElPadreTieneOtroHijoEnElViaje_seMantieneAsignado() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-unassign-keep-parent"));
+            UserCreateDTO userDto = buildValidUser("user-trip-unassign-keep-parent");
+            signUp(userDto);
+            User user = userRepository.findByEmail(userDto.email()).orElseThrow();
+
+            var secondStudent = com.agencia.pagos.entities.Student.builder()
+                .parent(user)
+                .name("Segundo Hijo")
+                .dni(uniqueDni())
+                .schoolName("Colegio Demo")
+                .courseName("5A")
+                .build();
+            secondStudent = studentRepository.save(secondStudent);
+
+            Trip trip = buildTripForBulk(
+                "Trip Keep Parent",
+                BigDecimal.valueOf(1800),
+                3,
+                10,
+                BigDecimal.valueOf(100),
+                false,
+                LocalDate.now().plusMonths(2)
+            );
+
+            String firstDni = userDto.students().get(0).dni();
+            String secondDni = secondStudent.getDni();
+
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new UserAssignBulkDTO(List.of(firstDni, secondDni)))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assignedCount").value(2));
+
+            mockMvc.perform(delete("/api/v1/trips/{id}/students/{studentDni}", trip.getId(), firstDni)
+                .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk());
+
+            Trip persistedTrip = tripRepository.findByIdWithUsers(trip.getId()).orElseThrow();
+            assertEquals(1, persistedTrip.getAssignedUsers().size());
+            assertEquals(user.getId(), persistedTrip.getAssignedUsers().get(0).getId());
+            assertEquals(3, installmentRepository.findByTripIdAndStudentDni(trip.getId(), secondDni).size());
+            assertTrue(installmentRepository.findByTripIdAndStudentDni(trip.getId(), firstDni).isEmpty());
             }
 
             @Test
@@ -611,6 +736,36 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             assertTrue(installmentRepository.findByTripIdWithUsers(trip.getId()).isEmpty());
             assertEquals(0, paymentReceiptRepository.count());
             assertEquals(0, installmentReminderNotificationRepository.count());
+            }
+
+            @Test
+            void deleteTrip_conPendientes_eliminaPendientesTambien() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-delete-pending"));
+            Trip trip = buildTripForBulk(
+                "Trip Delete Pending",
+                BigDecimal.valueOf(1000),
+                2,
+                10,
+                BigDecimal.valueOf(100),
+                false,
+                LocalDate.now().plusMonths(2)
+            );
+
+            String pendingDni = uniqueDni();
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(new UserAssignBulkDTO(List.of(pendingDni)))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pendingCount").value(1));
+
+            mockMvc.perform(delete("/api/v1/trips/{id}", trip.getId())
+                .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("success"));
+
+            assertTrue(tripRepository.findById(trip.getId()).isEmpty());
+            assertTrue(pendingTripStudentRepository.findByTripIdAndStudentDni(trip.getId(), pendingDni).isEmpty());
             }
 
             @Test

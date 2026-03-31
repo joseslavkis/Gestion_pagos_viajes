@@ -26,6 +26,7 @@ secrets/
 
 # Database dumps/backups
 *.sql
+!backend/sql/*.sql
 *.dump
 *.bak
 .DS_Store

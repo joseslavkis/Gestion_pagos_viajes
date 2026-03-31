@@ -168,7 +168,11 @@ export function SignupPage() {
       return;
     }
 
-    await mutateAsync(parsed.data);
+    try {
+      await mutateAsync(parsed.data);
+    } catch {
+      // The mutation error is rendered by RequestState.
+    }
   };
 
   return (
@@ -177,7 +181,7 @@ export function SignupPage() {
         <header className={styles.header}>
           <p className={styles.eyebrow}>Registro Protegido</p>
           <h1>Crear cuenta</h1>
-          <p className={styles.description}>Completa tus datos y registra a tus hijos para que luego puedan ser asignados a sus viajes.</p>
+          <p className={styles.description}>Completá tus datos y reclamá los DNIs de tus hijos que la agencia cargó previamente para sus viajes.</p>
         </header>
 
         <RequestState isLoading={isPending} error={error ?? null} loadingLabel="Creando cuenta...">
@@ -245,7 +249,9 @@ export function SignupPage() {
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
                 <div>
                   <h2 style={{ margin: 0 }}>Mis hijos</h2>
-                  <p style={{ margin: "0.35rem 0 0", color: "#47658f" }}>{studentsCountLabel}. Puedes registrar hasta 10.</p>
+                  <p style={{ margin: "0.35rem 0 0", color: "#47658f" }}>
+                    {studentsCountLabel}. Solo podés cargar DNIs precargados por administración. Puedes registrar hasta 10.
+                  </p>
                 </div>
                 <button
                   type="button"
@@ -407,7 +413,7 @@ export function SignupPage() {
                     {hasSchoolSelection ? (
                       <small className={styles.schoolSelectedHint}>Seleccionado: {student.schoolName}</small>
                     ) : (
-                      <small className={styles.schoolEmptyHint}>Buscá y elegí un colegio de la lista.</small>
+                      <small className={styles.schoolEmptyHint}>Buscá y elegí un colegio de la lista para reclamar este DNI.</small>
                     )}
                   </label>
                   <label style={fieldStyle}>

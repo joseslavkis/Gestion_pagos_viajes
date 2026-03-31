@@ -316,7 +316,7 @@ describe("trips-service hooks", () => {
       const fetchSpy = vi
         .spyOn(globalThis, "fetch")
         .mockResolvedValue(
-          new Response(JSON.stringify({ status: "OK", message: "assigned", assignedCount: 2 }), {
+          new Response(JSON.stringify({ status: "OK", message: "assigned", assignedCount: 2, pendingCount: 0 }), {
             status: 200,
             headers: { "Content-Type": "application/json" },
           }),
@@ -341,7 +341,7 @@ describe("trips-service hooks", () => {
       const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
 
       globalThis.fetch = vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ status: "OK", message: "assigned", assignedCount: 2 }), {
+        new Response(JSON.stringify({ status: "OK", message: "assigned", assignedCount: 2, pendingCount: 1 }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         }),
@@ -357,7 +357,7 @@ describe("trips-service hooks", () => {
 
     it("maneja correctamente el caso donde assignedCount === 0", async () => {
       globalThis.fetch = vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ status: "OK", message: "no users assigned", assignedCount: 0 }), {
+        new Response(JSON.stringify({ status: "OK", message: "no users assigned", assignedCount: 0, pendingCount: 1 }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         }),
@@ -369,6 +369,7 @@ describe("trips-service hooks", () => {
 
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
       expect(result.current.data?.assignedCount).toBe(0);
+      expect(result.current.data?.pendingCount).toBe(1);
     });
   });
 

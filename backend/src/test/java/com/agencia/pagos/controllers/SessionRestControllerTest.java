@@ -6,6 +6,9 @@ import com.agencia.pagos.dtos.request.StudentCreateDTO;
 import com.agencia.pagos.dtos.request.UserCreateDTO;
 import com.agencia.pagos.dtos.request.UserLoginDTO;
 import com.agencia.pagos.dtos.response.TokenDTO;
+import com.agencia.pagos.entities.Installment;
+import com.agencia.pagos.entities.Student;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -15,6 +18,7 @@ import org.springframework.http.MediaType;
 import java.util.List;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -25,9 +29,12 @@ class SessionRestControllerTest extends ControllerIntegrationTestSupport {
 
     @Test
     void signUp_conDatosValidos_devuelve201ConTokens() throws Exception {
+        UserCreateDTO dto = buildValidUser("signup-ok");
+        seedPendingTrip("signup-ok", List.of(dto.students().get(0).dni()));
+
         mockMvc.perform(post("/api/v1/auth/signup")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(buildValidUser("signup-ok"))))
+                .content(objectMapper.writeValueAsString(dto)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.accessToken").exists())
                 .andExpect(jsonPath("$.refreshToken").exists());
@@ -36,6 +43,7 @@ class SessionRestControllerTest extends ControllerIntegrationTestSupport {
     @Test
     void signUp_conEmailDuplicado_devuelve409() throws Exception {
         UserCreateDTO dto = buildValidUser("signup-duplicado");
+        seedPendingTrip("signup-duplicado", List.of(dto.students().get(0).dni()));
 
         mockMvc.perform(post("/api/v1/auth/signup")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -46,6 +54,42 @@ class SessionRestControllerTest extends ControllerIntegrationTestSupport {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(dto)))
                 .andExpect(status().isConflict());
+    }
+
+    @Test
+    void signUp_conDniNoPrecargado_devuelve409ConMensajeExacto() throws Exception {
+        UserCreateDTO dto = buildValidUser("signup-no-pending");
+
+        mockMvc.perform(post("/api/v1/auth/signup")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isConflict())
+                .andExpect(content().string("El DNI de alumno " + dto.students().get(0).dni()
+                        + " no está habilitado todavía. Pedile a la agencia que lo cargue primero."));
+    }
+
+    @Test
+    void signUp_conDniPendienteEnMultiplesViajes_creaAlumnoCuotasYBorraPendientes() throws Exception {
+        UserCreateDTO dto = buildValidUser("signup-multi-trip");
+        String studentDni = dto.students().get(0).dni();
+        var firstTrip = seedPendingTrip("signup-multi-1", List.of(studentDni));
+        var secondTrip = seedPendingTrip("signup-multi-2", List.of(studentDni));
+
+        mockMvc.perform(post("/api/v1/auth/signup")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.accessToken").exists());
+
+        Student student = studentRepository.findByDni(studentDni).orElseThrow();
+        List<Installment> installments = installmentRepository.findByUserIdWithTrip(student.getParent().getId()).stream()
+                .filter(installment -> installment.getStudent() != null && studentDni.equals(installment.getStudent().getDni()))
+                .toList();
+
+        Assertions.assertEquals(6, installments.size());
+        Assertions.assertTrue(installments.stream().anyMatch(installment -> installment.getTrip().getId().equals(firstTrip.getId())));
+        Assertions.assertTrue(installments.stream().anyMatch(installment -> installment.getTrip().getId().equals(secondTrip.getId())));
+        Assertions.assertTrue(pendingTripStudentRepository.findByStudentDniWithTrip(studentDni).isEmpty());
     }
 
     @Test

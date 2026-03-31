@@ -7,6 +7,7 @@ import type {
   StatusResponseDTO,
   TripCreateDTO,
   TripDetailDTO,
+  TripStudentAdminDTO,
   TripSummaryDTO,
   TripUpdateDTO,
   UserAssignBulkDTO,
@@ -16,6 +17,7 @@ import {
   SpreadsheetDTOSchema,
   StatusResponseDTOSchema,
   TripDetailDTOSchema,
+  TripStudentAdminDTOSchema,
   TripSummaryDTOSchema,
 } from "@/features/trips/types/trips-dtos";
 import { ApiError } from "@/lib/api-error";
@@ -144,6 +146,50 @@ export function useAssignUsersBulk() {
   });
 }
 
+export function useTripStudentsAdmin(tripId: number | null) {
+  const [tokenState] = useToken();
+
+  return useQuery<TripStudentAdminDTO[], ApiError>({
+    queryKey: ["trips", tripId, "students-admin"],
+    enabled: tripId != null && tripId > 0,
+    staleTime: 0,
+    queryFn: async () =>
+      apiGet(`/api/v1/trips/${tripId}/students`, (json) => TripStudentAdminDTOSchema.array().parse(json), {
+        headers:
+          tokenState.state === "LOGGED_IN"
+            ? {
+                Authorization: `Bearer ${tokenState.accessToken}`,
+              }
+            : undefined,
+      }),
+  });
+}
+
+export function useUnassignTripStudent() {
+  const [tokenState] = useToken();
+  const queryClient = useQueryClient();
+
+  return useMutation<StatusResponseDTO, ApiError, { tripId: number; studentDni: string }>({
+    mutationFn: async ({ tripId, studentDni }) =>
+      apiDelete(`/api/v1/trips/${tripId}/students/${studentDni}`, (json) => StatusResponseDTOSchema.parse(json), {
+        headers:
+          tokenState.state === "LOGGED_IN"
+            ? {
+                Authorization: `Bearer ${tokenState.accessToken}`,
+              }
+            : undefined,
+      }),
+    onSuccess: async (_data, variables) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["trips"] }),
+        queryClient.invalidateQueries({ queryKey: ["trips", variables.tripId] }),
+        queryClient.invalidateQueries({ queryKey: ["trips", variables.tripId, "spreadsheet"] }),
+        queryClient.invalidateQueries({ queryKey: ["trips", variables.tripId, "students-admin"] }),
+      ]);
+    },
+  });
+}
+
 export function useSpreadsheet(tripId: number, params: SpreadsheetParams) {
   const [tokenState] = useToken();
 
@@ -214,4 +260,3 @@ export async function downloadSpreadsheetExcel(
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 }
-

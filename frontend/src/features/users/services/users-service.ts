@@ -85,7 +85,10 @@ export function useAddStudent() {
             : undefined,
       }),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["students"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["students"] }),
+        queryClient.invalidateQueries({ queryKey: ["payments", "my", "installments"] }),
+      ]);
     },
   });
 }

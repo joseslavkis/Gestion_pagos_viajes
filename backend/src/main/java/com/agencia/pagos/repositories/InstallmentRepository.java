@@ -51,6 +51,21 @@ public interface InstallmentRepository extends JpaRepository<Installment, Long> 
     @Query("SELECT DISTINCT i.student.id FROM Installment i WHERE i.trip.id = :tripId AND i.student IS NOT NULL")
     List<Long> findAssignedStudentIdsByTripId(@Param("tripId") Long tripId);
 
+    @Query("""
+        SELECT i
+        FROM Installment i
+        JOIN FETCH i.user
+        JOIN FETCH i.trip
+        LEFT JOIN FETCH i.student
+        WHERE i.trip.id = :tripId
+          AND i.student IS NOT NULL
+          AND i.student.dni = :studentDni
+        ORDER BY i.installmentNumber ASC
+        """)
+    List<Installment> findByTripIdAndStudentDni(@Param("tripId") Long tripId, @Param("studentDni") String studentDni);
+
+    boolean existsByTripIdAndUserId(Long tripId, Long userId);
+
     @Query("SELECT COUNT(DISTINCT i.student.id) FROM Installment i WHERE i.trip.id = :tripId AND i.student IS NOT NULL")
     long countDistinctStudentsByTripId(@Param("tripId") Long tripId);
 }

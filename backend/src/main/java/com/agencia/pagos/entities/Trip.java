@@ -69,6 +69,9 @@ public class Trip {
 	@OneToMany(mappedBy = "trip", cascade = CascadeType.ALL, orphanRemoval = true)
 	private List<Installment> installments = new ArrayList<>();
 
+	@OneToMany(mappedBy = "trip", cascade = CascadeType.ALL, orphanRemoval = true)
+	private List<PendingTripStudent> pendingStudents = new ArrayList<>();
+
 	public Trip() {
 	}
 
@@ -162,5 +165,13 @@ public class Trip {
 
 	public void setInstallments(List<Installment> installments) {
 		this.installments = installments;
+	}
+
+	public List<PendingTripStudent> getPendingStudents() {
+		return pendingStudents;
+	}
+
+	public void setPendingStudents(List<PendingTripStudent> pendingStudents) {
+		this.pendingStudents = pendingStudents;
 	}
 }

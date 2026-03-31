@@ -480,9 +480,9 @@ export function UserDashboardPage() {
     }
 
     try {
-      await addStudent.mutateAsync(parsed.data);
+      const createdStudent = await addStudent.mutateAsync(parsed.data);
       setNewStudent(emptyStudent());
-      setStudentSuccessMessage("Alumno agregado correctamente.");
+      setStudentSuccessMessage(`El alumno ${createdStudent.name} se agrego con exito.`);
     } catch (currentError) {
       setStudentFormError(
         currentError instanceof Error
@@ -629,7 +629,7 @@ export function UserDashboardPage() {
 
           <section className={styles.section}>
             <h2 className={styles.sectionTitle}>Mis hijos</h2>
-            <p className={styles.helperText}>Podés agregar más hijos para que el administrador los asigne a viajes.</p>
+            <p className={styles.helperText}>Podés reclamar hijos solo si la agencia precargó su DNI en algún viaje.</p>
 
             {isStudentsLoading ? <p className={styles.helperText}>Cargando alumnos...</p> : null}
             {studentsError ? <p className={styles.errorText}>{studentsError.message}</p> : null}
@@ -637,7 +637,7 @@ export function UserDashboardPage() {
             {schoolsError ? <p className={styles.errorText}>{schoolsError.message}</p> : null}
 
             {!isStudentsLoading && !studentsError && studentItems.length === 0 ? (
-              <p className={styles.helperText}>Todavía no registraste hijos en tu cuenta.</p>
+              <p className={styles.helperText}>Todavía no reclamaste hijos en tu cuenta.</p>
             ) : null}
 
             <div style={{ display: "grid", gap: "0.85rem", marginBottom: "1rem" }}>
@@ -741,6 +741,7 @@ export function UserDashboardPage() {
               <button type="submit" className={styles.submitButton} disabled={addStudent.isPending}>
                 {addStudent.isPending ? "Agregando..." : "Agregar hijo"}
               </button>
+              <p className={styles.helperText}>Solo se aceptan DNIs que administración haya cargado previamente.</p>
 
               {studentFormError ? <p className={styles.errorText}>{studentFormError}</p> : null}
               {studentSuccessMessage ? <p className={styles.successText}>{studentSuccessMessage}</p> : null}

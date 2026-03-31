@@ -26,6 +26,7 @@ import com.agencia.pagos.entities.user.User;
 import com.agencia.pagos.entities.user.UserCredentials;
 import com.agencia.pagos.entities.refresh_token.RefreshToken;
 import com.agencia.pagos.repositories.InstallmentRepository;
+import com.agencia.pagos.repositories.PendingTripStudentRepository;
 import com.agencia.pagos.repositories.PasswordResetTokenRepository;
 import com.agencia.pagos.repositories.PaymentReceiptRepository;
 import com.agencia.pagos.repositories.StudentRepository;
@@ -42,11 +43,13 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashSet;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -60,11 +63,13 @@ public class UserService implements UserDetailsService {
     private final InstallmentRepository installmentRepository;
     private final PaymentReceiptRepository paymentReceiptRepository;
     private final StudentRepository studentRepository;
+    private final PendingTripStudentRepository pendingTripStudentRepository;
     private final RefreshTokenService refreshTokenService;
     private final PasswordResetTokenRepository passwordResetTokenRepository;
     private final InstallmentStatusResolver installmentStatusResolver;
     private final InstallmentUiStatusResolver installmentUiStatusResolver;
     private final EmailService emailService;
+    private final TripService tripService;
 
     @Autowired
     UserService(
@@ -74,11 +79,13 @@ public class UserService implements UserDetailsService {
             InstallmentRepository installmentRepository,
             PaymentReceiptRepository paymentReceiptRepository,
             StudentRepository studentRepository,
+            PendingTripStudentRepository pendingTripStudentRepository,
             RefreshTokenService refreshTokenService,
             PasswordResetTokenRepository passwordResetTokenRepository,
             InstallmentStatusResolver installmentStatusResolver,
             InstallmentUiStatusResolver installmentUiStatusResolver,
-            EmailService emailService
+            EmailService emailService,
+            TripService tripService
     ) {
         this.jwtService = jwtService;
         this.passwordEncoder = passwordEncoder;
@@ -86,11 +93,13 @@ public class UserService implements UserDetailsService {
         this.installmentRepository = installmentRepository;
         this.paymentReceiptRepository = paymentReceiptRepository;
         this.studentRepository = studentRepository;
+        this.pendingTripStudentRepository = pendingTripStudentRepository;
         this.refreshTokenService = refreshTokenService;
         this.passwordResetTokenRepository = passwordResetTokenRepository;
         this.installmentStatusResolver = installmentStatusResolver;
         this.installmentUiStatusResolver = installmentUiStatusResolver;
         this.emailService = emailService;
+        this.tripService = tripService;
     }
 
     @Override
@@ -108,11 +117,13 @@ public class UserService implements UserDetailsService {
             return Optional.empty();
         }
 
-        validateStudentDnis(data.students());
+        validateDuplicateStudentDnis(data.students());
 
         var user = data.asUser(passwordEncoder::encode, Role.USER);
-        attachStudents(user, data.students());
         userRepository.save(user);
+        for (StudentCreateDTO student : data.students()) {
+            claimPendingStudentForUser(user, student);
+        }
         return Optional.of(generateTokens(user));
     }
 
@@ -344,20 +355,7 @@ public class UserService implements UserDetailsService {
 
     public StudentDTO addStudentForCurrentUser(String email, StudentCreateDTO dto) {
         User user = getUserByEmail(email);
-
-        if (studentRepository.existsByDni(dto.dni())) {
-            throw new IllegalStateException("El DNI de alumno " + dto.dni() + " ya está registrado en el sistema");
-        }
-
-        Student student = Student.builder()
-                .parent(user)
-                .name(dto.name())
-                .dni(dto.dni())
-                .schoolName(dto.schoolName())
-                .courseName(dto.courseName())
-                .build();
-
-        return toStudentDTO(studentRepository.save(student));
+        return toStudentDTO(claimPendingStudentForUser(user, dto));
     }
 
     public void deleteStudentForCurrentUser(String email, Long studentId) {
@@ -389,25 +387,44 @@ public class UserService implements UserDetailsService {
         return userRepository.save(user);
     }
 
-    private void validateStudentDnis(List<StudentCreateDTO> students) {
+    private void validateDuplicateStudentDnis(List<StudentCreateDTO> students) {
+        Set<String> seenDnis = new HashSet<>();
         for (StudentCreateDTO student : students) {
-            if (studentRepository.existsByDni(student.dni())) {
-                throw new IllegalStateException("El DNI de alumno " + student.dni() + " ya está registrado en el sistema");
+            String normalizedDni = student.dni() == null ? "" : student.dni().trim();
+            if (!seenDnis.add(normalizedDni)) {
+                throw new IllegalStateException("No podés cargar el mismo DNI de alumno más de una vez.");
             }
         }
     }
 
-    private void attachStudents(User user, List<StudentCreateDTO> students) {
-        for (StudentCreateDTO studentDto : students) {
-            Student student = Student.builder()
-                    .parent(user)
-                    .name(studentDto.name())
-                    .dni(studentDto.dni())
-                    .schoolName(studentDto.schoolName())
-                    .courseName(studentDto.courseName())
-                    .build();
-            user.getStudents().add(student);
+    private Student claimPendingStudentForUser(User user, StudentCreateDTO dto) {
+        String dni = dto.dni().trim();
+
+        var pendingAssignments = pendingTripStudentRepository.findByStudentDniWithTripForUpdate(dni);
+        if (pendingAssignments.isEmpty()) {
+            if (studentRepository.existsByDni(dni)) {
+                throw new IllegalStateException("El DNI de alumno " + dni + " ya fue reclamado por otro usuario.");
+            }
+            throw new IllegalStateException(
+                    "El DNI de alumno " + dni + " no está habilitado todavía. Pedile a la agencia que lo cargue primero."
+            );
         }
+
+        if (studentRepository.existsByDni(dni)) {
+            throw new IllegalStateException("El DNI de alumno " + dni + " ya fue reclamado por otro usuario.");
+        }
+
+        Student student = Student.builder()
+                .parent(user)
+                .name(dto.name())
+                .dni(dni)
+                .schoolName(dto.schoolName())
+                .courseName(dto.courseName())
+                .build();
+
+        Student savedStudent = studentRepository.save(student);
+        tripService.materializePendingAssignmentsForStudent(savedStudent);
+        return savedStudent;
     }
 
     private StudentDTO toStudentDTO(Student student) {

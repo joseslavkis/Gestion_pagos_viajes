@@ -10,5 +10,7 @@ public interface InstallmentReminderNotificationRepository
 
     void deleteByInstallmentTripId(Long tripId);
 
+    void deleteByInstallmentIdIn(List<Long> installmentIds);
+
     List<InstallmentReminderNotification> findByInstallmentIdIn(List<Long> installmentIds);
 }

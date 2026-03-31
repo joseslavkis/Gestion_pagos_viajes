@@ -7,6 +7,7 @@ import com.agencia.pagos.dtos.response.BulkAssignResultDTO;
 import com.agencia.pagos.dtos.response.SpreadsheetDTO;
 import com.agencia.pagos.dtos.response.StatusResponseDTO;
 import com.agencia.pagos.dtos.response.TripDetailDTO;
+import com.agencia.pagos.dtos.response.TripStudentAdminDTO;
 import com.agencia.pagos.dtos.response.TripSummaryDTO;
 import com.agencia.pagos.entities.InstallmentStatus;
 import com.agencia.pagos.services.TripService;
@@ -89,6 +90,24 @@ class TripRestController {
             @Valid @RequestBody UserAssignBulkDTO dto
     ) {
         return ResponseEntity.ok(tripService.assignUsersInBulk(id, dto));
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @GetMapping(value = "/{id}/students", produces = "application/json")
+    @Operation(summary = "List all students or pending DNIs for a trip (admin only)")
+    ResponseEntity<List<TripStudentAdminDTO>> getTripStudents(@PathVariable Long id) {
+        return ResponseEntity.ok(tripService.getTripStudentsAdmin(id));
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @DeleteMapping(value = "/{id}/students/{studentDni}", produces = "application/json")
+    @Operation(summary = "Unassign a student or pending DNI from a trip (admin only)")
+    ResponseEntity<StatusResponseDTO> unassignStudentFromTrip(
+            @PathVariable Long id,
+            @PathVariable String studentDni
+    ) {
+        tripService.unassignStudentByDni(id, studentDni);
+        return ResponseEntity.ok(new StatusResponseDTO("success", "Asignación eliminada"));
     }
 
     @PreAuthorize("hasRole('ADMIN')")
