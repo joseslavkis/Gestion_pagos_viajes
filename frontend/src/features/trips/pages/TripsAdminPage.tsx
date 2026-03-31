@@ -20,6 +20,7 @@ import {
   useUnassignTripStudent,
 } from "@/features/trips/services/trips-service";
 import { isCanonicalStudentDni, normalizeStudentDniInput } from "@/lib/dni";
+import { createGsapMatchMedia, getMotionProfile, gsap, useGSAP } from "@/lib/gsap";
 
 import styles from "./TripsAdminPage.module.css";
 
@@ -44,6 +45,7 @@ export function TripsAdminPage() {
   const { data, isLoading, error, refetch } = useTrips();
   const [modalState, setModalState] = useState<ModalState>({ type: "none" });
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const sectionRef = useRef<HTMLElement | null>(null);
 
   const openCreate = () => setModalState({ type: "create" });
   const closeModal = () => setModalState({ type: "none" });
@@ -92,9 +94,96 @@ export function TripsAdminPage() {
     );
   };
 
+  useGSAP(
+    () => {
+      if (!sectionRef.current) {
+        return;
+      }
+
+      const section = sectionRef.current;
+      const motion = getMotionProfile();
+
+      const mm = createGsapMatchMedia();
+
+      if (!mm) {
+        gsap.set(
+          [
+            section.querySelector(`.${styles.header}`),
+            ...Array.from(section.querySelectorAll(`.${styles.card}`)),
+            section.querySelector(`.${styles.successBanner}`),
+          ],
+          { clearProps: "opacity,visibility,transform" },
+        );
+        return;
+      }
+
+      mm.add("(prefers-reduced-motion: reduce)", () => {
+        gsap.set(
+          [
+            section.querySelector(`.${styles.header}`),
+            ...Array.from(section.querySelectorAll(`.${styles.card}`)),
+            section.querySelector(`.${styles.successBanner}`),
+          ],
+          { clearProps: "opacity,visibility,transform" },
+        );
+      });
+
+      mm.add("(prefers-reduced-motion: no-preference)", () => {
+        const header = section.querySelector(`.${styles.header}`);
+        const successBanner = section.querySelector(`.${styles.successBanner}`);
+        const cards = section.querySelectorAll(`.${styles.card}`);
+
+        if (header) {
+          gsap.fromTo(
+            header,
+            { autoAlpha: 0, y: motion.distanceSm },
+            { autoAlpha: 1, y: 0, duration: motion.durationBase, ease: "power2.out" },
+          );
+        }
+
+        if (successBanner) {
+          gsap.fromTo(
+            successBanner,
+            { autoAlpha: 0, y: -motion.distanceSm },
+            {
+              autoAlpha: 1,
+              y: 0,
+              duration: motion.durationFast,
+              ease: "power2.out",
+              delay: motion.durationFast / 2,
+            },
+          );
+        }
+
+        if (cards && cards.length > 0) {
+          gsap.fromTo(
+            cards,
+            { autoAlpha: 0, y: motion.distanceMd },
+            {
+              autoAlpha: 1,
+              y: 0,
+              duration: motion.durationBase,
+              stagger: motion.staggerBase,
+              ease: "power2.out",
+              delay: motion.durationFast / 2,
+              clearProps: "opacity,visibility,transform",
+            },
+          );
+        }
+      });
+
+      return () => mm.revert();
+    },
+    {
+      dependencies: [isLoading, trips.length, successMessage],
+      scope: sectionRef,
+      revertOnUpdate: true,
+    },
+  );
+
   return (
     <CommonLayout>
-      <section className={styles.page}>
+      <section ref={sectionRef} className={styles.page}>
         <header className={styles.header}>
           <div className={styles.titleRow}>
             <div className={styles.titleBlock}>
@@ -320,6 +409,53 @@ type ModalProps = {
 function ModalShell({ title, description, onClose, children }: ModalProps) {
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
+
+  useGSAP(
+    () => {
+      if (!overlayRef.current || !dialogRef.current) {
+        return;
+      }
+
+      const motion = getMotionProfile();
+      const mm = createGsapMatchMedia();
+
+      if (!mm) {
+        gsap.set([overlayRef.current, dialogRef.current], {
+          clearProps: "opacity,visibility,transform",
+        });
+        return;
+      }
+
+      mm.add("(prefers-reduced-motion: reduce)", () => {
+        gsap.set([overlayRef.current, dialogRef.current], {
+          clearProps: "opacity,visibility,transform",
+        });
+      });
+
+      mm.add("(prefers-reduced-motion: no-preference)", () => {
+        gsap.fromTo(
+          overlayRef.current,
+          { autoAlpha: 0 },
+          { autoAlpha: 1, duration: motion.durationFast, ease: "power1.out" },
+        );
+        gsap.fromTo(
+          dialogRef.current,
+          { autoAlpha: 0, y: motion.distanceMd, scale: motion.isCompact ? 0.992 : 0.985 },
+          {
+            autoAlpha: 1,
+            y: 0,
+            scale: 1,
+            duration: motion.durationBase,
+            ease: "power2.out",
+            clearProps: "opacity,visibility,transform",
+          },
+        );
+      });
+
+      return () => mm.revert();
+    },
+    { scope: overlayRef },
+  );
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

@@ -1,9 +1,10 @@
 import type { FormEvent, MouseEvent } from "react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link } from "wouter";
 
 import { ErrorContainer } from "@/components/form-components/ErrorContainer/ErrorContainer";
 import { useSendContactMessage } from "@/features/contact/services/contact-service";
+import { createGsapMatchMedia, getMotionProfile, gsap, ScrollTrigger, useGSAP } from "@/lib/gsap";
 
 import styles from "./InitialLandingPage.module.css";
 import logoAnimado from "@/assets/logo-animado.mov";
@@ -16,6 +17,123 @@ export function InitialLandingPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
+  const pageRef = useRef<HTMLDivElement | null>(null);
+
+  useGSAP(
+    () => {
+      if (!pageRef.current) {
+        return;
+      }
+
+      const motion = getMotionProfile();
+      const mm = createGsapMatchMedia();
+
+      if (!mm) {
+        const reducedTargets = [
+          ...Array.from(pageRef.current?.querySelectorAll(`.${styles.hero} *`) ?? []),
+          ...Array.from(pageRef.current?.querySelectorAll(`.${styles.contactSection} *`) ?? []),
+        ];
+        gsap.set(reducedTargets, { clearProps: "opacity,visibility,transform" });
+        return;
+      }
+
+      mm.add("(prefers-reduced-motion: reduce)", () => {
+        const reducedTargets = [
+          ...Array.from(pageRef.current?.querySelectorAll(`.${styles.hero} *`) ?? []),
+          ...Array.from(pageRef.current?.querySelectorAll(`.${styles.contactSection} *`) ?? []),
+        ];
+        gsap.set(reducedTargets, { clearProps: "opacity,visibility,transform" });
+      });
+
+      mm.add("(prefers-reduced-motion: no-preference)", () => {
+        const hero = pageRef.current?.querySelector(`.${styles.hero}`);
+        const visualColumn = pageRef.current?.querySelector(`.${styles.visualColumn}`);
+        const copyItems = pageRef.current?.querySelectorAll(
+          `.${styles.copyColumn} .${styles.title}, .${styles.copyColumn} .${styles.description}, .${styles.copyColumn} .${styles.ctas} > *`,
+        );
+        const contactIntroItems = pageRef.current?.querySelectorAll(
+          `.${styles.contactIntro} > *, .${styles.contactForm} > *`,
+        );
+        const orbTargets = pageRef.current?.querySelectorAll(
+          `.${styles.orbA}, .${styles.orbB}, .${styles.orbC}`,
+        );
+
+        if (hero) {
+          gsap.fromTo(
+            hero,
+            { autoAlpha: 0, y: motion.distanceMd },
+            { autoAlpha: 1, y: 0, duration: motion.durationSlow, ease: "power2.out" },
+          );
+        }
+
+        if (visualColumn) {
+          gsap.fromTo(
+            visualColumn,
+            { autoAlpha: 0, x: -motion.distanceMd },
+            {
+              autoAlpha: 1,
+              x: 0,
+              duration: motion.durationSlow,
+              delay: motion.durationFast / 2,
+              ease: "power2.out",
+            },
+          );
+        }
+
+        if (copyItems && copyItems.length > 0) {
+          gsap.fromTo(
+            copyItems,
+            { autoAlpha: 0, y: motion.distanceSm },
+            {
+              autoAlpha: 1,
+              y: 0,
+              duration: motion.durationBase,
+              stagger: motion.staggerBase,
+              delay: motion.durationFast,
+              ease: "power2.out",
+            },
+          );
+        }
+
+        if (orbTargets && orbTargets.length > 0) {
+          gsap.to(orbTargets, {
+            y: `random(-${motion.distanceSm}, ${motion.distanceSm})`,
+            x: `random(-${motion.distanceSm}, ${motion.distanceSm})`,
+            duration: motion.isCompact ? 4.8 : 6,
+            repeat: -1,
+            yoyo: true,
+            ease: "sine.inOut",
+            stagger: 0.2,
+          });
+        }
+
+        if (contactIntroItems && contactIntroItems.length > 0) {
+          gsap.fromTo(
+            contactIntroItems,
+            { autoAlpha: 0, y: motion.distanceMd },
+            {
+              autoAlpha: 1,
+              y: 0,
+              duration: motion.durationBase,
+              stagger: motion.staggerFast,
+              ease: "power2.out",
+              scrollTrigger: {
+                trigger: `.${styles.contactSection}`,
+                start: "top 76%",
+                once: true,
+              },
+            },
+          );
+        }
+      });
+
+      return () => {
+        mm.revert();
+        ScrollTrigger.refresh();
+      };
+    },
+    { scope: pageRef },
+  );
 
   const errors = useMemo(() => (error ? [error] : []), [error]);
 
@@ -42,7 +160,7 @@ export function InitialLandingPage() {
   };
 
   return (
-    <div className={styles.page}>
+    <div ref={pageRef} className={styles.page}>
       <div className={styles.orbA} aria-hidden="true" />
       <div className={styles.orbB} aria-hidden="true" />
       <div className={styles.orbC} aria-hidden="true" />

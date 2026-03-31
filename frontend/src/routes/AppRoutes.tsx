@@ -1,4 +1,5 @@
-import { Redirect, Route, Switch } from "wouter";
+import { type ReactNode, useRef } from "react";
+import { Redirect, Route, Switch, useLocation } from "wouter";
 
 import { ForgotPasswordPage } from "@/features/auth/pages/ForgotPasswordPage";
 import { LoginPage } from "@/features/auth/pages/LoginPage";
@@ -15,17 +16,60 @@ import { AdminUserSearchPage } from "@/features/users/pages/AdminUserSearchPage"
 import { StudentsPage } from "@/features/users/pages/StudentsPage";
 import { UserDashboardPage } from "@/features/users/pages/UserDashboardPage";
 import { getRoleFromToken } from "@/lib/auth-role";
+import { createGsapMatchMedia, getMotionProfile, gsap, useGSAP } from "@/lib/gsap";
 import { useToken } from "@/lib/session";
 
 export function AppRoutes() {
+  const [location] = useLocation();
   const [tokenState] = useToken();
+  const routeShellRef = useRef<HTMLDivElement | null>(null);
+
+  useGSAP(
+    () => {
+      const shell = routeShellRef.current;
+      if (!shell) {
+        return;
+      }
+
+      const motion = getMotionProfile();
+      const matchMedia = createGsapMatchMedia();
+
+      if (!matchMedia) {
+        gsap.set(shell, { clearProps: "opacity,visibility,transform" });
+        return;
+      }
+
+      matchMedia.add("(prefers-reduced-motion: reduce)", () => {
+        gsap.set(shell, { clearProps: "opacity,visibility,transform" });
+      });
+
+      matchMedia.add("(prefers-reduced-motion: no-preference)", () => {
+        gsap.fromTo(
+          shell,
+          { autoAlpha: 0, y: motion.distanceSm },
+          {
+            autoAlpha: 1,
+            y: 0,
+            duration: motion.durationBase,
+            ease: "power2.out",
+            clearProps: "opacity,visibility,transform",
+          },
+        );
+      });
+
+      return () => matchMedia.revert();
+    },
+    { dependencies: [location, tokenState.state], scope: routeShellRef, revertOnUpdate: true },
+  );
+
+  let content: ReactNode;
 
   switch (tokenState.state) {
     case "LOGGED_IN": {
       const role = getRoleFromToken(tokenState.accessToken);
 
       if (role === "ADMIN") {
-        return (
+        content = (
           <Switch>
             <Route path="/">
               <TripsAdminPage />
@@ -53,10 +97,11 @@ export function AppRoutes() {
             </Route>
           </Switch>
         );
+        break;
       }
 
       if (role === "USER") {
-        return (
+        content = (
           <Switch>
             <Route path="/">
               <UserDashboardPage />
@@ -69,9 +114,10 @@ export function AppRoutes() {
             </Route>
           </Switch>
         );
+        break;
       }
 
-      return (
+      content = (
         <Switch>
           <Route path="/">
             <UserDashboardPage />
@@ -84,10 +130,11 @@ export function AppRoutes() {
           </Route>
         </Switch>
       );
+      break;
     }
 
     case "LOGGED_OUT":
-      return (
+      content = (
         <Switch>
           <Route path="/">
             <InitialLandingPage />
@@ -109,8 +156,16 @@ export function AppRoutes() {
           </Route>
         </Switch>
       );
+      break;
 
     default:
-      return tokenState satisfies never;
+      content = tokenState satisfies never;
+      break;
   }
+
+  return (
+    <div key={`${tokenState.state}-${location}`} ref={routeShellRef}>
+      {content}
+    </div>
+  );
 }

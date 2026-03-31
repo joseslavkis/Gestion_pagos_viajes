@@ -11,6 +11,7 @@ import type {
   SpreadsheetRowInstallmentDTO,
 } from "@/features/trips/types/trips-dtos";
 import { ApiError } from "@/lib/api-error";
+import { createGsapMatchMedia, getMotionProfile, gsap, useGSAP } from "@/lib/gsap";
 import { useToken } from "@/lib/session";
 
 import styles from "./SpreadsheetPage.module.css";
@@ -49,6 +50,7 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const tableContainerRef = useRef<HTMLDivElement | null>(null);
+  const pageRef = useRef<HTMLElement | null>(null);
 
   const { data, isLoading, error } = useSpreadsheet(tripId, params);
   const { data: tripData } = useTrip(tripId);
@@ -192,9 +194,69 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
 
   const rows = data?.rows ?? [];
   const installmentsCount = data?.installmentsCount ?? 0;
+
+  useGSAP(
+    () => {
+      if (!pageRef.current) {
+        return;
+      }
+
+      const motion = getMotionProfile();
+      const mm = createGsapMatchMedia();
+
+      if (!mm) {
+        const targets = [
+          pageRef.current?.querySelector(`.${styles.header}`),
+          ...Array.from(pageRef.current?.querySelectorAll("tbody tr") ?? []),
+        ];
+        gsap.set(targets, { clearProps: "opacity,visibility,transform" });
+        return;
+      }
+
+      mm.add("(prefers-reduced-motion: reduce)", () => {
+        const targets = [
+          pageRef.current?.querySelector(`.${styles.header}`),
+          ...Array.from(pageRef.current?.querySelectorAll("tbody tr") ?? []),
+        ];
+        gsap.set(targets, { clearProps: "opacity,visibility,transform" });
+      });
+
+      mm.add("(prefers-reduced-motion: no-preference)", () => {
+        const header = pageRef.current?.querySelector(`.${styles.header}`);
+        const rowsInTable = pageRef.current?.querySelectorAll("tbody tr");
+
+        if (header) {
+          gsap.fromTo(
+            header,
+            { autoAlpha: 0, y: motion.distanceSm },
+            { autoAlpha: 1, y: 0, duration: motion.durationFast, ease: "power2.out" },
+          );
+        }
+
+        if (rowsInTable && rowsInTable.length > 0) {
+          gsap.fromTo(
+            rowsInTable,
+            { autoAlpha: 0, y: motion.distanceSm },
+            {
+              autoAlpha: 1,
+              y: 0,
+              duration: motion.durationFast,
+              stagger: motion.staggerFast,
+              ease: "power2.out",
+              clearProps: "opacity,visibility,transform",
+            },
+          );
+        }
+      });
+
+      return () => mm.revert();
+    },
+    { dependencies: [isLoading, rows.length, params.page], scope: pageRef, revertOnUpdate: true },
+  );
+
   return (
     <CommonLayout>
-      <section className={styles.page}>
+      <section ref={pageRef} className={styles.page}>
         <div className={styles.shell}>
           <header className={styles.header}>
             <div className={styles.headerRow}>

@@ -4,6 +4,7 @@ import { Link } from "wouter";
 import { getRoleFromToken } from "@/lib/auth-role";
 import { useToken } from "@/lib/session";
 import logo from "@/assets/logo.png";
+import { createGsapMatchMedia, getMotionProfile, gsap, useGSAP } from "@/lib/gsap";
 
 import styles from "./CommonLayout.module.css";
 
@@ -11,6 +12,8 @@ export const CommonLayout = ({ children }: React.PropsWithChildren) => {
   const [tokenState] = useToken();
   const [isMenuOpen, setIsMenuOpen] = React.useState(false);
   const menuRef = React.useRef<HTMLDivElement | null>(null);
+  const menuListRef = React.useRef<HTMLUListElement | null>(null);
+  const bodyRef = React.useRef<HTMLElement | null>(null);
 
   React.useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -25,6 +28,101 @@ export const CommonLayout = ({ children }: React.PropsWithChildren) => {
 
   const toggleMenu = () => setIsMenuOpen((prev) => !prev);
   const closeMenu = () => setIsMenuOpen(false);
+
+  useGSAP(
+    () => {
+      if (!bodyRef.current) {
+        return;
+      }
+
+      const motion = getMotionProfile();
+      const mm = createGsapMatchMedia();
+
+      if (!mm) {
+        gsap.set(bodyRef.current, { clearProps: "opacity,visibility,transform" });
+        return;
+      }
+
+      mm.add("(prefers-reduced-motion: reduce)", () => {
+        gsap.set(bodyRef.current, { clearProps: "opacity,visibility,transform" });
+      });
+
+      mm.add("(prefers-reduced-motion: no-preference)", () => {
+        gsap.fromTo(
+          bodyRef.current,
+          { autoAlpha: 0, y: motion.distanceSm },
+          {
+            autoAlpha: 1,
+            y: 0,
+            duration: motion.durationBase,
+            ease: "power2.out",
+            clearProps: "opacity,visibility,transform",
+          },
+        );
+      });
+
+      return () => mm.revert();
+    },
+    { dependencies: [tokenState.state], scope: bodyRef, revertOnUpdate: true },
+  );
+
+  useGSAP(
+    () => {
+      if (!isMenuOpen || !menuListRef.current) {
+        return;
+      }
+
+      const motion = getMotionProfile();
+      const mm = createGsapMatchMedia();
+
+      if (!mm) {
+        gsap.set(menuListRef.current, { clearProps: "opacity,visibility,transform" });
+        return;
+      }
+
+      mm.add("(prefers-reduced-motion: reduce)", () => {
+        gsap.set(menuListRef.current, { clearProps: "opacity,visibility,transform" });
+      });
+
+      mm.add("(prefers-reduced-motion: no-preference)", () => {
+        const items = menuListRef.current?.querySelectorAll("li");
+
+        gsap.fromTo(
+          menuListRef.current,
+          {
+            autoAlpha: 0,
+            y: -motion.distanceSm,
+            scale: motion.isCompact ? 0.99 : 0.98,
+            transformOrigin: "top right",
+          },
+          {
+            autoAlpha: 1,
+            y: 0,
+            scale: 1,
+            duration: motion.durationFast,
+            ease: "power2.out",
+          },
+        );
+
+        if (items && items.length > 0) {
+          gsap.fromTo(
+            items,
+            { autoAlpha: 0, x: motion.distanceSm },
+            {
+              autoAlpha: 1,
+              x: 0,
+              duration: motion.durationFast,
+              stagger: motion.staggerFast,
+              ease: "power2.out",
+            },
+          );
+        }
+      });
+
+      return () => mm.revert();
+    },
+    { dependencies: [isMenuOpen], scope: menuRef, revertOnUpdate: true },
+  );
 
   return (
     <div className={styles.mainLayout}>
@@ -51,13 +149,13 @@ export const CommonLayout = ({ children }: React.PropsWithChildren) => {
           </button>
 
           {isMenuOpen ? (
-            <ul className={styles.menuDropdown}>
+            <ul ref={menuListRef} className={styles.menuDropdown}>
               {tokenState.state === "LOGGED_OUT" ? <LoggedOutLinks onNavigate={closeMenu} /> : <LoggedInLinks onNavigate={closeMenu} />}
             </ul>
           ) : null}
         </div>
       </header>
-      <main className={styles.body}>{children}</main>
+      <main ref={bodyRef} className={styles.body}>{children}</main>
     </div>
   );
 };
