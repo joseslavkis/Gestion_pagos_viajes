@@ -13,4 +13,8 @@ public interface BankAccountRepository extends JpaRepository<BankAccount, Long> 
     List<BankAccount> findByActiveTrueAndCurrencyOrderByDisplayOrderAscIdAsc(Currency currency);
 
     List<BankAccount> findAllByOrderByDisplayOrderAscIdAsc();
+
+    boolean existsByAliasIgnoreCase(String alias);
+
+    boolean existsByCbu(String cbu);
 }
