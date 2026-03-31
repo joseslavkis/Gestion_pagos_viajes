@@ -4,7 +4,7 @@ const MoneySchema = z.union([z.string(), z.number()]).transform((value) => Numbe
 export const CurrencySchema = z.enum(["ARS", "USD"]);
 export type Currency = z.infer<typeof CurrencySchema>;
 
-export const PaymentMethodSchema = z.enum(["BANK_TRANSFER", "CASH", "CARD", "OTHER"]);
+export const PaymentMethodSchema = z.enum(["BANK_TRANSFER", "CASH", "DEPOSIT", "OTHER"]);
 export type PaymentMethod = z.infer<typeof PaymentMethodSchema>;
 
 export const ReceiptStatusSchema = z.enum(["PENDING", "APPROVED", "REJECTED"]);

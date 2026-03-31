@@ -1,7 +1,14 @@
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, MutationCache } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { ApiError } from "@/lib/api-error";
 
 export const appQueryClient = new QueryClient({
+  mutationCache: new MutationCache({
+    onError: (error) => {
+      const message = error instanceof Error ? error.message : "Ocurrió un error inesperado al procesar tu solicitud.";
+      toast.error(message);
+    },
+  }),
   defaultOptions: {
     queries: {
       retry: (failureCount, error) => {

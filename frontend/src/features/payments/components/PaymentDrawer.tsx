@@ -30,7 +30,7 @@ const receiptStatusLabels: Record<string, string> = {
 const paymentMethodLabels: Record<string, string> = {
   BANK_TRANSFER: "Transferencia bancaria",
   CASH: "Efectivo",
-  CARD: "Tarjeta",
+  DEPOSIT: "Depósito",
   OTHER: "Otro",
 };
 

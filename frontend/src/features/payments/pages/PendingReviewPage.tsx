@@ -20,7 +20,7 @@ const dateFormatter = new Intl.DateTimeFormat("es-AR", {
 const paymentMethodLabels: Record<string, string> = {
   BANK_TRANSFER: "Transferencia bancaria",
   CASH: "Efectivo",
-  CARD: "Tarjeta",
+  DEPOSIT: "Depósito",
   OTHER: "Otro",
 };
 

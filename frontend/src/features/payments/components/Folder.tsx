@@ -10,6 +10,7 @@ type FolderProps = {
   className?: string;
   onOpenChange?: (isOpen: boolean) => void;
   forceClose?: boolean;
+  isHovered?: boolean;
 };
 
 const darkenColor = (hex: string, percent: number): string => {
@@ -40,6 +41,7 @@ export function Folder({
   className = "",
   onOpenChange,
   forceClose = false,
+  isHovered = false,
 }: FolderProps) {
   const maxItems = 3;
   const papers = items.slice(0, maxItems);
@@ -107,7 +109,7 @@ export function Folder({
     "--paper-3": paper3,
   } as CSSProperties;
 
-  const folderClassName = `folder ${open ? "open" : ""}`.trim();
+  const folderClassName = `folder ${open ? "open" : ""} ${isHovered ? "is-hovered" : ""}`.trim();
   const scaleStyle: CSSProperties = { transform: `scale(${size})` };
 
   return (

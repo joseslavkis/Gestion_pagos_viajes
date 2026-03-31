@@ -12,6 +12,7 @@ import { TripsAdminPage } from "@/features/trips/pages/TripsAdminPage";
 import { SpreadsheetPage } from "@/features/trips/pages/SpreadsheetPage";
 import { AdminUserDetailPage } from "@/features/users/pages/AdminUserDetailPage";
 import { AdminUserSearchPage } from "@/features/users/pages/AdminUserSearchPage";
+import { StudentsPage } from "@/features/users/pages/StudentsPage";
 import { UserDashboardPage } from "@/features/users/pages/UserDashboardPage";
 import { getRoleFromToken } from "@/lib/auth-role";
 import { useToken } from "@/lib/session";
@@ -60,6 +61,9 @@ export function AppRoutes() {
             <Route path="/">
               <UserDashboardPage />
             </Route>
+            <Route path="/mis-hijos">
+              <StudentsPage />
+            </Route>
             <Route>
               <Redirect href="/" />
             </Route>
@@ -71,6 +75,9 @@ export function AppRoutes() {
         <Switch>
           <Route path="/">
             <UserDashboardPage />
+          </Route>
+          <Route path="/mis-hijos">
+            <StudentsPage />
           </Route>
           <Route>
             <Redirect href="/" />

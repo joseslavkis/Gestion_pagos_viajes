@@ -1,0 +1,145 @@
+.page {
+  min-height: 100vh;
+  padding: 2rem 1rem 2.5rem;
+  background-color: #f0f7ff;
+}
+
+.container {
+  width: min(600px, 100%);
+  margin: 0 auto;
+  display: grid;
+  gap: 1.25rem;
+}
+
+.title {
+  margin: 0;
+  font-size: clamp(1.35rem, 2vw, 1.8rem);
+  color: #0d3657;
+}
+
+.section {
+  border-radius: 1.1rem;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(209, 227, 255, 0.9);
+  box-shadow:
+    0 0.75rem 1.5rem rgba(15, 23, 42, 0.06),
+    0 0 0 1px rgba(148, 163, 184, 0.06);
+  padding: 1.25rem;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.helperText {
+  margin: 0;
+  color: #526883;
+}
+
+.helperWarning {
+  margin: 0;
+  color: #92400e;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.errorText {
+  margin: 0;
+  color: #b91c1c;
+  font-size: 0.9rem;
+}
+
+.successText {
+  margin: 0;
+  color: #166534;
+  font-size: 0.9rem;
+}
+
+.form {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.formField {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.label {
+  font-weight: 600;
+  color: #1f3f63;
+}
+
+.input,
+.select {
+  border: 1px solid #b5cde9;
+  background: #fff;
+  border-radius: 0.6rem;
+  min-height: 40px;
+  padding: 0 0.7rem;
+  color: #0f2f57;
+}
+
+.input:focus,
+.select:focus {
+  outline: 2px solid rgba(11, 119, 213, 0.25);
+  border-color: #0b77d5;
+}
+
+.schoolSelectWrap {
+  position: relative;
+}
+
+.schoolSelectWrap::after {
+  content: "";
+  position: absolute;
+  right: 0.85rem;
+  top: 50%;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-right: 2px solid #2c557f;
+  border-bottom: 2px solid #2c557f;
+  transform: translateY(-65%) rotate(45deg);
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+.schoolSelect {
+  border: 1px solid #b5cde9;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(241, 247, 255, 0.96) 100%);
+  border-radius: 0.75rem;
+  min-height: 42px;
+  padding: 0 2.1rem 0 0.7rem;
+  color: #0f2f57;
+  width: 100%;
+  appearance: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.schoolSelect:hover:not(:disabled) {
+  border-color: #91b4de;
+}
+
+.schoolSelect:focus {
+  outline: none;
+  border-color: #0b77d5;
+  box-shadow: 0 0 0 3px rgba(11, 119, 213, 0.17), 0 8px 18px rgba(11, 119, 213, 0.08);
+}
+
+.schoolSelect:disabled {
+  color: #6b829d;
+  background: #eef3f9;
+}
+
+.submitButton {
+  min-height: 42px;
+  border-radius: 0.65rem;
+  border: 1px solid rgba(11, 91, 207, 0.38);
+  background: linear-gradient(180deg, #0b77d5 0%, #035fbc 100%);
+  color: #ffffff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.submitButton:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}

@@ -1,8 +1,9 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, MutationCache } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { afterEach, describe, expect, it } from "vitest";
 import userEvent from "@testing-library/user-event";
+import { Toaster, toast } from "sonner";
 
 import { AppRoutes } from "@/routes/AppRoutes";
 import { TokenProvider } from "@/lib/session";
@@ -13,6 +14,12 @@ function renderLoggedOutRoutes(path = "/signup") {
   window.history.replaceState({}, "", path);
 
   const queryClient = new QueryClient({
+    mutationCache: new MutationCache({
+      onError: (error) => {
+        const message = error instanceof Error ? error.message : "Ocurrió un error inesperado al procesar tu solicitud.";
+        toast.error(message);
+      },
+    }),
     defaultOptions: {
       queries: { retry: false },
       mutations: { retry: false },
@@ -23,6 +30,7 @@ function renderLoggedOutRoutes(path = "/signup") {
     <QueryClientProvider client={queryClient}>
       <TokenProvider>
         <AppRoutes />
+        <Toaster />
       </TokenProvider>
     </QueryClientProvider>,
   );
@@ -87,9 +95,7 @@ describe("Auth routes integration", () => {
     const user = await completeSignupForm();
     await user.click(screen.getByRole("button", { name: "Crear cuenta" }));
 
-    await screen.findByRole("heading", { name: "Mis hijos" });
-    expect(await screen.findByText("Tomas Benitez")).toBeInTheDocument();
-    expect(screen.getByText("Podés reclamar hijos solo si la agencia precargó su DNI en algún viaje.")).toBeInTheDocument();
+    await screen.findByRole("heading", { name: "Panel de pagos" });
     await waitFor(() =>
       expect(signupBody).toEqual({
         email: "clara@test.com",

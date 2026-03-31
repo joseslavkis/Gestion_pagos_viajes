@@ -270,7 +270,7 @@ function TripCard({ trip, onAssign, onManageStudents, onDelete }: TripCardProps)
           onClick={() => onManageStudents(trip)}
           aria-label={`Ver chicos del viaje ${trip.name}`}
         >
-          🧾 Ver chicos
+          🧾 Ver alumnos
         </button>
         <TooltipWrapper
           disabled={trip.assignedParticipantsCount > 0}
@@ -404,7 +404,7 @@ type TripModalCreateProps = {
 };
 
 function TripModalCreate({ onClose }: TripModalCreateProps) {
-  const { mutateAsync, error, isPending } = useCreateTrip();
+  const { mutateAsync, isPending } = useCreateTrip();
   const createDefaults: TripCreateDTO = {
     name: "",
     totalAmount: 0,
@@ -434,7 +434,7 @@ function TripModalCreate({ onClose }: TripModalCreateProps) {
       description="Define el monto total, cuotas y parámetros de vencimiento. Podrás asignar usuarios luego."
       onClose={onClose}
     >
-      <RequestState isLoading={isPending} error={error ?? null} loadingLabel="Creando viaje...">
+      <RequestState isLoading={isPending} loadingLabel="Creando viaje...">
         <formData.AppForm>
           <formData.FormContainer submitLabel="Crear viaje" pendingLabel="Creando viaje..." isPending={isPending}>
             <div className={styles.fieldGroup}>
@@ -569,13 +569,7 @@ function TripModalCreate({ onClose }: TripModalCreateProps) {
                 )}
               />
 
-              {error?.fieldErrors?.length ? (
-                <ul className={styles.fieldErrorList}>
-                  {error.fieldErrors.map((message) => (
-                    <li key={message}>{message}</li>
-                  ))}
-                </ul>
-              ) : null}
+              {/* Mutation errors handled by global MutationCache toast */}
             </div>
           </formData.FormContainer>
         </formData.AppForm>
@@ -592,7 +586,7 @@ type AssignUsersModalProps = {
 };
 
 function AssignUsersModal({ tripId, tripName, onSuccess, onClose }: AssignUsersModalProps) {
-  const { mutateAsync, error, isPending, data } = useAssignUsersBulk();
+  const { mutateAsync, isPending, data } = useAssignUsersBulk();
   const [rawInput, setRawInput] = useState("");
 
   const parsedDnis = useMemo(() => {
@@ -655,7 +649,6 @@ function AssignUsersModal({ tripId, tripName, onSuccess, onClose }: AssignUsersM
     >
       <RequestState
         isLoading={isPending}
-        error={error ?? null}
         loadingLabel="Asignando alumnos al viaje..."
       >
         <>
@@ -849,7 +842,7 @@ type DeleteTripModalProps = {
 };
 
 function DeleteTripModal({ trip, onClose }: DeleteTripModalProps) {
-  const { mutateAsync, error, isPending } = useDeleteTrip();
+  const { mutateAsync, isPending } = useDeleteTrip();
 
   const handleConfirm = async () => {
     await mutateAsync({ id: trip.id });
@@ -864,7 +857,6 @@ function DeleteTripModal({ trip, onClose }: DeleteTripModalProps) {
     >
       <RequestState
         isLoading={isPending}
-        error={error ?? null}
         loadingLabel="Eliminando viaje..."
       >
         {trip.assignedParticipantsCount > 0 ? (

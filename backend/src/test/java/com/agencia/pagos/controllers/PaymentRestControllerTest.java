@@ -116,7 +116,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 installment.getId(),
                 BigDecimal.valueOf(10000),
                 LocalDate.now(),
-                PaymentMethod.CARD,
+                PaymentMethod.DEPOSIT,
                 createBankAccount(Currency.ARS).getId()
         );
 
@@ -212,7 +212,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 .installment(installment)
                 .reportedAmount(BigDecimal.valueOf(10000))
                 .reportedPaymentDate(LocalDate.now())
-                .paymentMethod(PaymentMethod.CARD)
+                .paymentMethod(PaymentMethod.DEPOSIT)
                 .status(ReceiptStatus.PENDING)
                 .fileKey("")
                 .build());
@@ -312,7 +312,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 .installment(installment)
                 .reportedAmount(BigDecimal.valueOf(10000))
                 .reportedPaymentDate(LocalDate.now())
-                .paymentMethod(PaymentMethod.CARD)
+                .paymentMethod(PaymentMethod.DEPOSIT)
                 .status(ReceiptStatus.REJECTED)
                 .fileKey("")
                 .adminObservation("Rechazado previamente")

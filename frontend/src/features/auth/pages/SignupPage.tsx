@@ -70,7 +70,7 @@ const primaryButtonStyle: CSSProperties = {
 };
 
 export function SignupPage() {
-  const { mutateAsync, error, isPending } = useSignup();
+  const { mutateAsync, isPending } = useSignup();
   const { data: schools, isLoading: isSchoolsLoading, error: schoolsError } = useSchools();
   const [form, setForm] = useState<SignupRequest>({
     email: "",
@@ -184,7 +184,7 @@ export function SignupPage() {
           <p className={styles.description}>Completá tus datos y reclamá los DNIs de tus hijos que la agencia cargó previamente para sus viajes.</p>
         </header>
 
-        <RequestState isLoading={isPending} error={error ?? null} loadingLabel="Creando cuenta...">
+        <RequestState isLoading={isPending} loadingLabel="Creando cuenta...">
           <form onSubmit={handleSubmit} style={formLayout}>
             <div style={cardStyle}>
               <h2 style={{ margin: 0 }}>Datos del responsable</h2>

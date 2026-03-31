@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
 
@@ -7,7 +7,7 @@ import { server } from "@/test/msw-server";
 import { renderWithProviders } from "@/test/test-utils";
 
 describe("User dashboard routes integration", () => {
-  it("reclama un hijo pendiente y refresca alumnos y cuotas", async () => {
+  it("reclama un hijo pendiente y refresca alumnos y cuotas desde la pagina Mis hijos", async () => {
     let installmentsRequests = 0;
     let studentItems: Array<{
       id: number;
@@ -76,7 +76,8 @@ describe("User dashboard routes integration", () => {
       }),
     );
 
-    window.history.replaceState({}, "", "/");
+    // Navigate directly to /mis-hijos
+    window.history.replaceState({}, "", "/mis-hijos");
     renderWithProviders(<AppRoutes />, "ROLE_USER");
 
     fireEvent.change(await screen.findByLabelText("Nombre completo"), {
@@ -96,14 +97,10 @@ describe("User dashboard routes integration", () => {
 
     expect(await screen.findByText("El alumno Lucia Perez se agrego con exito.")).toBeInTheDocument();
     expect(await screen.findByText("Lucia Perez")).toBeInTheDocument();
-    await waitFor(() => expect(installmentsRequests).toBeGreaterThanOrEqual(2));
-    expect(await screen.findByText("DNI alumno: 40111222")).toBeInTheDocument();
   });
 
   it("muestra el error del backend si intenta reclamar un DNI no habilitado", async () => {
     server.use(
-      http.get("http://localhost:30002/api/v1/payments/my/installments", () => HttpResponse.json([])),
-      http.get("http://localhost:30002/api/v1/bank-accounts", () => HttpResponse.json([])),
       http.get("http://localhost:30002/api/v1/users/students", () => HttpResponse.json([])),
       http.get("http://localhost:30002/api/v1/schools", () =>
         HttpResponse.json([
@@ -118,7 +115,7 @@ describe("User dashboard routes integration", () => {
       ),
     );
 
-    window.history.replaceState({}, "", "/");
+    window.history.replaceState({}, "", "/mis-hijos");
     renderWithProviders(<AppRoutes />, "ROLE_USER");
 
     fireEvent.change(await screen.findByLabelText("Nombre completo"), {

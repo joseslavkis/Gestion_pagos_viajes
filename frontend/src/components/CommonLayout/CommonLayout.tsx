@@ -95,6 +95,13 @@ const LoggedInLinks = ({ onNavigate }: { onNavigate: () => void }) => {
           {role === "ADMIN" ? "Viajes" : "Inicio"}
         </Link>
       </li>
+      {role === "USER" ? (
+        <li>
+          <Link href="/mis-hijos" className={styles.navLink} onClick={onNavigate}>
+            Mis hijos
+          </Link>
+        </li>
+      ) : null}
       {role === "ADMIN" ? (
         <>
           <li>
