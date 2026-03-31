@@ -28,6 +28,7 @@ public interface PaymentReceiptRepository extends JpaRepository<PaymentReceipt, 
         JOIN FETCH i.user
         LEFT JOIN FETCH i.student
         LEFT JOIN FETCH p.bankAccount
+        LEFT JOIN FETCH p.batch
         WHERE i.user.id = :userId
         ORDER BY p.reportedPaymentDate DESC, p.id DESC
         """)
@@ -38,6 +39,8 @@ public interface PaymentReceiptRepository extends JpaRepository<PaymentReceipt, 
         FROM PaymentReceipt p
         JOIN FETCH p.installment i
         LEFT JOIN FETCH i.student
+        LEFT JOIN FETCH p.batch
+        LEFT JOIN FETCH p.bankAccount
         WHERE i.id IN :installmentIds
         ORDER BY p.id DESC
         """)
@@ -51,10 +54,52 @@ public interface PaymentReceiptRepository extends JpaRepository<PaymentReceipt, 
         JOIN FETCH i.user
         LEFT JOIN FETCH i.student
         LEFT JOIN FETCH p.bankAccount
+        LEFT JOIN FETCH p.batch
         WHERE p.status = :status
-        ORDER BY p.id DESC
+        ORDER BY COALESCE(p.batch.id, p.id) DESC, p.id ASC
         """)
     List<PaymentReceipt> findByStatusWithContext(@Param("status") ReceiptStatus status);
 
+    @Query("""
+        SELECT p
+        FROM PaymentReceipt p
+        JOIN FETCH p.installment i
+        JOIN FETCH i.trip
+        JOIN FETCH i.user
+        LEFT JOIN FETCH i.student
+        LEFT JOIN FETCH p.bankAccount
+        LEFT JOIN FETCH p.batch
+        WHERE p.batch.id IN :batchIds
+        ORDER BY p.batch.id DESC, i.installmentNumber ASC, p.id ASC
+        """)
+    List<PaymentReceipt> findByBatchIdInWithContext(@Param("batchIds") List<Long> batchIds);
+
     boolean existsByInstallmentIdAndStatus(Long installmentId, ReceiptStatus status);
+
+    @Query("""
+        SELECT CASE WHEN COUNT(p) > 0 THEN true ELSE false END
+        FROM PaymentReceipt p
+        JOIN p.installment i
+        WHERE p.status = :status
+          AND i.trip.id = :tripId
+          AND i.user.id = :userId
+          AND (
+            (:studentId IS NULL AND i.student IS NULL)
+            OR i.student.id = :studentId
+          )
+        """)
+    boolean existsByTripIdAndUserIdAndStudentIdAndStatus(
+            @Param("tripId") Long tripId,
+            @Param("userId") Long userId,
+            @Param("studentId") Long studentId,
+            @Param("status") ReceiptStatus status
+    );
+
+    @Query("""
+        SELECT DISTINCT p.batch.id
+        FROM PaymentReceipt p
+        WHERE p.batch IS NOT NULL
+          AND p.installment.trip.id = :tripId
+        """)
+    List<Long> findDistinctBatchIdsByInstallmentTripId(@Param("tripId") Long tripId);
 }

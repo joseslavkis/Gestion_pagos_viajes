@@ -23,12 +23,19 @@ public class InstallmentUiStatusResolver {
             BigDecimal paidAmount,
             BigDecimal totalDue
     ) {
-        if (latestReceiptStatus == ReceiptStatus.REJECTED) {
-            return build(InstallmentUiStatusCode.RECEIPT_REJECTED);
+        boolean fullyCovered = paidAmount != null
+                && totalDue != null
+                && paidAmount.compareTo(totalDue) >= 0;
+        if (fullyCovered || effectiveInstallmentStatus == InstallmentStatus.GREEN) {
+            return build(InstallmentUiStatusCode.PAID);
         }
 
         if (latestReceiptStatus == ReceiptStatus.PENDING) {
             return build(InstallmentUiStatusCode.UNDER_REVIEW);
+        }
+
+        if (latestReceiptStatus == ReceiptStatus.REJECTED) {
+            return build(InstallmentUiStatusCode.RECEIPT_REJECTED);
         }
 
         if (effectiveInstallmentStatus == InstallmentStatus.RETROACTIVE) {
@@ -37,16 +44,6 @@ public class InstallmentUiStatusResolver {
 
         if (effectiveInstallmentStatus == InstallmentStatus.RED) {
             return build(InstallmentUiStatusCode.OVERDUE);
-        }
-
-        if (effectiveInstallmentStatus == InstallmentStatus.GREEN) {
-            boolean fullyCovered = paidAmount != null
-                    && totalDue != null
-                    && paidAmount.compareTo(totalDue) >= 0;
-            if (latestReceiptStatus == ReceiptStatus.APPROVED && fullyCovered) {
-                return build(InstallmentUiStatusCode.PAID);
-            }
-            return build(InstallmentUiStatusCode.UP_TO_DATE);
         }
 
         if (isDueSoon(dueDate, yellowWarningDays)) {

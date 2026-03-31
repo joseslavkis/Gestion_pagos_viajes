@@ -33,17 +33,17 @@ class InstallmentUiStatusResolverTest {
     }
 
     @Test
-    void greenSinReceipt_devuelveUpToDate() {
+    void greenSinReceipt_devuelvePaid() {
         InstallmentUiStatus result = resolver.resolve(
                 InstallmentStatus.GREEN,
                 null,
                 LocalDate.now().plusDays(10),
                 5,
-                BigDecimal.ZERO,
+                BigDecimal.valueOf(200),
                 BigDecimal.valueOf(200)
         );
 
-        assertEquals(InstallmentUiStatusCode.UP_TO_DATE, result.code());
+        assertEquals(InstallmentUiStatusCode.PAID, result.code());
     }
 
     @Test
@@ -132,16 +132,30 @@ class InstallmentUiStatusResolverTest {
     }
 
     @Test
-    void greenConApprovedPeroSaldoParcial_devuelveUpToDate() {
+    void greenConApprovedPeroSaldoParcial_devuelveUnderReviewSiHayPendiente() {
         InstallmentUiStatus result = resolver.resolve(
-                InstallmentStatus.GREEN,
-                ReceiptStatus.APPROVED,
+                InstallmentStatus.YELLOW,
+                ReceiptStatus.PENDING,
                 LocalDate.now().plusDays(10),
                 5,
                 BigDecimal.valueOf(50),
                 BigDecimal.valueOf(200)
         );
 
-        assertEquals(InstallmentUiStatusCode.UP_TO_DATE, result.code());
+        assertEquals(InstallmentUiStatusCode.UNDER_REVIEW, result.code());
+    }
+
+    @Test
+    void cuotaTotalmenteCubiertaConRejectedSigueViendoPaid() {
+        InstallmentUiStatus result = resolver.resolve(
+                InstallmentStatus.YELLOW,
+                ReceiptStatus.REJECTED,
+                LocalDate.now().plusDays(10),
+                5,
+                BigDecimal.valueOf(200),
+                BigDecimal.valueOf(200)
+        );
+
+        assertEquals(InstallmentUiStatusCode.PAID, result.code());
     }
 }

@@ -2,7 +2,7 @@ import styles from "./ReceiptSuccessScreen.module.css";
 
 export type ReceiptSuccessData = {
   tripDisplayName: string;
-  installmentNumber: number;
+  installmentsLabel: string;
   amount: string;
   paymentDate: string;
   paymentMethod: string;
@@ -45,8 +45,8 @@ export function ReceiptSuccessScreen({ data, onBack }: Props) {
             <span className={styles.detailValue}>{data.tripDisplayName}</span>
           </div>
           <div className={styles.detailRow}>
-            <span className={styles.detailLabel}>Cuota</span>
-            <span className={styles.detailValue}>#{data.installmentNumber}</span>
+            <span className={styles.detailLabel}>Cuotas</span>
+            <span className={styles.detailValue}>{data.installmentsLabel}</span>
           </div>
           <div className={styles.detailRow}>
             <span className={styles.detailLabel}>Monto reportado</span>

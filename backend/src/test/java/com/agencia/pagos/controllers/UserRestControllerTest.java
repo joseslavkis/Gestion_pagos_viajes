@@ -207,6 +207,34 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
         assertTrue(pendingTripStudentRepository.findByStudentDniWithTrip(newStudentDto.dni()).isEmpty());
     }
 
+        @Test
+        void addStudent_conDniConPuntosGuionesYEspacios_loNormalizaAntesDeReclamar() throws Exception {
+                UserCreateDTO parentDto = buildValidUser("add-student-normalized-parent");
+                TokenDTO parentTokens = signUp(parentDto);
+
+                String canonicalDni = uniqueDni();
+                seedPendingTrip("add-student-normalized-pending", List.of(canonicalDni));
+
+                String formattedDni = canonicalDni.substring(0, 2) + "." + canonicalDni.substring(2, 5) + "-" + canonicalDni.substring(5);
+                StudentCreateDTO newStudentDto = new StudentCreateDTO("Luca Perez", formattedDni, "Colegio Norte", "5A");
+
+                mockMvc.perform(post("/api/v1/users/students")
+                                .header("Authorization", "Bearer " + parentTokens.accessToken())
+                                .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(newStudentDto)))
+                                .andExpect(status().isCreated())
+                                .andExpect(jsonPath("$.name").value("Luca Perez"))
+                                .andExpect(jsonPath("$.dni").value(canonicalDni));
+
+                User parent = userRepository.findByEmail(parentDto.email()).orElseThrow();
+                List<Installment> newStudentInstallments = installmentRepository.findByUserIdWithTrip(parent.getId()).stream()
+                                .filter(installment -> installment.getStudent() != null && canonicalDni.equals(installment.getStudent().getDni()))
+                                .toList();
+
+                assertEquals(3, newStudentInstallments.size());
+                assertTrue(pendingTripStudentRepository.findByStudentDniWithTrip(canonicalDni).isEmpty());
+        }
+
     @Test
     void addStudent_conDniNoPrecargado_devuelve409ConMensajeDelBackend() throws Exception {
         TokenDTO parentTokens = signUp(buildValidUser("add-student-no-pending"));

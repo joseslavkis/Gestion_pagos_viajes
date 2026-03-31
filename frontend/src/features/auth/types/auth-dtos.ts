@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isCanonicalStudentDni, normalizeStudentDniInput } from "@/lib/dni";
 
 // Backend DTOs (see backend/src/main/java/com/agencia/pagos/dtos/*)
 
@@ -29,7 +30,10 @@ export type ResetPasswordRequest = z.infer<typeof ResetPasswordSchema>;
 
 export const StudentCreateSchema = z.object({
   name: z.string().min(2, "El nombre debe tener al menos 2 caracteres"),
-  dni: z.string().regex(/^\d{7,8}$/, "El DNI debe tener 7 u 8 números"),
+  dni: z
+    .string()
+    .transform(normalizeStudentDniInput)
+    .refine(isCanonicalStudentDni, "El DNI debe tener 7 u 8 números"),
   schoolName: z.string().trim().min(1, "Seleccioná un colegio"),
   courseName: z.string().optional(),
 });

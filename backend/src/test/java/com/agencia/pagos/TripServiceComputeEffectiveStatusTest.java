@@ -5,6 +5,7 @@ import com.agencia.pagos.services.TripService;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.ZoneId;
 
@@ -13,112 +14,109 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class TripServiceComputeEffectiveStatusTest {
 
     private static final ZoneId BUSINESS_ZONE = ZoneId.of("America/Argentina/Buenos_Aires");
+
     private final TripService tripService = new TripService(null, null, null);
 
     @Test
-    void futuroLejano_esYellow() {
+    void cuotaTotalmenteCubierta_esGreenAunqueStoredStatusSeaYellow() {
         LocalDate today = LocalDate.now(BUSINESS_ZONE);
 
         InstallmentStatus result = invokeComputeEffectiveStatus(
                 InstallmentStatus.YELLOW,
-                today.plusDays(60),
-                10
+                today.plusDays(30),
+                10,
+                new BigDecimal("200.00"),
+                new BigDecimal("200.00")
         );
 
-        assertEquals(InstallmentStatus.YELLOW, result);
+        assertEquals(InstallmentStatus.GREEN, result);
     }
 
     @Test
-    void dentroVentanaAmarilla_esYellow() {
-        LocalDate today = LocalDate.now(BUSINESS_ZONE);
-
-        InstallmentStatus result = invokeComputeEffectiveStatus(
-                InstallmentStatus.YELLOW,
-                today.plusDays(5),
-                10
-        );
-
-        assertEquals(InstallmentStatus.YELLOW, result);
-    }
-
-    @Test
-    void exactamenteBordeVentana_esYellow() {
-        LocalDate today = LocalDate.now(BUSINESS_ZONE);
-
-        InstallmentStatus result = invokeComputeEffectiveStatus(
-                InstallmentStatus.YELLOW,
-                today.plusDays(10),
-                10
-        );
-
-        assertEquals(InstallmentStatus.YELLOW, result);
-    }
-
-    @Test
-    void vencidoAyer_esRed() {
-        LocalDate today = LocalDate.now(BUSINESS_ZONE);
-
-        InstallmentStatus result = invokeComputeEffectiveStatus(
-                InstallmentStatus.YELLOW,
-                today.minusDays(1),
-                10
-        );
-
-        assertEquals(InstallmentStatus.RED, result);
-    }
-
-    @Test
-    void retroactive_noCambia_sinImportarFecha() {
+    void retroactiveSinCubrir_noCambiaAunqueLaFechaSeaFutura() {
         LocalDate today = LocalDate.now(BUSINESS_ZONE);
 
         InstallmentStatus result = invokeComputeEffectiveStatus(
                 InstallmentStatus.RETROACTIVE,
                 today.plusDays(90),
-                10
+                10,
+                BigDecimal.ZERO,
+                new BigDecimal("200.00")
         );
 
         assertEquals(InstallmentStatus.RETROACTIVE, result);
     }
 
     @Test
-    void yellowWarningDaysCero_comportamientoLimite() {
+    void vencidaSinCubrir_esRed() {
         LocalDate today = LocalDate.now(BUSINESS_ZONE);
 
-        InstallmentStatus tomorrowResult = invokeComputeEffectiveStatus(
-                InstallmentStatus.YELLOW,
-                today.plusDays(1),
-                0
-        );
-        InstallmentStatus todayResult = invokeComputeEffectiveStatus(
-                InstallmentStatus.YELLOW,
-                today,
-                0
-        );
-        InstallmentStatus yesterdayResult = invokeComputeEffectiveStatus(
+        InstallmentStatus result = invokeComputeEffectiveStatus(
                 InstallmentStatus.YELLOW,
                 today.minusDays(1),
-                0
+                10,
+                BigDecimal.ZERO,
+                new BigDecimal("200.00")
         );
 
-        assertEquals(InstallmentStatus.YELLOW, tomorrowResult);
-        assertEquals(InstallmentStatus.YELLOW, todayResult);
-        assertEquals(InstallmentStatus.RED, yesterdayResult);
+        assertEquals(InstallmentStatus.RED, result);
+    }
+
+    @Test
+    void futuraDentroDeLaVentanaAmarilla_permaneceYellow() {
+        LocalDate today = LocalDate.now(BUSINESS_ZONE);
+
+        InstallmentStatus result = invokeComputeEffectiveStatus(
+                InstallmentStatus.YELLOW,
+                today.plusDays(5),
+                10,
+                new BigDecimal("50.00"),
+                new BigDecimal("200.00")
+        );
+
+        assertEquals(InstallmentStatus.YELLOW, result);
+    }
+
+    @Test
+    void futuraLejanaSinCubrir_permaneceYellow() {
+        LocalDate today = LocalDate.now(BUSINESS_ZONE);
+
+        InstallmentStatus result = invokeComputeEffectiveStatus(
+                InstallmentStatus.YELLOW,
+                today.plusDays(60),
+                10,
+                BigDecimal.ZERO,
+                new BigDecimal("200.00")
+        );
+
+        assertEquals(InstallmentStatus.YELLOW, result);
     }
 
     private InstallmentStatus invokeComputeEffectiveStatus(
             InstallmentStatus storedStatus,
             LocalDate dueDate,
-            int yellowWarningDays
+            int yellowWarningDays,
+            BigDecimal paidAmount,
+            BigDecimal totalDue
     ) {
         try {
             Method method = TripService.class.getDeclaredMethod(
                     "computeEffectiveStatus",
                     InstallmentStatus.class,
                     LocalDate.class,
-                    int.class
+                    int.class,
+                    BigDecimal.class,
+                    BigDecimal.class
             );
             method.setAccessible(true);
-            return (InstallmentStatus) method.invoke(tripService, storedStatus, dueDate, yellowWarningDays);
+            return (InstallmentStatus) method.invoke(
+                    tripService,
+                    storedStatus,
+                    dueDate,
+                    yellowWarningDays,
+                    paidAmount,
+                    totalDue
+            );
         } catch (Exception e) {
             throw new RuntimeException(e);
         }

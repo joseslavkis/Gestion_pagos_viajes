@@ -17,6 +17,7 @@ afterEach(() => {
 
 describe("Admin trips and payments routes integration", () => {
   it("recorre asignacion, listado mixto y desasignacion de un DNI pendiente desde la ruta real", async () => {
+    let receivedBulkDnis: string[] = [];
     let studentItems = [
       {
         studentDni: "44555666",
@@ -58,14 +59,17 @@ describe("Admin trips and payments routes integration", () => {
           },
         ]),
       ),
-      http.post("http://localhost:30002/api/v1/trips/7/users/bulk", () =>
-        HttpResponse.json({
+      http.post("http://localhost:30002/api/v1/trips/7/users/bulk", async ({ request }) => {
+        const body = await request.json() as { studentDnis: string[] };
+        receivedBulkDnis = body.studentDnis;
+
+        return HttpResponse.json({
           status: "OK",
           message: "Asignacion realizada.",
           assignedCount: 1,
           pendingCount: 1,
-        }),
-      ),
+        });
+      }),
       http.get("http://localhost:30002/api/v1/trips/7/students", () => HttpResponse.json(studentItems)),
       http.delete("http://localhost:30002/api/v1/trips/7/students/99888777", () => {
         studentItems = studentItems.filter((item) => item.studentDni !== "99888777");
@@ -77,13 +81,14 @@ describe("Admin trips and payments routes integration", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Asignar usuarios al viaje Bariloche" }));
     fireEvent.change(screen.getByPlaceholderText("Ej: 45678901, 45678902 o uno por línea"), {
-      target: { value: "44555666\n99888777" },
+      target: { value: "44.555.666\n99-888-777" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Confirmar asignación" }));
 
     expect(
       await screen.findByText("Asignacion realizada con exito: 1 alumno asignado · 1 DNI pendiente."),
     ).toBeInTheDocument();
+    expect(receivedBulkDnis).toEqual(["44555666", "99888777"]);
 
     fireEvent.click(screen.getByRole("button", { name: "Ver chicos del viaje Bariloche" }));
 
@@ -107,8 +112,7 @@ describe("Admin trips and payments routes integration", () => {
   it("permite aprobar un comprobante desde /payments/pending-review", async () => {
     let pendingItems = [
       {
-        receiptId: 33,
-        status: "PENDING",
+        batchId: 91,
         reportedAmount: 200,
         paymentCurrency: "ARS",
         exchangeRate: null,
@@ -119,10 +123,6 @@ describe("Admin trips and payments routes integration", () => {
         bankAccountId: 1,
         bankAccountDisplayName: "ICBC - Cuenta en pesos",
         bankAccountAlias: "ICBC.PESOS",
-        installmentId: 12,
-        installmentNumber: 4,
-        installmentDueDate: "2026-03-25",
-        installmentTotalDue: 200,
         tripId: 77,
         tripName: "Bariloche",
         tripCurrency: "ARS",
@@ -132,10 +132,24 @@ describe("Admin trips and payments routes integration", () => {
         userEmail: "jose@example.com",
         studentName: "Alumno Test",
         studentDni: "45678901",
+        receipts: [
+          {
+            receiptId: 33,
+            status: "PENDING",
+            reportedAmount: 200,
+            amountInTripCurrency: 200,
+            installmentId: 12,
+            installmentNumber: 4,
+            installmentDueDate: "2026-03-25",
+            installmentTotalDue: 200,
+            adminObservation: null,
+          },
+        ],
       },
     ];
 
     server.use(
+      http.get("http://localhost:30002/api/v1/trips", () => HttpResponse.json([])),
       http.get("http://localhost:30002/api/v1/payments/pending-review", () => HttpResponse.json(pendingItems)),
       http.patch("http://localhost:30002/api/v1/payments/33/review", () => {
         pendingItems = [];
@@ -162,7 +176,8 @@ describe("Admin trips and payments routes integration", () => {
     renderAdminRoutes("/payments/pending-review");
 
     expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Aprobar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Desglosar cuotas" }));
+    fireEvent.click(screen.getByRole("button", { name: "Aprobar cuota" }));
     expect(await screen.findByText("No hay comprobantes pendientes de revisión.")).toBeInTheDocument();
   });
 });

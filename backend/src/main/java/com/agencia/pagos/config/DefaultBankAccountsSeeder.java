@@ -152,8 +152,19 @@ public class DefaultBankAccountsSeeder {
             return null;
         }
 
-        String trimmed = value.trim();
+        String trimmed = stripOptionalQuotes(value.trim());
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private String stripOptionalQuotes(String value) {
+        if (value.length() >= 2) {
+            char first = value.charAt(0);
+            char last = value.charAt(value.length() - 1);
+            if ((first == '"' && last == '"') || (first == '\'' && last == '\'')) {
+                return value.substring(1, value.length() - 1).trim();
+            }
+        }
+        return value;
     }
 
     private boolean anyBlank(String... values) {

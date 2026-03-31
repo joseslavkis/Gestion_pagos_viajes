@@ -390,7 +390,7 @@ public class UserService implements UserDetailsService {
     private void validateDuplicateStudentDnis(List<StudentCreateDTO> students) {
         Set<String> seenDnis = new HashSet<>();
         for (StudentCreateDTO student : students) {
-            String normalizedDni = student.dni() == null ? "" : student.dni().trim();
+            String normalizedDni = StudentDniNormalizer.normalizeAndValidate(student.dni());
             if (!seenDnis.add(normalizedDni)) {
                 throw new IllegalStateException("No podés cargar el mismo DNI de alumno más de una vez.");
             }
@@ -398,7 +398,7 @@ public class UserService implements UserDetailsService {
     }
 
     private Student claimPendingStudentForUser(User user, StudentCreateDTO dto) {
-        String dni = dto.dni().trim();
+        String dni = StudentDniNormalizer.normalizeAndValidate(dto.dni());
 
         var pendingAssignments = pendingTripStudentRepository.findByStudentDniWithTripForUpdate(dni);
         if (pendingAssignments.isEmpty()) {
@@ -449,7 +449,9 @@ public class UserService implements UserDetailsService {
         InstallmentStatus effectiveStatus = installmentStatusResolver.computeEffective(
                 installment.getStatus(),
                 installment.getDueDate(),
-                yellowDays
+                yellowDays,
+                installment.getPaidAmount(),
+                installment.getTotalDue()
         );
         InstallmentUiStatus uiStatus = installmentUiStatusResolver.resolve(
                 effectiveStatus,

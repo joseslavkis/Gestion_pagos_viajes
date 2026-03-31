@@ -7,7 +7,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
-public record PendingPaymentReviewDTO(
+public record PaymentBatchDTO(
         Long batchId,
         BigDecimal reportedAmount,
         Currency paymentCurrency,
@@ -15,19 +15,9 @@ public record PendingPaymentReviewDTO(
         BigDecimal amountInTripCurrency,
         LocalDate reportedPaymentDate,
         PaymentMethod paymentMethod,
-        String fileKey,
         Long bankAccountId,
         String bankAccountDisplayName,
         String bankAccountAlias,
-        Long tripId,
-        String tripName,
-        Currency tripCurrency,
-        Long userId,
-        String userName,
-        String userLastname,
-        String userEmail,
-        String studentName,
-        String studentDni,
-        List<PendingPaymentReviewLineDTO> receipts
+        List<PaymentBatchInstallmentDTO> installments
 ) {
 }

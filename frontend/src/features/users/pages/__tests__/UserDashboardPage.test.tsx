@@ -7,6 +7,7 @@ import { server } from "@/test/msw-server";
 import { renderWithProviders } from "@/test/test-utils";
 
 const INSTALLMENTS_URL = "http://localhost:30002/api/v1/payments/my/installments";
+const PREVIEW_URL = "http://localhost:30002/api/v1/payments/preview";
 const BANK_ACCOUNTS_URL = "http://localhost:30002/api/v1/bank-accounts";
 const PAYMENTS_URL = "http://localhost:30002/api/v1/payments";
 
@@ -24,6 +25,8 @@ const makeInstallment = (overrides: Record<string, unknown> = {}) => ({
   paidAmount: 0,
   yellowWarningDays: 5,
   tripCurrency: "ARS",
+  installmentStatus: "YELLOW",
+  latestReceiptStatus: null,
   uiStatusCode: "DUE_SOON",
   uiStatusLabel: "Vence pronto",
   uiStatusTone: "yellow",
@@ -47,62 +50,137 @@ const bankAccount = {
 };
 
 describe("UserDashboardPage", () => {
-  it("muestra los estados de cuotas y permite enviar comprobante con archivo adjunto", async () => {
-    let paymentPayload: Record<string, string> | null = null;
+  it("muestra estados y permite enviar un comprobante por cuotas exactas", async () => {
+    let previewPayload: Record<string, unknown> | null = null;
+    let paymentPayload: Record<string, FormDataEntryValue> | null = null;
 
     server.use(
       http.get(INSTALLMENTS_URL, () =>
         HttpResponse.json([
-          makeInstallment({ uiStatusCode: "DUE_SOON", uiStatusLabel: "Vence pronto", uiStatusTone: "yellow" }),
+          makeInstallment({
+            installmentId: 101,
+            installmentNumber: 1,
+            uiStatusCode: "UNDER_REVIEW",
+            uiStatusLabel: "En revisión",
+            uiStatusTone: "yellow",
+            latestReceiptStatus: "PENDING",
+          }),
           makeInstallment({
             installmentId: 102,
             installmentNumber: 2,
             dueDate: "2026-04-25",
-            uiStatusCode: "UNDER_REVIEW",
-            uiStatusLabel: "En revisión",
-            uiStatusTone: "yellow",
+            uiStatusCode: "RECEIPT_REJECTED",
+            uiStatusLabel: "Comprobante rechazado",
+            uiStatusTone: "red",
+            latestReceiptStatus: "REJECTED",
+            latestReceiptObservation: "El comprobante está borroso.",
           }),
           makeInstallment({
             installmentId: 103,
             installmentNumber: 3,
             dueDate: "2026-05-25",
-            uiStatusCode: "RECEIPT_REJECTED",
-            uiStatusLabel: "Comprobante rechazado",
-            uiStatusTone: "red",
-            latestReceiptObservation: "El comprobante está borroso.",
-          }),
-          makeInstallment({
-            installmentId: 104,
-            installmentNumber: 4,
-            dueDate: "2026-06-25",
             uiStatusCode: "UP_TO_DATE",
             uiStatusLabel: "Al día",
             uiStatusTone: "green",
             paidAmount: 50,
           }),
+          makeInstallment({
+            tripId: 88,
+            studentId: 502,
+            studentName: "Bruno Slavkis",
+            studentDni: "45678902",
+            installmentId: 201,
+            installmentNumber: 1,
+            dueDate: "2026-06-25",
+            uiStatusCode: "DUE_SOON",
+            uiStatusLabel: "Vence pronto",
+            uiStatusTone: "yellow",
+          }),
+          makeInstallment({
+            tripId: 88,
+            studentId: 502,
+            studentName: "Bruno Slavkis",
+            studentDni: "45678902",
+            installmentId: 202,
+            installmentNumber: 2,
+            dueDate: "2026-07-25",
+            uiStatusCode: "UP_TO_DATE",
+            uiStatusLabel: "Al día",
+            uiStatusTone: "green",
+          }),
         ]),
       ),
       http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount])),
+      http.post(PREVIEW_URL, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        previewPayload = body;
+
+        const installmentsCount = Number(body.installmentsCount);
+        return HttpResponse.json({
+          anchorInstallmentId: body.anchorInstallmentId,
+          installmentsCount,
+          tripCurrency: "ARS",
+          paymentCurrency: "ARS",
+          totalReportedAmount: installmentsCount * 200,
+          exchangeRate: null,
+          totalAmountInTripCurrency: installmentsCount * 200,
+          reportedPaymentDate: body.reportedPaymentDate,
+          installments: Array.from({ length: installmentsCount }, (_, index) => ({
+            receiptId: null,
+            installmentId: 201 + index,
+            installmentNumber: index + 1,
+            dueDate: `2026-0${6 + index}-25`,
+            totalDue: 200,
+            paidAmount: 0,
+            remainingAmount: 200,
+            reportedAmount: 200,
+            amountInTripCurrency: 200,
+            status: null,
+          })),
+        });
+      }),
       http.post(PAYMENTS_URL, async ({ request }) => {
         const formData = await request.formData();
-        paymentPayload = Object.fromEntries(formData.entries()) as Record<string, string>;
+        paymentPayload = Object.fromEntries(formData.entries());
+
         return HttpResponse.json(
           {
-            id: 999,
-            installmentId: 101,
-            installmentNumber: 1,
-            reportedAmount: 200,
+            batchId: 999,
+            reportedAmount: 400,
             paymentCurrency: "ARS",
             exchangeRate: null,
-            amountInTripCurrency: 200,
-            reportedPaymentDate: "2026-03-25",
+            amountInTripCurrency: 400,
+            reportedPaymentDate: "2026-03-31",
             paymentMethod: "BANK_TRANSFER",
-            status: "PENDING",
-            fileKey: "",
-            adminObservation: null,
             bankAccountId: 1,
             bankAccountDisplayName: "ICBC - Cuenta en pesos",
             bankAccountAlias: "ICBC.PESOS",
+            installments: [
+              {
+                receiptId: 501,
+                installmentId: 201,
+                installmentNumber: 1,
+                dueDate: "2026-06-25",
+                totalDue: 200,
+                paidAmount: 0,
+                remainingAmount: 200,
+                reportedAmount: 200,
+                amountInTripCurrency: 200,
+                status: "PENDING",
+              },
+              {
+                receiptId: 502,
+                installmentId: 202,
+                installmentNumber: 2,
+                dueDate: "2026-07-25",
+                totalDue: 200,
+                paidAmount: 0,
+                remainingAmount: 200,
+                reportedAmount: 200,
+                amountInTripCurrency: 200,
+                status: "PENDING",
+              },
+            ],
           },
           { status: 201 },
         );
@@ -111,8 +189,8 @@ describe("UserDashboardPage", () => {
 
     renderWithProviders(<UserDashboardPage />);
 
-    expect(await screen.findByText("Vence pronto")).toBeInTheDocument();
-    expect(screen.getByText("En revisión")).toBeInTheDocument();
+    expect(await screen.findByText("En revisión")).toBeInTheDocument();
+    expect(screen.getByText("Comprobante rechazado")).toBeInTheDocument();
     expect(screen.getByText("⚠ El comprobante está borroso.")).toBeInTheDocument();
     expect(
       screen.getByText("Tu comprobante está siendo revisado por el administrador"),
@@ -121,68 +199,80 @@ describe("UserDashboardPage", () => {
       screen.getByText((text) => text.includes("Abonado:") && text.includes("Resta:")),
     ).toBeInTheDocument();
 
-    // "Mis hijos" section is no longer on this page
-    expect(
-      screen.queryByText("Podés reclamar hijos solo si la agencia precargó su DNI en algún viaje."),
-    ).not.toBeInTheDocument();
-
-    // "Historial de viajes" section is no longer on this page
-    expect(screen.queryByText("Historial de viajes")).not.toBeInTheDocument();
-
-    // Select the trip and fill in the form
     fireEvent.change(screen.getByLabelText("Seleccioná el viaje"), {
-      target: { value: "77:501" },
+      target: { value: "88:502" },
     });
-    const amountInput = await screen.findByLabelText("Monto pagado");
-    fireEvent.change(amountInput, { target: { value: "200.00" } });
+    fireEvent.change(await screen.findByLabelText("Cantidad de cuotas consecutivas"), {
+      target: { value: "2" },
+    });
 
-    // Attach a file (mandatory)
+    await waitFor(() =>
+      expect(previewPayload).toMatchObject({
+        anchorInstallmentId: 201,
+        installmentsCount: 2,
+        paymentCurrency: "ARS",
+      }),
+    );
+
+    expect(await screen.findByText((text) => text.includes("Cubrís #1, #2"))).toBeInTheDocument();
+
     const fileInput = document.querySelector("input[type='file']") as HTMLInputElement;
     const file = new File(["test"], "comprobante.jpg", { type: "image/jpeg" });
     fireEvent.change(fileInput, { target: { files: [file] } });
 
-    // Button is now enabled — submit
     const submitBtn = await screen.findByRole("button", { name: "Enviar comprobante" });
     await waitFor(() => expect(submitBtn).not.toBeDisabled());
     fireEvent.click(submitBtn);
 
-    // Success screen should appear
     await screen.findByText("¡Comprobante adjuntado!");
-    expect(screen.getAllByText("Viaje 1 - Martina Slavkis").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Viaje 2 - Bruno Slavkis").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("#1, #2").length).toBeGreaterThan(0);
     expect(screen.getByText("comprobante.jpg")).toBeInTheDocument();
 
     await waitFor(() =>
       expect(paymentPayload).toMatchObject({
-        installmentId: "101",
-        reportedAmount: "200",
+        anchorInstallmentId: "201",
+        installmentsCount: "2",
         bankAccountId: "1",
       }),
     );
   });
 
-  it("bloquea el envio si no se adjunta comprobante (boton deshabilitado)", async () => {
+  it("bloquea el envio cuando el grupo tiene comprobantes pendientes de revision", async () => {
     server.use(
       http.get(INSTALLMENTS_URL, () =>
-        HttpResponse.json([makeInstallment()]),
+        HttpResponse.json([
+          makeInstallment({
+            installmentId: 101,
+            installmentNumber: 1,
+            uiStatusCode: "UNDER_REVIEW",
+            uiStatusLabel: "En revisión",
+            uiStatusTone: "yellow",
+            latestReceiptStatus: "PENDING",
+          }),
+          makeInstallment({
+            installmentId: 102,
+            installmentNumber: 2,
+            dueDate: "2026-04-25",
+            latestReceiptStatus: null,
+          }),
+        ]),
       ),
       http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount])),
     );
 
     renderWithProviders(<UserDashboardPage />);
 
-    // Select trip and fill amount — but do NOT attach a file
-    fireEvent.change(await screen.findByLabelText("Seleccioná el viaje"), {
-      target: { value: "77:501" },
-    });
-    const amountInput = await screen.findByLabelText("Monto pagado");
-    fireEvent.change(amountInput, { target: { value: "200.00" } });
+    expect(
+      await screen.findByText(
+        "Esta inscripción tiene comprobantes pendientes de revisión. Hasta que el administrador los revise no podés enviar un nuevo pago.",
+      ),
+    ).toBeInTheDocument();
 
-    // The submit button must be disabled when no file is attached
-    const submitBtn = screen.getByRole("button", { name: "Enviar comprobante" });
-    expect(submitBtn).toBeDisabled();
-
-    // The folder hint shows the "obligatorio" text
-    expect(screen.getByText("Hacé click para adjuntar el comprobante (obligatorio)")).toBeInTheDocument();
+    expect(screen.getByLabelText("Cantidad de cuotas consecutivas")).toBeDisabled();
+    expect(screen.getByLabelText("Fecha de pago")).toBeDisabled();
+    expect(screen.getByLabelText("Cuenta donde acreditaste el pago")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Enviar comprobante" })).toBeDisabled();
   });
 
   it("muestra la opcion Deposito en el selector de metodo de pago", async () => {

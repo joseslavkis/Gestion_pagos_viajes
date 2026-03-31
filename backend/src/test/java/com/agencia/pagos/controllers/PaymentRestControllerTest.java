@@ -1,7 +1,7 @@
 package com.agencia.pagos.controllers;
 
 import com.agencia.pagos.TestcontainersConfiguration;
-import com.agencia.pagos.dtos.request.RegisterPaymentDTO;
+import com.agencia.pagos.dtos.request.PaymentPreviewRequestDTO;
 import com.agencia.pagos.dtos.request.ReviewPaymentDTO;
 import com.agencia.pagos.dtos.request.UserCreateDTO;
 import com.agencia.pagos.dtos.response.TokenDTO;
@@ -9,19 +9,20 @@ import com.agencia.pagos.entities.BankAccount;
 import com.agencia.pagos.entities.Currency;
 import com.agencia.pagos.entities.Installment;
 import com.agencia.pagos.entities.InstallmentStatus;
+import com.agencia.pagos.entities.PaymentBatch;
 import com.agencia.pagos.entities.PaymentMethod;
 import com.agencia.pagos.entities.PaymentReceipt;
 import com.agencia.pagos.entities.ReceiptStatus;
 import com.agencia.pagos.entities.Student;
 import com.agencia.pagos.entities.Trip;
-import com.agencia.pagos.repositories.BankAccountRepository;
 import com.agencia.pagos.entities.user.User;
+import com.agencia.pagos.repositories.BankAccountRepository;
 import com.agencia.pagos.repositories.InstallmentRepository;
+import com.agencia.pagos.repositories.PaymentBatchRepository;
 import com.agencia.pagos.repositories.PaymentReceiptRepository;
 import com.agencia.pagos.repositories.StudentRepository;
 import com.agencia.pagos.repositories.TripRepository;
 import com.agencia.pagos.repositories.UserRepository;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -30,16 +31,17 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mock.web.MockMultipartFile;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Comparator;
 import java.util.List;
 
-import static org.hamcrest.Matchers.hasSize;
-import static org.hamcrest.Matchers.containsString;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -52,6 +54,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 @Import(TestcontainersConfiguration.class)
 class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
+
+    private record PaymentFixture(TokenDTO userTokens, User user, Student student, Trip trip) {}
 
     @MockBean
     private JavaMailSender javaMailSender;
@@ -69,802 +73,339 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
     private PaymentReceiptRepository paymentReceiptRepository;
 
     @Autowired
+    private PaymentBatchRepository paymentBatchRepository;
+
+    @Autowired
     private BankAccountRepository bankAccountRepository;
 
     @Autowired
     private StudentRepository studentRepository;
 
-    @AfterEach
-    void cleanUpPayments() {
-        paymentReceiptRepository.deleteAll();
-        bankAccountRepository.deleteAll();
-        installmentRepository.deleteAll();
-        tripRepository.deleteAll();
+    @Test
+    void previewPayment_unaCuotaDevuelveTotalExacto() throws Exception {
+        PaymentFixture fixture = createPaymentFixture("payment-preview-one", Currency.ARS);
+        Installment first = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+        createInstallment(fixture.trip(), fixture.user(), fixture.student(), 2, "100.00", InstallmentStatus.YELLOW);
+        createInstallment(fixture.trip(), fixture.user(), fixture.student(), 3, "100.00", InstallmentStatus.YELLOW);
+
+        mockMvc.perform(post("/api/v1/payments/preview")
+                        .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new PaymentPreviewRequestDTO(
+                                first.getId(),
+                                1,
+                                LocalDate.now(),
+                                Currency.ARS
+                        ))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.anchorInstallmentId").value(first.getId()))
+                .andExpect(jsonPath("$.installmentsCount").value(1))
+                .andExpect(jsonPath("$.paymentCurrency").value("ARS"))
+                .andExpect(jsonPath("$.totalReportedAmount").value(100))
+                .andExpect(jsonPath("$.installments.length()").value(1))
+                .andExpect(jsonPath("$.installments[0].installmentNumber").value(1))
+                .andExpect(jsonPath("$.installments[0].remainingAmount").value(100));
     }
 
     @Test
-    void registerPayment_cuotaValida_devuelve201YStatusPending() throws Exception {
-        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-register-ok"));
-        Installment installment = createInstallmentWithStatus("register-ok", InstallmentStatus.YELLOW);
+    void previewPayment_dosCuotasDevuelveTotalExacto() throws Exception {
+        PaymentFixture fixture = createPaymentFixture("payment-preview-two", Currency.ARS);
+        Installment first = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+        createInstallment(fixture.trip(), fixture.user(), fixture.student(), 2, "100.00", InstallmentStatus.YELLOW);
+        createInstallment(fixture.trip(), fixture.user(), fixture.student(), 3, "100.00", InstallmentStatus.YELLOW);
 
-        RegisterPaymentDTO dto = new RegisterPaymentDTO(
-                installment.getId(),
-                BigDecimal.valueOf(10000),
-                LocalDate.now(),
-                PaymentMethod.BANK_TRANSFER,
-                createBankAccount(Currency.ARS).getId()
+        mockMvc.perform(post("/api/v1/payments/preview")
+                        .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new PaymentPreviewRequestDTO(
+                                first.getId(),
+                                2,
+                                LocalDate.now(),
+                                Currency.ARS
+                        ))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.installmentsCount").value(2))
+                .andExpect(jsonPath("$.totalReportedAmount").value(200))
+                .andExpect(jsonPath("$.installments.length()").value(2))
+                .andExpect(jsonPath("$.installments[0].installmentNumber").value(1))
+                .andExpect(jsonPath("$.installments[1].installmentNumber").value(2));
+    }
+
+    @Test
+    void previewPayment_tresCuotasDevuelveTotalExacto() throws Exception {
+        PaymentFixture fixture = createPaymentFixture("payment-preview-three", Currency.ARS);
+        Installment first = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+        createInstallment(fixture.trip(), fixture.user(), fixture.student(), 2, "100.00", InstallmentStatus.YELLOW);
+        createInstallment(fixture.trip(), fixture.user(), fixture.student(), 3, "100.00", InstallmentStatus.YELLOW);
+
+        mockMvc.perform(post("/api/v1/payments/preview")
+                        .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new PaymentPreviewRequestDTO(
+                                first.getId(),
+                                3,
+                                LocalDate.now(),
+                                Currency.ARS
+                        ))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.installmentsCount").value(3))
+                .andExpect(jsonPath("$.totalReportedAmount").value(300))
+                .andExpect(jsonPath("$.installments.length()").value(3))
+                .andExpect(jsonPath("$.installments[2].installmentNumber").value(3));
+    }
+
+    @Test
+    void registerPayment_multipartCreaBatchYLineasExactas() throws Exception {
+        PaymentFixture fixture = createPaymentFixture("payment-register-batch", Currency.ARS);
+        Installment first = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+        createInstallment(fixture.trip(), fixture.user(), fixture.student(), 2, "100.00", InstallmentStatus.YELLOW);
+        createInstallment(fixture.trip(), fixture.user(), fixture.student(), 3, "100.00", InstallmentStatus.YELLOW);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                "comprobante.jpg",
+                "image/jpeg",
+                "contenido".getBytes()
         );
 
-        mockMvc.perform(post("/api/v1/payments")
-                        .header("Authorization", "Bearer " + adminTokens.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(dto)))
+        mockMvc.perform(multipart("/api/v1/payments")
+                        .file(file)
+                        .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                        .param("anchorInstallmentId", String.valueOf(first.getId()))
+                        .param("installmentsCount", "2")
+                        .param("reportedPaymentDate", LocalDate.now().toString())
+                        .param("paymentCurrency", "ARS")
+                        .param("paymentMethod", "BANK_TRANSFER")
+                        .param("bankAccountId", String.valueOf(bankAccount.getId()))
+                        .with(request -> {
+                            request.setMethod("POST");
+                            return request;
+                        }))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.id").exists())
-                .andExpect(jsonPath("$.installmentId").value(installment.getId()))
-                .andExpect(jsonPath("$.status").value("PENDING"));
+                .andExpect(jsonPath("$.batchId").exists())
+                .andExpect(jsonPath("$.reportedAmount").value(200))
+                .andExpect(jsonPath("$.bankAccountId").value(bankAccount.getId()))
+                .andExpect(jsonPath("$.installments.length()").value(2))
+                .andExpect(jsonPath("$.installments[0].installmentNumber").value(1))
+                .andExpect(jsonPath("$.installments[1].installmentNumber").value(2))
+                .andExpect(jsonPath("$.installments[0].status").value("PENDING"))
+                .andExpect(jsonPath("$.installments[1].status").value("PENDING"));
+
+        List<PaymentBatch> batches = paymentBatchRepository.findAll();
+        List<PaymentReceipt> receipts = paymentReceiptRepository.findAll().stream()
+                .sorted(Comparator.comparing(receipt -> receipt.getInstallment().getInstallmentNumber()))
+                .toList();
+
+        assertEquals(1, batches.size());
+        assertEquals(2, receipts.size());
+        assertTrue(batches.get(0).getFileKey().startsWith("data:image/jpeg;base64,"));
+        assertEquals(ReceiptStatus.PENDING, receipts.get(0).getStatus());
+        assertEquals(ReceiptStatus.PENDING, receipts.get(1).getStatus());
+        assertEquals(first.getId(), receipts.get(0).getInstallment().getId());
+        assertEquals(batches.get(0).getId(), receipts.get(0).getBatch().getId());
+        assertEquals(batches.get(0).getId(), receipts.get(1).getBatch().getId());
     }
 
     @Test
-    void registerPayment_cuotaYaPagada_devuelve409() throws Exception {
-        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-register-green"));
-        Installment installment = createInstallmentWithStatus("register-green", InstallmentStatus.GREEN);
-                installment.setPaidAmount(installment.getTotalDue());
-                installment = installmentRepository.save(installment);
+    void registerPayment_anchorNoEsPrimeraPendiente_devuelve409() throws Exception {
+        PaymentFixture fixture = createPaymentFixture("payment-register-anchor", Currency.ARS);
+        createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+        Installment second = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 2, "100.00", InstallmentStatus.YELLOW);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
 
-        RegisterPaymentDTO dto = new RegisterPaymentDTO(
-                installment.getId(),
-                BigDecimal.valueOf(10000),
-                LocalDate.now(),
-                PaymentMethod.DEPOSIT,
-                createBankAccount(Currency.ARS).getId()
-        );
-
-        mockMvc.perform(post("/api/v1/payments")
-                        .header("Authorization", "Bearer " + adminTokens.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(dto)))
+        mockMvc.perform(multipart("/api/v1/payments")
+                        .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                        .param("anchorInstallmentId", String.valueOf(second.getId()))
+                        .param("installmentsCount", "1")
+                        .param("reportedPaymentDate", LocalDate.now().toString())
+                        .param("paymentCurrency", "ARS")
+                        .param("paymentMethod", "BANK_TRANSFER")
+                        .param("bankAccountId", String.valueOf(bankAccount.getId()))
+                        .with(request -> {
+                            request.setMethod("POST");
+                            return request;
+                        }))
                 .andExpect(status().isConflict());
     }
 
     @Test
-    void registerPayment_cuotaConPendiente_devuelve409() throws Exception {
-        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-register-pending"));
-        Installment installment = createInstallmentWithStatus("register-pending", InstallmentStatus.YELLOW);
+    void registerPayment_conPendienteEnElGrupo_devuelve409() throws Exception {
+        PaymentFixture fixture = createPaymentFixture("payment-register-pending", Currency.ARS);
+        Installment first = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+        createInstallment(fixture.trip(), fixture.user(), fixture.student(), 2, "100.00", InstallmentStatus.YELLOW);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
 
         paymentReceiptRepository.save(PaymentReceipt.builder()
-                .installment(installment)
-                .reportedAmount(BigDecimal.valueOf(9000))
-                .reportedPaymentDate(LocalDate.now())
-                .paymentMethod(PaymentMethod.CASH)
-                .status(ReceiptStatus.PENDING)
-                .fileKey("")
-                .adminObservation(null)
-                .build());
-
-        RegisterPaymentDTO dto = new RegisterPaymentDTO(
-                installment.getId(),
-                BigDecimal.valueOf(10000),
-                LocalDate.now(),
-                PaymentMethod.BANK_TRANSFER,
-                createBankAccount(Currency.ARS).getId()
-        );
-
-        mockMvc.perform(post("/api/v1/payments")
-                        .header("Authorization", "Bearer " + adminTokens.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(dto)))
-                .andExpect(status().isConflict());
-    }
-
-    @Test
-    void registerPayment_installmentNoExiste_devuelve404() throws Exception {
-        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-register-404"));
-
-        RegisterPaymentDTO dto = new RegisterPaymentDTO(
-                999999L,
-                BigDecimal.valueOf(10000),
-                LocalDate.now(),
-                PaymentMethod.OTHER,
-                createBankAccount(Currency.ARS).getId()
-        );
-
-        mockMvc.perform(post("/api/v1/payments")
-                        .header("Authorization", "Bearer " + adminTokens.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(dto)))
-                .andExpect(status().isNotFound());
-    }
-
-    @Test
-    void reviewPayment_aprobar_marcaInstallmentGreenYDevuelve200() throws Exception {
-        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-review-approve"));
-        Installment installment = createInstallmentWithStatus("review-approve", InstallmentStatus.RED);
-
-        PaymentReceipt receipt = paymentReceiptRepository.save(PaymentReceipt.builder()
-                .installment(installment)
-                .reportedAmount(BigDecimal.valueOf(10000))
+                .installment(first)
+                .bankAccount(bankAccount)
+                .reportedAmount(new BigDecimal("100.00"))
+                .paymentCurrency(Currency.ARS)
+                .amountInTripCurrency(new BigDecimal("100.00"))
                 .reportedPaymentDate(LocalDate.now())
                 .paymentMethod(PaymentMethod.BANK_TRANSFER)
                 .status(ReceiptStatus.PENDING)
                 .fileKey("")
                 .build());
 
-        ReviewPaymentDTO dto = new ReviewPaymentDTO(ReceiptStatus.APPROVED, null);
+        mockMvc.perform(multipart("/api/v1/payments")
+                        .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                        .param("anchorInstallmentId", String.valueOf(first.getId()))
+                        .param("installmentsCount", "1")
+                        .param("reportedPaymentDate", LocalDate.now().toString())
+                        .param("paymentCurrency", "ARS")
+                        .param("paymentMethod", "BANK_TRANSFER")
+                        .param("bankAccountId", String.valueOf(bankAccount.getId()))
+                        .with(request -> {
+                            request.setMethod("POST");
+                            return request;
+                        }))
+                .andExpect(status().isConflict());
+    }
 
-        mockMvc.perform(patch("/api/v1/payments/{id}/review", receipt.getId())
-                        .header("Authorization", "Bearer " + adminTokens.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(dto)))
+    @Test
+    void getPendingReview_siendoAdmin_devuelveBatchesAgrupados() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-pending-grouped"));
+        PaymentFixture fixture = createPaymentFixture("payment-pending-grouped", Currency.ARS);
+        Installment first = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+        Installment second = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 2, "100.00", InstallmentStatus.YELLOW);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+        PaymentBatch batch = createBatch(bankAccount, "200.00", Currency.ARS, "200.00");
+
+        PaymentReceipt firstReceipt = createReceipt(first, batch, bankAccount, "100.00", "100.00", ReceiptStatus.PENDING);
+        PaymentReceipt secondReceipt = createReceipt(second, batch, bankAccount, "100.00", "100.00", ReceiptStatus.PENDING);
+        createReceipt(second, null, bankAccount, "30.00", "30.00", ReceiptStatus.REJECTED);
+
+        mockMvc.perform(get("/api/v1/payments/pending-review")
+                        .header("Authorization", "Bearer " + adminTokens.accessToken()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("APPROVED"));
-
-        Installment persistedInstallment = installmentRepository.findById(installment.getId()).orElseThrow();
-        assertEquals(InstallmentStatus.GREEN, persistedInstallment.getStatus());
+                .andExpect(jsonPath("$[0].batchId").value(batch.getId()))
+                .andExpect(jsonPath("$[0].tripId").value(fixture.trip().getId()))
+                .andExpect(jsonPath("$[0].userEmail").value(fixture.user().getEmail()))
+                .andExpect(jsonPath("$[0].bankAccountAlias").value(bankAccount.getAlias()))
+                .andExpect(jsonPath("$[0].receipts.length()").value(2))
+                .andExpect(jsonPath("$[0].receipts[0].receiptId").value(firstReceipt.getId()))
+                .andExpect(jsonPath("$[0].receipts[0].installmentNumber").value(1))
+                .andExpect(jsonPath("$[0].receipts[1].receiptId").value(secondReceipt.getId()))
+                .andExpect(jsonPath("$[0].receipts[1].installmentNumber").value(2));
     }
 
     @Test
-    void reviewPayment_rechazar_sinObservacion_devuelve409() throws Exception {
-        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-review-reject-no-observation"));
-        Installment installment = createInstallmentWithStatus("review-reject-no-observation", InstallmentStatus.YELLOW);
+    void reviewPayment_aprobarLineaSoloAfectaSuCuota() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-review-line"));
+        PaymentFixture fixture = createPaymentFixture("payment-review-line", Currency.ARS);
+        Installment first = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+        Installment second = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 2, "100.00", InstallmentStatus.YELLOW);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+        PaymentBatch batch = createBatch(bankAccount, "200.00", Currency.ARS, "200.00");
 
-        PaymentReceipt receipt = paymentReceiptRepository.save(PaymentReceipt.builder()
-                .installment(installment)
-                .reportedAmount(BigDecimal.valueOf(10000))
-                .reportedPaymentDate(LocalDate.now())
-                .paymentMethod(PaymentMethod.DEPOSIT)
-                .status(ReceiptStatus.PENDING)
-                .fileKey("")
-                .build());
+        PaymentReceipt firstReceipt = createReceipt(first, batch, bankAccount, "100.00", "100.00", ReceiptStatus.PENDING);
+        createReceipt(second, batch, bankAccount, "100.00", "100.00", ReceiptStatus.PENDING);
 
-        ReviewPaymentDTO dto = new ReviewPaymentDTO(ReceiptStatus.REJECTED, "   ");
-
-        mockMvc.perform(patch("/api/v1/payments/{id}/review", receipt.getId())
+        mockMvc.perform(patch("/api/v1/payments/{id}/review", firstReceipt.getId())
                         .header("Authorization", "Bearer " + adminTokens.accessToken())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(dto)))
-                .andExpect(status().isConflict());
+                        .content(objectMapper.writeValueAsString(new ReviewPaymentDTO(ReceiptStatus.APPROVED, null))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("APPROVED"))
+                .andExpect(jsonPath("$.installmentId").value(first.getId()));
+
+        Installment persistedFirst = installmentRepository.findById(first.getId()).orElseThrow();
+        Installment persistedSecond = installmentRepository.findById(second.getId()).orElseThrow();
+
+        assertEquals(0, persistedFirst.getPaidAmount().compareTo(new BigDecimal("100.00")));
+        assertEquals(0, persistedSecond.getPaidAmount().compareTo(BigDecimal.ZERO));
     }
 
     @Test
-    void reviewPayment_rechazar_conObservacion_noMarcaGreenYDevuelve200() throws Exception {
-        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-review-reject-ok"));
-        Installment installment = createInstallmentWithStatus("review-reject-ok", InstallmentStatus.RED);
+    void reviewPayment_rechazarLineaNoRedistribuyeImporteAlResto() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-review-reject-line"));
+        PaymentFixture fixture = createPaymentFixture("payment-review-reject-line", Currency.ARS);
+        Installment first = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+        Installment second = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 2, "100.00", InstallmentStatus.YELLOW);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+        PaymentBatch batch = createBatch(bankAccount, "200.00", Currency.ARS, "200.00");
 
-        PaymentReceipt receipt = paymentReceiptRepository.save(PaymentReceipt.builder()
-                .installment(installment)
-                .reportedAmount(BigDecimal.valueOf(10000))
-                .reportedPaymentDate(LocalDate.now())
-                .paymentMethod(PaymentMethod.BANK_TRANSFER)
-                .status(ReceiptStatus.PENDING)
-                .fileKey("")
-                .build());
+        PaymentReceipt firstReceipt = createReceipt(first, batch, bankAccount, "100.00", "100.00", ReceiptStatus.PENDING);
+        PaymentReceipt secondReceipt = createReceipt(second, batch, bankAccount, "100.00", "100.00", ReceiptStatus.PENDING);
 
-        ReviewPaymentDTO dto = new ReviewPaymentDTO(ReceiptStatus.REJECTED, "Comprobante ilegible");
-
-        mockMvc.perform(patch("/api/v1/payments/{id}/review", receipt.getId())
+        mockMvc.perform(patch("/api/v1/payments/{id}/review", firstReceipt.getId())
                         .header("Authorization", "Bearer " + adminTokens.accessToken())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(dto)))
+                        .content(objectMapper.writeValueAsString(new ReviewPaymentDTO(ReceiptStatus.APPROVED, null))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(patch("/api/v1/payments/{id}/review", secondReceipt.getId())
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new ReviewPaymentDTO(
+                                ReceiptStatus.REJECTED,
+                                "Monto no acreditado"
+                        ))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("REJECTED"))
-                .andExpect(jsonPath("$.adminObservation").value("Comprobante ilegible"));
+                .andExpect(jsonPath("$.adminObservation").value("Monto no acreditado"));
 
-        Installment persistedInstallment = installmentRepository.findById(installment.getId()).orElseThrow();
-        assertEquals(InstallmentStatus.RED, persistedInstallment.getStatus());
+        Installment persistedFirst = installmentRepository.findById(first.getId()).orElseThrow();
+        Installment persistedSecond = installmentRepository.findById(second.getId()).orElseThrow();
+        PaymentReceipt rejected = paymentReceiptRepository.findById(secondReceipt.getId()).orElseThrow();
+
+        assertEquals(0, persistedFirst.getPaidAmount().compareTo(new BigDecimal("100.00")));
+        assertEquals(0, persistedSecond.getPaidAmount().compareTo(BigDecimal.ZERO));
+        assertEquals(ReceiptStatus.REJECTED, rejected.getStatus());
     }
 
     @Test
-    void reviewPayment_receiptYaRevisado_devuelve409() throws Exception {
-        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-review-already-reviewed"));
-        Installment installment = createInstallmentWithStatus("review-already-reviewed", InstallmentStatus.RED);
+    void voidPayment_anulaLineaAprobadaSinDesarmarOtrasCuotas() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-void-line"));
+        PaymentFixture fixture = createPaymentFixture("payment-void-line", Currency.ARS);
+        Installment first = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+        Installment second = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 2, "100.00", InstallmentStatus.YELLOW);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+        PaymentBatch batch = createBatch(bankAccount, "200.00", Currency.ARS, "200.00");
 
-        PaymentReceipt receipt = paymentReceiptRepository.save(PaymentReceipt.builder()
-                .installment(installment)
-                .reportedAmount(BigDecimal.valueOf(10000))
-                .reportedPaymentDate(LocalDate.now())
-                .paymentMethod(PaymentMethod.BANK_TRANSFER)
-                .status(ReceiptStatus.APPROVED)
-                .fileKey("")
-                .build());
+        PaymentReceipt firstReceipt = createReceipt(first, batch, bankAccount, "100.00", "100.00", ReceiptStatus.PENDING);
+        PaymentReceipt secondReceipt = createReceipt(second, batch, bankAccount, "100.00", "100.00", ReceiptStatus.PENDING);
 
-        ReviewPaymentDTO dto = new ReviewPaymentDTO(ReceiptStatus.APPROVED, null);
-
-        mockMvc.perform(patch("/api/v1/payments/{id}/review", receipt.getId())
+        mockMvc.perform(patch("/api/v1/payments/{id}/review", firstReceipt.getId())
                         .header("Authorization", "Bearer " + adminTokens.accessToken())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(dto)))
-                .andExpect(status().isConflict());
-    }
+                        .content(objectMapper.writeValueAsString(new ReviewPaymentDTO(ReceiptStatus.APPROVED, null))))
+                .andExpect(status().isOk());
 
-    @Test
-    void voidPayment_anulaAprobado_reviertePagaYDevuelve200() throws Exception {
-        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-void-ok"));
-        Installment installment = createInstallmentWithStatus("void-ok", InstallmentStatus.GREEN);
-                installment.setPaidAmount(installment.getTotalDue());
-                installment = installmentRepository.save(installment);
+        mockMvc.perform(patch("/api/v1/payments/{id}/review", secondReceipt.getId())
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new ReviewPaymentDTO(ReceiptStatus.APPROVED, null))))
+                .andExpect(status().isOk());
 
-        PaymentReceipt receipt = paymentReceiptRepository.save(PaymentReceipt.builder()
-                .installment(installment)
-                .reportedAmount(BigDecimal.valueOf(10000))
-                .reportedPaymentDate(LocalDate.now())
-                .paymentMethod(PaymentMethod.BANK_TRANSFER)
-                .status(ReceiptStatus.APPROVED)
-                .fileKey("")
-                .build());
-
-        mockMvc.perform(post("/api/v1/payments/{id}/void", receipt.getId())
+        mockMvc.perform(post("/api/v1/payments/{id}/void", firstReceipt.getId())
                         .header("Authorization", "Bearer " + adminTokens.accessToken()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("REJECTED"))
                 .andExpect(jsonPath("$.adminObservation").value("Anulado por administrador"));
 
-        Installment persistedInstallment = installmentRepository.findById(installment.getId()).orElseThrow();
-        assertEquals(InstallmentStatus.YELLOW, persistedInstallment.getStatus());
+        Installment persistedFirst = installmentRepository.findById(first.getId()).orElseThrow();
+        Installment persistedSecond = installmentRepository.findById(second.getId()).orElseThrow();
+
+        assertEquals(0, persistedFirst.getPaidAmount().compareTo(BigDecimal.ZERO));
+        assertEquals(0, persistedSecond.getPaidAmount().compareTo(new BigDecimal("100.00")));
     }
 
     @Test
-    void voidPayment_receiptNoPendienteNiAprobado_devuelve409() throws Exception {
-        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-void-conflict"));
-        Installment installment = createInstallmentWithStatus("void-conflict", InstallmentStatus.RED);
-
-        PaymentReceipt receipt = paymentReceiptRepository.save(PaymentReceipt.builder()
-                .installment(installment)
-                .reportedAmount(BigDecimal.valueOf(10000))
-                .reportedPaymentDate(LocalDate.now())
-                .paymentMethod(PaymentMethod.DEPOSIT)
-                .status(ReceiptStatus.REJECTED)
-                .fileKey("")
-                .adminObservation("Rechazado previamente")
-                .build());
-
-        mockMvc.perform(post("/api/v1/payments/{id}/void", receipt.getId())
-                        .header("Authorization", "Bearer " + adminTokens.accessToken()))
-                .andExpect(status().isConflict());
-    }
-
-    @Test
-    void reviewPayment_aprobar_cubreUnaCuotaYParteDeLaSiguiente() throws Exception {
-        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-review-cascade-partial-next"));
-        User participant = createSignedUpUser("cascade-partial-next");
-        Student student = getFirstStudent(participant);
-        Trip trip = createTripForUser(participant, "cascade-partial-next", Currency.ARS);
-
-        Installment firstInstallment = createInstallment(trip, participant, student, 1, "100.00", InstallmentStatus.YELLOW);
-        Installment secondInstallment = createInstallment(trip, participant, student, 2, "100.00", InstallmentStatus.YELLOW);
-        Installment thirdInstallment = createInstallment(trip, participant, student, 3, "100.00", InstallmentStatus.YELLOW);
-
-        PaymentReceipt receipt = paymentReceiptRepository.save(PaymentReceipt.builder()
-                .installment(firstInstallment)
-                .bankAccount(createBankAccount(Currency.ARS))
-                .reportedAmount(new BigDecimal("150.00"))
-                .paymentCurrency(Currency.ARS)
-                .amountInTripCurrency(new BigDecimal("150.00"))
-                .reportedPaymentDate(LocalDate.now())
-                .paymentMethod(PaymentMethod.BANK_TRANSFER)
-                .status(ReceiptStatus.PENDING)
-                .fileKey("")
-                .build());
-
-        mockMvc.perform(patch("/api/v1/payments/{id}/review", receipt.getId())
-                        .header("Authorization", "Bearer " + adminTokens.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new ReviewPaymentDTO(ReceiptStatus.APPROVED, null))))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("APPROVED"));
-
-        Installment persistedFirst = installmentRepository.findById(firstInstallment.getId()).orElseThrow();
-        Installment persistedSecond = installmentRepository.findById(secondInstallment.getId()).orElseThrow();
-        Installment persistedThird = installmentRepository.findById(thirdInstallment.getId()).orElseThrow();
-
-        assertEquals(InstallmentStatus.GREEN, persistedFirst.getStatus());
-        assertEquals(0, persistedFirst.getPaidAmount().compareTo(new BigDecimal("100.00")));
-        assertEquals(InstallmentStatus.YELLOW, persistedSecond.getStatus());
-        assertEquals(0, persistedSecond.getPaidAmount().compareTo(new BigDecimal("50.00")));
-        assertEquals(0, persistedThird.getPaidAmount().compareTo(BigDecimal.ZERO));
-    }
-
-    @Test
-    void reviewPayment_aprobar_cubreMultiplesCuotasCompletas() throws Exception {
-        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-review-cascade-multi"));
-        User participant = createSignedUpUser("cascade-multi");
-        Student student = getFirstStudent(participant);
-        Trip trip = createTripForUser(participant, "cascade-multi", Currency.ARS);
-
-        Installment firstInstallment = createInstallment(trip, participant, student, 1, "100.00", InstallmentStatus.YELLOW);
-        Installment secondInstallment = createInstallment(trip, participant, student, 2, "100.00", InstallmentStatus.YELLOW);
-        Installment thirdInstallment = createInstallment(trip, participant, student, 3, "100.00", InstallmentStatus.YELLOW);
-
-        PaymentReceipt receipt = paymentReceiptRepository.save(PaymentReceipt.builder()
-                .installment(firstInstallment)
-                .bankAccount(createBankAccount(Currency.ARS))
-                .reportedAmount(new BigDecimal("250.00"))
-                .paymentCurrency(Currency.ARS)
-                .amountInTripCurrency(new BigDecimal("250.00"))
-                .reportedPaymentDate(LocalDate.now())
-                .paymentMethod(PaymentMethod.BANK_TRANSFER)
-                .status(ReceiptStatus.PENDING)
-                .fileKey("")
-                .build());
-
-        mockMvc.perform(patch("/api/v1/payments/{id}/review", receipt.getId())
-                        .header("Authorization", "Bearer " + adminTokens.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new ReviewPaymentDTO(ReceiptStatus.APPROVED, null))))
-                .andExpect(status().isOk());
-
-        assertEquals(InstallmentStatus.GREEN, installmentRepository.findById(firstInstallment.getId()).orElseThrow().getStatus());
-        assertEquals(InstallmentStatus.GREEN, installmentRepository.findById(secondInstallment.getId()).orElseThrow().getStatus());
-        assertEquals(0, installmentRepository.findById(thirdInstallment.getId()).orElseThrow().getPaidAmount().compareTo(new BigDecimal("50.00")));
-    }
-
-    @Test
-    void reviewPayment_aprobar_montoParcial_noMarcaGreen() throws Exception {
-        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-review-cascade-partial"));
-        User participant = createSignedUpUser("cascade-partial");
-        Student student = getFirstStudent(participant);
-        Trip trip = createTripForUser(participant, "cascade-partial", Currency.ARS);
-        Installment installment = createInstallment(trip, participant, student, 1, "100.00", InstallmentStatus.YELLOW);
-
-        PaymentReceipt receipt = paymentReceiptRepository.save(PaymentReceipt.builder()
-                .installment(installment)
-                .bankAccount(createBankAccount(Currency.ARS))
-                .reportedAmount(new BigDecimal("40.00"))
-                .paymentCurrency(Currency.ARS)
-                .amountInTripCurrency(new BigDecimal("40.00"))
-                .reportedPaymentDate(LocalDate.now())
-                .paymentMethod(PaymentMethod.BANK_TRANSFER)
-                .status(ReceiptStatus.PENDING)
-                .fileKey("")
-                .build());
-
-        mockMvc.perform(patch("/api/v1/payments/{id}/review", receipt.getId())
-                        .header("Authorization", "Bearer " + adminTokens.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new ReviewPaymentDTO(ReceiptStatus.APPROVED, null))))
-                .andExpect(status().isOk());
-
-        Installment persisted = installmentRepository.findById(installment.getId()).orElseThrow();
-        assertEquals(InstallmentStatus.YELLOW, persisted.getStatus());
-        assertEquals(0, persisted.getPaidAmount().compareTo(new BigDecimal("40.00")));
-    }
-
-    @Test
-    void reviewPayment_aprobar_noCruzaAOtroAlumnoDelMismoPadre() throws Exception {
-        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-review-cascade-no-cross-student"));
-        User participant = createSignedUpUser("cascade-no-cross-student");
-        Student firstStudent = getFirstStudent(participant);
-        Student secondStudent = studentRepository.save(Student.builder()
-                .parent(participant)
-                .name("Segundo Alumno")
-                .dni(uniqueDni())
-                .schoolName("Colegio Demo")
-                .courseName("5A")
-                .build());
-        Trip trip = createTripForUser(participant, "cascade-no-cross-student", Currency.ARS);
-
-        Installment firstStudentInstallment = createInstallment(trip, participant, firstStudent, 1, "100.00", InstallmentStatus.YELLOW);
-        Installment secondStudentInstallment = createInstallment(trip, participant, secondStudent, 1, "100.00", InstallmentStatus.YELLOW);
-
-        PaymentReceipt receipt = paymentReceiptRepository.save(PaymentReceipt.builder()
-                .installment(firstStudentInstallment)
-                .bankAccount(createBankAccount(Currency.ARS))
-                .reportedAmount(new BigDecimal("150.00"))
-                .paymentCurrency(Currency.ARS)
-                .amountInTripCurrency(new BigDecimal("150.00"))
-                .reportedPaymentDate(LocalDate.now())
-                .paymentMethod(PaymentMethod.BANK_TRANSFER)
-                .status(ReceiptStatus.PENDING)
-                .fileKey("")
-                .build());
-
-        mockMvc.perform(patch("/api/v1/payments/{id}/review", receipt.getId())
-                        .header("Authorization", "Bearer " + adminTokens.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new ReviewPaymentDTO(ReceiptStatus.APPROVED, null))))
-                .andExpect(status().isOk());
-
-        Installment persistedFirst = installmentRepository.findById(firstStudentInstallment.getId()).orElseThrow();
-        Installment persistedSecond = installmentRepository.findById(secondStudentInstallment.getId()).orElseThrow();
-        assertEquals(InstallmentStatus.GREEN, persistedFirst.getStatus());
-        assertEquals(0, persistedFirst.getPaidAmount().compareTo(new BigDecimal("100.00")));
-        assertEquals(0, persistedSecond.getPaidAmount().compareTo(BigDecimal.ZERO));
-        assertEquals(InstallmentStatus.YELLOW, persistedSecond.getStatus());
-    }
-
-    @Test
-    void reviewPayment_aprobar_noCruzaAOtroViaje() throws Exception {
-        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-review-cascade-no-cross-trip"));
-        User participant = createSignedUpUser("cascade-no-cross-trip");
-        Student student = getFirstStudent(participant);
-        Trip firstTrip = createTripForUser(participant, "cascade-no-cross-trip-1", Currency.ARS);
-        Trip secondTrip = createTripForUser(participant, "cascade-no-cross-trip-2", Currency.ARS);
-
-        Installment firstTripInstallment = createInstallment(firstTrip, participant, student, 1, "100.00", InstallmentStatus.YELLOW);
-        Installment secondTripInstallment = createInstallment(secondTrip, participant, student, 1, "100.00", InstallmentStatus.YELLOW);
-
-        PaymentReceipt receipt = paymentReceiptRepository.save(PaymentReceipt.builder()
-                .installment(firstTripInstallment)
-                .bankAccount(createBankAccount(Currency.ARS))
-                .reportedAmount(new BigDecimal("150.00"))
-                .paymentCurrency(Currency.ARS)
-                .amountInTripCurrency(new BigDecimal("150.00"))
-                .reportedPaymentDate(LocalDate.now())
-                .paymentMethod(PaymentMethod.BANK_TRANSFER)
-                .status(ReceiptStatus.PENDING)
-                .fileKey("")
-                .build());
-
-        mockMvc.perform(patch("/api/v1/payments/{id}/review", receipt.getId())
-                        .header("Authorization", "Bearer " + adminTokens.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new ReviewPaymentDTO(ReceiptStatus.APPROVED, null))))
-                .andExpect(status().isOk());
-
-        assertEquals(0, installmentRepository.findById(secondTripInstallment.getId()).orElseThrow().getPaidAmount().compareTo(BigDecimal.ZERO));
-    }
-
-    @Test
-    void reviewPayment_aprobar_conMonedaDistinta_usaAmountInTripCurrency() throws Exception {
-        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-review-cascade-exchange"));
-        User participant = createSignedUpUser("cascade-exchange");
-        Student student = getFirstStudent(participant);
-        Trip trip = createTripForUser(participant, "cascade-exchange", Currency.USD);
-
-        Installment firstInstallment = createInstallment(trip, participant, student, 1, "10.00", InstallmentStatus.YELLOW);
-        Installment secondInstallment = createInstallment(trip, participant, student, 2, "10.00", InstallmentStatus.YELLOW);
-
-        PaymentReceipt receipt = paymentReceiptRepository.save(PaymentReceipt.builder()
-                .installment(firstInstallment)
-                .bankAccount(createBankAccount(Currency.ARS))
-                .reportedAmount(new BigDecimal("10000.00"))
-                .paymentCurrency(Currency.ARS)
-                .exchangeRate(new BigDecimal("1000.00"))
-                .amountInTripCurrency(new BigDecimal("10.00"))
-                .reportedPaymentDate(LocalDate.now())
-                .paymentMethod(PaymentMethod.BANK_TRANSFER)
-                .status(ReceiptStatus.PENDING)
-                .fileKey("")
-                .build());
-
-        mockMvc.perform(patch("/api/v1/payments/{id}/review", receipt.getId())
-                        .header("Authorization", "Bearer " + adminTokens.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new ReviewPaymentDTO(ReceiptStatus.APPROVED, null))))
-                .andExpect(status().isOk());
-
-        Installment persistedFirst = installmentRepository.findById(firstInstallment.getId()).orElseThrow();
-        Installment persistedSecond = installmentRepository.findById(secondInstallment.getId()).orElseThrow();
-        assertEquals(InstallmentStatus.GREEN, persistedFirst.getStatus());
-        assertEquals(0, persistedFirst.getPaidAmount().compareTo(new BigDecimal("10.00")));
-        assertEquals(0, persistedSecond.getPaidAmount().compareTo(BigDecimal.ZERO));
-    }
-
-    @Test
-    void voidPayment_revierteExactoUnaCascadaParcial() throws Exception {
-        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-void-cascade-partial"));
-        User participant = createSignedUpUser("void-cascade-partial");
-        Student student = getFirstStudent(participant);
-        Trip trip = createTripForUser(participant, "void-cascade-partial", Currency.ARS);
-
-        Installment firstInstallment = createInstallment(trip, participant, student, 1, "100.00", InstallmentStatus.GREEN);
-        firstInstallment.setPaidAmount(new BigDecimal("100.00"));
-        firstInstallment = installmentRepository.save(firstInstallment);
-
-        Installment secondInstallment = createInstallment(trip, participant, student, 2, "100.00", InstallmentStatus.YELLOW);
-        secondInstallment.setPaidAmount(new BigDecimal("50.00"));
-        secondInstallment = installmentRepository.save(secondInstallment);
-
-        PaymentReceipt receipt = paymentReceiptRepository.save(PaymentReceipt.builder()
-                .installment(firstInstallment)
-                .bankAccount(createBankAccount(Currency.ARS))
-                .reportedAmount(new BigDecimal("150.00"))
-                .paymentCurrency(Currency.ARS)
-                .amountInTripCurrency(new BigDecimal("150.00"))
-                .reportedPaymentDate(LocalDate.now())
-                .paymentMethod(PaymentMethod.BANK_TRANSFER)
-                .status(ReceiptStatus.APPROVED)
-                .fileKey("")
-                .build());
-
-        mockMvc.perform(post("/api/v1/payments/{id}/void", receipt.getId())
-                        .header("Authorization", "Bearer " + adminTokens.accessToken()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("REJECTED"));
-
-        Installment revertedFirst = installmentRepository.findById(firstInstallment.getId()).orElseThrow();
-        Installment revertedSecond = installmentRepository.findById(secondInstallment.getId()).orElseThrow();
-        assertEquals(InstallmentStatus.YELLOW, revertedFirst.getStatus());
-        assertEquals(0, revertedFirst.getPaidAmount().compareTo(BigDecimal.ZERO));
-        assertEquals(0, revertedSecond.getPaidAmount().compareTo(BigDecimal.ZERO));
-    }
-
-    @Test
-    void getReceiptsForInstallment_devuelveLista() throws Exception {
-        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-list-receipts"));
-        Installment installment = createInstallmentWithStatus("list-receipts", InstallmentStatus.YELLOW);
-
-        PaymentReceipt first = paymentReceiptRepository.save(PaymentReceipt.builder()
-                .installment(installment)
-                .reportedAmount(BigDecimal.valueOf(9000))
-                .reportedPaymentDate(LocalDate.now().minusDays(1))
-                .paymentMethod(PaymentMethod.CASH)
-                .status(ReceiptStatus.REJECTED)
-                .fileKey("")
-                .adminObservation("Monto incompleto")
-                .build());
-
-        PaymentReceipt second = paymentReceiptRepository.save(PaymentReceipt.builder()
-                .installment(installment)
-                .reportedAmount(BigDecimal.valueOf(10000))
-                .reportedPaymentDate(LocalDate.now())
-                .paymentMethod(PaymentMethod.BANK_TRANSFER)
-                .status(ReceiptStatus.PENDING)
-                .fileKey("")
-                .build());
-
-        assertNotNull(first.getId());
-        assertNotNull(second.getId());
-
-        mockMvc.perform(get("/api/v1/payments/installment/{installmentId}", installment.getId())
-                        .header("Authorization", "Bearer " + adminTokens.accessToken()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$", hasSize(2)))
-                .andExpect(jsonPath("$[0].id").value(second.getId()))
-                .andExpect(jsonPath("$[1].id").value(first.getId()));
-    }
-
-    @Test
-    void getMyInstallments_incluyeYellowWarningDaysDelViaje() throws Exception {
-        UserCreateDTO participantDto = buildValidUser("payment-my-installments");
-        TokenDTO userTokens = signUp(participantDto);
-        User user = userRepository.findByEmail(participantDto.email()).orElseThrow();
-
-        Trip trip = new Trip();
-        trip.setName("Trip payment my-installments");
-        trip.setCurrency(Currency.USD);
-        trip.setTotalAmount(BigDecimal.valueOf(120000));
-        trip.setInstallmentsCount(12);
-        trip.setDueDay(10);
-        trip.setYellowWarningDays(5);
-        trip.setFixedFineAmount(BigDecimal.valueOf(5000));
-        trip.setRetroactiveActive(false);
-        trip.setFirstDueDate(LocalDate.now().plusMonths(1));
-        trip.getAssignedUsers().add(user);
-        trip = tripRepository.save(trip);
-
-        Installment installment = new Installment();
-        installment.setTrip(trip);
-        installment.setUser(user);
-        installment.setInstallmentNumber(1);
-        installment.setDueDate(LocalDate.now().plusDays(10));
-        installment.setCapitalAmount(BigDecimal.valueOf(10000));
-        installment.setRetroactiveAmount(BigDecimal.ZERO);
-        installment.setFineAmount(BigDecimal.ZERO);
-        installment.setStatus(InstallmentStatus.YELLOW);
-        installment.recalculateTotalDue();
+    void getMyInstallments_cuotaTotalmenteCubiertaSeMuestraComoPagada() throws Exception {
+        PaymentFixture fixture = createPaymentFixture("payment-my-installments-paid", Currency.ARS);
+        Installment installment = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+        installment.setPaidAmount(new BigDecimal("100.00"));
         installmentRepository.save(installment);
 
         mockMvc.perform(get("/api/v1/payments/my/installments")
-                        .header("Authorization", "Bearer " + userTokens.accessToken()))
+                        .header("Authorization", "Bearer " + fixture.userTokens().accessToken()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$", hasSize(1)))
-                .andExpect(jsonPath("$[0].tripId").value(trip.getId()))
-                .andExpect(jsonPath("$[0].yellowWarningDays").value(5))
-                .andExpect(jsonPath("$[0].tripCurrency").value("USD"))
-                .andExpect(jsonPath("$[0].installmentStatus").value("YELLOW"))
-                .andExpect(jsonPath("$[0].uiStatusCode").value("UP_TO_DATE"))
-                .andExpect(jsonPath("$[0].uiStatusLabel").value("Al día"))
+                .andExpect(jsonPath("$[0].installmentStatus").value("GREEN"))
+                .andExpect(jsonPath("$[0].uiStatusCode").value("PAID"))
+                .andExpect(jsonPath("$[0].uiStatusLabel").value("Pagada"))
                 .andExpect(jsonPath("$[0].uiStatusTone").value("green"));
-    }
-
-    @Test
-    void getMyInstallments_conComprobantePendiente_devuelveUiStatusUnderReview() throws Exception {
-        signUpAdmin(buildValidUser("admin-payment-under-review"));
-        UserCreateDTO participantDto = buildValidUser("payment-under-review-user");
-        TokenDTO userTokens = signUp(participantDto);
-        User user = userRepository.findByEmail(participantDto.email()).orElseThrow();
-
-        Trip trip = new Trip();
-        trip.setName("Trip payment under-review");
-        trip.setCurrency(Currency.ARS);
-        trip.setTotalAmount(BigDecimal.valueOf(120000));
-        trip.setInstallmentsCount(12);
-        trip.setDueDay(10);
-        trip.setYellowWarningDays(5);
-        trip.setFixedFineAmount(BigDecimal.valueOf(5000));
-        trip.setRetroactiveActive(false);
-        trip.setFirstDueDate(LocalDate.now().plusMonths(1));
-        trip.getAssignedUsers().add(user);
-        trip = tripRepository.save(trip);
-
-        Installment installment = new Installment();
-        installment.setTrip(trip);
-        installment.setUser(user);
-        installment.setInstallmentNumber(1);
-        installment.setDueDate(LocalDate.now().plusDays(2));
-        installment.setCapitalAmount(BigDecimal.valueOf(10000));
-        installment.setRetroactiveAmount(BigDecimal.ZERO);
-        installment.setFineAmount(BigDecimal.ZERO);
-        installment.setStatus(InstallmentStatus.YELLOW);
-        installment.recalculateTotalDue();
-        installment = installmentRepository.save(installment);
-
-        paymentReceiptRepository.save(PaymentReceipt.builder()
-                .installment(installment)
-                .bankAccount(createBankAccount(Currency.ARS))
-                .reportedAmount(BigDecimal.valueOf(10000))
-                .reportedPaymentDate(LocalDate.now())
-                .paymentMethod(PaymentMethod.BANK_TRANSFER)
-                .status(ReceiptStatus.PENDING)
-                .fileKey("")
-                .build());
-
-        mockMvc.perform(get("/api/v1/payments/my/installments")
-                        .header("Authorization", "Bearer " + userTokens.accessToken()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].uiStatusCode").value("UNDER_REVIEW"))
-                .andExpect(jsonPath("$[0].uiStatusLabel").value("En revisión"))
-                .andExpect(jsonPath("$[0].uiStatusTone").value("yellow"));
-    }
-
-    @Test
-    void getMyInstallments_conComprobanteRechazado_devuelveUiStatusReceiptRejected() throws Exception {
-        signUpAdmin(buildValidUser("admin-payment-rejected"));
-        UserCreateDTO participantDto = buildValidUser("payment-rejected-user");
-        TokenDTO userTokens = signUp(participantDto);
-        User user = userRepository.findByEmail(participantDto.email()).orElseThrow();
-
-        Trip trip = new Trip();
-        trip.setName("Trip payment rejected");
-        trip.setCurrency(Currency.ARS);
-        trip.setTotalAmount(BigDecimal.valueOf(120000));
-        trip.setInstallmentsCount(12);
-        trip.setDueDay(10);
-        trip.setYellowWarningDays(5);
-        trip.setFixedFineAmount(BigDecimal.valueOf(5000));
-        trip.setRetroactiveActive(false);
-        trip.setFirstDueDate(LocalDate.now().plusMonths(1));
-        trip.getAssignedUsers().add(user);
-        trip = tripRepository.save(trip);
-
-        Installment installment = new Installment();
-        installment.setTrip(trip);
-        installment.setUser(user);
-        installment.setInstallmentNumber(1);
-        installment.setDueDate(LocalDate.now().plusDays(2));
-        installment.setCapitalAmount(BigDecimal.valueOf(10000));
-        installment.setRetroactiveAmount(BigDecimal.ZERO);
-        installment.setFineAmount(BigDecimal.ZERO);
-        installment.setStatus(InstallmentStatus.YELLOW);
-        installment.recalculateTotalDue();
-        installment = installmentRepository.save(installment);
-
-        paymentReceiptRepository.save(PaymentReceipt.builder()
-                .installment(installment)
-                .bankAccount(createBankAccount(Currency.ARS))
-                .reportedAmount(BigDecimal.valueOf(10000))
-                .paymentCurrency(Currency.ARS)
-                .amountInTripCurrency(BigDecimal.valueOf(10000))
-                .reportedPaymentDate(LocalDate.now())
-                .paymentMethod(PaymentMethod.BANK_TRANSFER)
-                .status(ReceiptStatus.REJECTED)
-                .fileKey("")
-                .adminObservation("El comprobante está borroso.")
-                .build());
-
-        mockMvc.perform(get("/api/v1/payments/my/installments")
-                        .header("Authorization", "Bearer " + userTokens.accessToken()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].uiStatusCode").value("RECEIPT_REJECTED"))
-                .andExpect(jsonPath("$[0].uiStatusLabel").value("Comprobante rechazado"))
-                .andExpect(jsonPath("$[0].uiStatusTone").value("red"))
-                .andExpect(jsonPath("$[0].latestReceiptObservation").value("El comprobante está borroso."));
-    }
-
-    @Test
-    void registerPayment_cuentaInactiva_devuelve400() throws Exception {
-        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-register-bank-inactive"));
-        Installment installment = createInstallmentWithStatus("register-bank-inactive", InstallmentStatus.YELLOW);
-        BankAccount bankAccount = createBankAccount(Currency.ARS);
-        bankAccount.setActive(false);
-        bankAccount = bankAccountRepository.save(bankAccount);
-
-        RegisterPaymentDTO dto = new RegisterPaymentDTO(
-                installment.getId(),
-                BigDecimal.valueOf(10000),
-                LocalDate.now(),
-                PaymentMethod.BANK_TRANSFER,
-                bankAccount.getId()
-        );
-
-        mockMvc.perform(post("/api/v1/payments")
-                        .header("Authorization", "Bearer " + adminTokens.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(dto)))
-                .andExpect(status().isBadRequest());
-    }
-
-    @Test
-    void registerPayment_cuentaConMonedaDistinta_devuelve400() throws Exception {
-        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-register-bank-currency"));
-        Installment installment = createInstallmentWithStatus("register-bank-currency", InstallmentStatus.YELLOW);
-
-        RegisterPaymentDTO dto = new RegisterPaymentDTO(
-                installment.getId(),
-                BigDecimal.valueOf(10000),
-                LocalDate.now(),
-                Currency.USD,
-                PaymentMethod.BANK_TRANSFER,
-                createBankAccount(Currency.ARS).getId()
-        );
-
-        mockMvc.perform(post("/api/v1/payments")
-                        .header("Authorization", "Bearer " + adminTokens.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(dto)))
-                .andExpect(status().isBadRequest());
-    }
-
-    @Test
-    void registerPayment_persisteCuentaBancariaSeleccionada() throws Exception {
-        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-register-bank-ok"));
-        Installment installment = createInstallmentWithStatus("register-bank-ok", InstallmentStatus.YELLOW);
-        BankAccount bankAccount = createBankAccount(Currency.ARS);
-
-        RegisterPaymentDTO dto = new RegisterPaymentDTO(
-                installment.getId(),
-                BigDecimal.valueOf(10000),
-                LocalDate.now(),
-                PaymentMethod.BANK_TRANSFER,
-                bankAccount.getId()
-        );
-
-        mockMvc.perform(post("/api/v1/payments")
-                        .header("Authorization", "Bearer " + adminTokens.accessToken())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(dto)))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.bankAccountId").value(bankAccount.getId()))
-                .andExpect(jsonPath("$.bankAccountAlias").value(bankAccount.getAlias()));
-    }
-
-    @Test
-    void getPendingReview_siendoAdmin_devuelveSoloPendientesConContexto() throws Exception {
-        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-pending-review"));
-        Installment installment = createInstallmentWithStatus("pending-review", InstallmentStatus.YELLOW);
-        BankAccount bankAccount = createBankAccount(Currency.ARS);
-
-        paymentReceiptRepository.save(PaymentReceipt.builder()
-                .installment(installment)
-                .bankAccount(bankAccount)
-                .reportedAmount(BigDecimal.valueOf(9000))
-                .reportedPaymentDate(LocalDate.now().minusDays(1))
-                .paymentMethod(PaymentMethod.CASH)
-                .status(ReceiptStatus.REJECTED)
-                .fileKey("")
-                .build());
-
-        PaymentReceipt pendingReceipt = paymentReceiptRepository.save(PaymentReceipt.builder()
-                .installment(installment)
-                .bankAccount(bankAccount)
-                .reportedAmount(BigDecimal.valueOf(10000))
-                .reportedPaymentDate(LocalDate.now())
-                .paymentMethod(PaymentMethod.BANK_TRANSFER)
-                .status(ReceiptStatus.PENDING)
-                .fileKey("")
-                .build());
-
-        mockMvc.perform(get("/api/v1/payments/pending-review")
-                        .header("Authorization", "Bearer " + adminTokens.accessToken()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$", hasSize(1)))
-                .andExpect(jsonPath("$[0].receiptId").value(pendingReceipt.getId()))
-                .andExpect(jsonPath("$[0].tripName").value(installment.getTrip().getName()))
-                .andExpect(jsonPath("$[0].installmentNumber").value(installment.getInstallmentNumber()))
-                .andExpect(jsonPath("$[0].userEmail").value(installment.getUser().getEmail()))
-                .andExpect(jsonPath("$[0].bankAccountId").value(bankAccount.getId()))
-                .andExpect(jsonPath("$[0].bankAccountAlias").value(bankAccount.getAlias()));
     }
 
     @Test
@@ -882,40 +423,13 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 .andExpect(status().isForbidden());
     }
 
-    private Installment createInstallmentWithStatus(String prefix, InstallmentStatus status) throws Exception {
-        UserCreateDTO participantDto = buildValidUser("payment-user-" + prefix);
-        signUp(participantDto);
+    private PaymentFixture createPaymentFixture(String prefix, Currency currency) throws Exception {
+        UserCreateDTO participantDto = buildValidUser(prefix);
+        TokenDTO userTokens = signUp(participantDto);
         User user = userRepository.findByEmail(participantDto.email()).orElseThrow();
-
-        Trip trip = new Trip();
-        trip.setName("Trip payment " + prefix);
-        trip.setTotalAmount(BigDecimal.valueOf(120000));
-        trip.setInstallmentsCount(12);
-        trip.setDueDay(10);
-        trip.setYellowWarningDays(5);
-        trip.setFixedFineAmount(BigDecimal.valueOf(5000));
-        trip.setRetroactiveActive(false);
-        trip.setFirstDueDate(LocalDate.now().plusMonths(1));
-        trip.getAssignedUsers().add(user);
-        trip = tripRepository.save(trip);
-
-        Installment installment = new Installment();
-        installment.setTrip(trip);
-        installment.setUser(user);
-        installment.setInstallmentNumber(1);
-        installment.setDueDate(LocalDate.now().plusDays(10));
-        installment.setCapitalAmount(BigDecimal.valueOf(10000));
-        installment.setRetroactiveAmount(BigDecimal.ZERO);
-        installment.setFineAmount(BigDecimal.ZERO);
-        installment.setStatus(status);
-        installment.recalculateTotalDue();
-        return installmentRepository.save(installment);
-    }
-
-    private User createSignedUpUser(String prefix) throws Exception {
-        UserCreateDTO participantDto = buildValidUser("payment-user-" + prefix);
-        signUp(participantDto);
-        return userRepository.findByEmail(participantDto.email()).orElseThrow();
+        Student student = getFirstStudent(user);
+        Trip trip = createTripForUser(user, prefix, currency);
+        return new PaymentFixture(userTokens, user, student, trip);
     }
 
     private Student getFirstStudent(User user) {
@@ -954,6 +468,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
         installment.setCapitalAmount(new BigDecimal(capitalAmount));
         installment.setRetroactiveAmount(BigDecimal.ZERO);
         installment.setFineAmount(BigDecimal.ZERO);
+        installment.setPaidAmount(BigDecimal.ZERO);
         installment.setStatus(status);
         installment.recalculateTotalDue();
         return installmentRepository.save(installment);
@@ -971,6 +486,42 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 .currency(currency)
                 .active(true)
                 .displayOrder(1)
+                .build());
+    }
+
+    private PaymentBatch createBatch(BankAccount bankAccount, String reportedAmount, Currency paymentCurrency, String amountInTripCurrency) {
+        PaymentBatch batch = new PaymentBatch();
+        batch.setReportedAmount(new BigDecimal(reportedAmount));
+        batch.setPaymentCurrency(paymentCurrency);
+        batch.setExchangeRate(null);
+        batch.setAmountInTripCurrency(new BigDecimal(amountInTripCurrency));
+        batch.setReportedPaymentDate(LocalDate.now());
+        batch.setPaymentMethod(PaymentMethod.BANK_TRANSFER);
+        batch.setBankAccount(bankAccount);
+        batch.setFileKey("data:image/jpeg;base64,ZHVtbXk=");
+        return paymentBatchRepository.save(batch);
+    }
+
+    private PaymentReceipt createReceipt(
+            Installment installment,
+            PaymentBatch batch,
+            BankAccount bankAccount,
+            String reportedAmount,
+            String amountInTripCurrency,
+            ReceiptStatus status
+    ) {
+        return paymentReceiptRepository.save(PaymentReceipt.builder()
+                .installment(installment)
+                .batch(batch)
+                .bankAccount(bankAccount)
+                .reportedAmount(new BigDecimal(reportedAmount))
+                .paymentCurrency(batch != null ? batch.getPaymentCurrency() : bankAccount.getCurrency())
+                .amountInTripCurrency(new BigDecimal(amountInTripCurrency))
+                .reportedPaymentDate(LocalDate.now())
+                .paymentMethod(PaymentMethod.BANK_TRANSFER)
+                .status(status)
+                .fileKey("")
+                .adminObservation(status == ReceiptStatus.REJECTED ? "Rechazado previamente" : null)
                 .build());
     }
 }

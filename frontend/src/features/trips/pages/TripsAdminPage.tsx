@@ -19,6 +19,7 @@ import {
   useTrips,
   useUnassignTripStudent,
 } from "@/features/trips/services/trips-service";
+import { isCanonicalStudentDni, normalizeStudentDniInput } from "@/lib/dni";
 
 import styles from "./TripsAdminPage.module.css";
 
@@ -590,11 +591,12 @@ function AssignUsersModal({ tripId, tripName, onSuccess, onClose }: AssignUsersM
   const [rawInput, setRawInput] = useState("");
 
   const parsedDnis = useMemo(() => {
-    const parts = rawInput
-      .split(/[\s,]+/)
-      .map((part) => part.trim())
-      .filter((part) => part.length > 0);
-    return parts.filter((part) => /^\d{7,8}$/.test(part)).slice(0, 500);
+    const matches = rawInput.match(/(?<!\d)(?:\d[.\-\s]?){7,8}(?!\d)/g) ?? [];
+
+    return matches
+      .map((match) => normalizeStudentDniInput(match))
+      .filter((dni) => isCanonicalStudentDni(dni))
+      .slice(0, 500);
   }, [rawInput]);
 
   const parsedDtoState = useMemo(() => {
@@ -661,7 +663,7 @@ function AssignUsersModal({ tripId, tripName, onSuccess, onClose }: AssignUsersM
               placeholder="Ej: 45678901, 45678902 o uno por línea"
             />
             <p className={styles.idsHelper}>
-              Ingresá los DNIs de los alumnos. Solo números de 7-8 dígitos. Los DNIs sin padre asociado quedarán pendientes.
+              Ingresá los DNIs de los alumnos. Acepta puntos, guiones y espacios; se envían sin formato. Los DNIs sin padre asociado quedarán pendientes.
             </p>
             <p className={styles.idsPreview}>
               DNIs válidos detectados: {parsedDnis.length}

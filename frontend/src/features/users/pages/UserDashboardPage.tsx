@@ -9,6 +9,7 @@ import type { BankAccountDTO } from "@/features/bank-accounts/types/bank-account
 import { Folder } from "@/features/payments/components/Folder";
 import {
   useMyInstallments,
+  usePaymentPreview,
   useRegisterPayment,
 } from "@/features/payments/services/payments-service";
 import type {
@@ -102,6 +103,10 @@ function buildInstallmentGroups(installments: UserInstallmentDTO[]): Installment
 }
 
 function getGroupBadgeColor(group: InstallmentGroup): "green" | "yellow" | "red" {
+  if (groupHasPendingReview(group)) {
+    return "yellow";
+  }
+
   const colors = group.installments.map((installment) => installment.uiStatusTone);
   if (colors.includes("red")) {
     return "red";
@@ -114,34 +119,30 @@ function getGroupBadgeColor(group: InstallmentGroup): "green" | "yellow" | "red"
   return "green";
 }
 
+function isInstallmentCovered(installment: Pick<UserInstallmentDTO, "totalDue" | "paidAmount">): boolean {
+  return getInstallmentRemainingAmount(installment) <= 0;
+}
+
+function getPayableInstallments(group: InstallmentGroup): UserInstallmentDTO[] {
+  return [...group.installments]
+    .filter((installment) => !isInstallmentCovered(installment))
+    .sort((a, b) => a.installmentNumber - b.installmentNumber);
+}
+
+function groupHasPendingReview(group: InstallmentGroup): boolean {
+  return group.installments.some((installment) => installment.latestReceiptStatus === "PENDING");
+}
+
 function findNextDueDate(group: InstallmentGroup): string | null {
-  const pending = group.installments.filter(
-    (installment) =>
-      installment.uiStatusCode !== "PAID" &&
-      !(installment.uiStatusCode === "UP_TO_DATE" && installment.paidAmount >= installment.totalDue),
-  );
+  const pending = getPayableInstallments(group);
   if (pending.length === 0) {
     return group.installments[group.installments.length - 1]?.dueDate ?? null;
   }
-  return [...pending].sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0]?.dueDate ?? null;
+  return pending[0]?.dueDate ?? null;
 }
 
 function findPendingInstallment(group: InstallmentGroup): UserInstallmentDTO | null {
-  const pending = group.installments
-    .filter(
-      (installment) =>
-        installment.uiStatusCode !== "PAID" &&
-        installment.uiStatusCode !== "UNDER_REVIEW",
-    )
-    .sort((a, b) => {
-      if (a.dueDate === b.dueDate) {
-        return a.installmentNumber - b.installmentNumber;
-      }
-
-      return a.dueDate.localeCompare(b.dueDate);
-    });
-
-  return pending[0] ?? null;
+  return getPayableInstallments(group)[0] ?? null;
 }
 
 function roundMoney(value: number): number {
@@ -154,6 +155,20 @@ function getInstallmentRemainingAmount(installment: Pick<UserInstallmentDTO, "to
 
 function formatInstallmentAmount(installment: Pick<UserInstallmentDTO, "tripCurrency">, amount: number): string {
   return installment.tripCurrency === "USD" ? usdFormatter.format(amount) : currencyFormatter.format(amount);
+}
+
+function formatAmountByCurrency(currency: "ARS" | "USD", amount: number): string {
+  return currency === "USD" ? usdFormatter.format(amount) : currencyFormatter.format(amount);
+}
+
+function formatInstallmentsLabel(installments: Array<{ installmentNumber: number }>): string {
+  if (installments.length === 0) {
+    return "";
+  }
+  if (installments.length === 1) {
+    return `#${installments[0].installmentNumber}`;
+  }
+  return installments.map((installment) => `#${installment.installmentNumber}`).join(", ");
 }
 
 function formatBankAccountTitle(account: BankAccountDTO): string {
@@ -177,8 +192,8 @@ export function UserDashboardPage() {
 
   const [expandedGroupKeys, setExpandedGroupKeys] = useState<string[]>([]);
   const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null);
-  const [selectedInstallmentId, setSelectedInstallmentId] = useState<number | null>(null);
-  const [reportedAmount, setReportedAmount] = useState("");
+  const [selectedAnchorInstallmentId, setSelectedAnchorInstallmentId] = useState<number | null>(null);
+  const [selectedInstallmentsCount, setSelectedInstallmentsCount] = useState(1);
   const [reportedPaymentDate, setReportedPaymentDate] = useState(getTodayDate);
   const [paymentCurrency, setPaymentCurrency] = useState<"ARS" | "USD">("ARS");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("BANK_TRANSFER");
@@ -209,17 +224,31 @@ export function UserDashboardPage() {
 
   const selectedInstallment = useMemo(
     () =>
-      selectedInstallmentId != null
-        ? allInstallments.find((installment) => installment.installmentId === selectedInstallmentId) ?? null
+      selectedAnchorInstallmentId != null
+        ? allInstallments.find((installment) => installment.installmentId === selectedAnchorInstallmentId) ?? null
         : null,
-    [selectedInstallmentId, allInstallments],
+    [selectedAnchorInstallmentId, allInstallments],
   );
 
   const selectedInstallmentDisplay = selectedInstallment ? resolveInstallmentDisplay(selectedInstallment) : null;
   const selectedInstallmentRemaining = selectedInstallment ? getInstallmentRemainingAmount(selectedInstallment) : 0;
+  const selectedGroupHasPendingReview = selectedGroup != null ? groupHasPendingReview(selectedGroup) : false;
+  const selectableInstallments = selectedGroup != null ? getPayableInstallments(selectedGroup) : [];
+  const selectedTripHasPending = selectableInstallments.length > 0;
 
-  const selectedTripHasPending =
-    selectedGroup != null ? findPendingInstallment(selectedGroup) != null : false;
+  const previewPayload = selectedAnchorInstallmentId != null && !selectedGroupHasPendingReview
+    ? {
+        anchorInstallmentId: selectedAnchorInstallmentId,
+        installmentsCount: selectedInstallmentsCount,
+        reportedPaymentDate,
+        paymentCurrency,
+      }
+    : null;
+  const {
+    data: paymentPreview,
+    isLoading: isPaymentPreviewLoading,
+    error: paymentPreviewError,
+  } = usePaymentPreview(previewPayload);
 
   const availableBankAccounts = useMemo(
     () => bankAccountItems.filter((account) => account.currency === paymentCurrency),
@@ -236,7 +265,10 @@ export function UserDashboardPage() {
 
   const canSubmitPayment =
     selectedTripHasPending &&
+    !selectedGroupHasPendingReview &&
     !registerPayment.isPending &&
+    !isPaymentPreviewLoading &&
+    paymentPreview != null &&
     !isBankAccountsLoading &&
     availableBankAccounts.length > 0 &&
     selectedBankAccountId != null &&
@@ -284,28 +316,41 @@ export function UserDashboardPage() {
 
   useEffect(() => {
     if (selectedGroupKey == null) {
-      setSelectedInstallmentId(null);
-      setReportedAmount("");
+      setSelectedAnchorInstallmentId(null);
+      setSelectedInstallmentsCount(1);
       return;
     }
 
     const group = groups.find((item) => item.groupKey === selectedGroupKey) ?? null;
     if (!group) {
-      setSelectedInstallmentId(null);
-      setReportedAmount("");
+      setSelectedAnchorInstallmentId(null);
+      setSelectedInstallmentsCount(1);
       return;
     }
 
     const pendingInstallment = findPendingInstallment(group);
     if (!pendingInstallment) {
-      setSelectedInstallmentId(null);
-      setReportedAmount("");
+      setSelectedAnchorInstallmentId(null);
+      setSelectedInstallmentsCount(1);
       return;
     }
 
-    setSelectedInstallmentId(pendingInstallment.installmentId);
-    setReportedAmount(getInstallmentRemainingAmount(pendingInstallment).toFixed(2));
+    setSelectedAnchorInstallmentId(pendingInstallment.installmentId);
+    setSelectedInstallmentsCount(1);
   }, [selectedGroupKey, groups]);
+
+  useEffect(() => {
+    if (selectableInstallments.length === 0) {
+      if (selectedInstallmentsCount !== 1) {
+        setSelectedInstallmentsCount(1);
+      }
+      return;
+    }
+
+    if (selectedInstallmentsCount > selectableInstallments.length) {
+      setSelectedInstallmentsCount(selectableInstallments.length);
+    }
+  }, [selectableInstallments, selectedInstallmentsCount]);
 
   const toggleGroup = (groupKey: string) => {
     setExpandedGroupKeys((current) => {
@@ -331,8 +376,13 @@ export function UserDashboardPage() {
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (selectedInstallmentId == null) {
+    if (selectedAnchorInstallmentId == null) {
       toast.error("Seleccioná una inscripción con cuotas pendientes antes de enviar el comprobante.");
+      return;
+    }
+
+    if (selectedGroupHasPendingReview) {
+      toast.error("Esta inscripción tiene comprobantes pendientes de revisión y no admite nuevos pagos.");
       return;
     }
 
@@ -346,20 +396,16 @@ export function UserDashboardPage() {
       return;
     }
 
-    const parsedAmount = Number(reportedAmount);
-    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
-      toast.error("Ingresá un monto válido mayor a 0.");
+    if (!paymentPreview) {
+      toast.error("Todavía no pudimos calcular el total exacto del pago. Reintentá en unos segundos.");
       return;
     }
 
     // Capture display data before resetting state
     const groupIndex = groups.findIndex((g) => g.groupKey === selectedGroupKey);
     const tripDisplayName = selectedGroup ? getGroupDisplayName(selectedGroup, groupIndex) : "";
-    const installmentNumberSnapshot = selectedInstallment?.installmentNumber ?? 0;
-    const amountSnapshot = formatInstallmentAmount(
-      selectedInstallment ?? { tripCurrency: paymentCurrency },
-      parsedAmount,
-    );
+    const installmentsLabelSnapshot = formatInstallmentsLabel(paymentPreview.installments);
+    const amountSnapshot = formatAmountByCurrency(paymentPreview.paymentCurrency, paymentPreview.totalReportedAmount);
     const dateSnapshot = formatReportedDate(reportedPaymentDate);
     const methodSnapshot = paymentMethod;
     const bankSnapshot =
@@ -370,8 +416,8 @@ export function UserDashboardPage() {
 
     try {
       await registerPayment.mutateAsync({
-        installmentId: selectedInstallmentId,
-        reportedAmount: parsedAmount,
+        anchorInstallmentId: selectedAnchorInstallmentId,
+        installmentsCount: selectedInstallmentsCount,
         reportedPaymentDate,
         paymentCurrency,
         paymentMethod,
@@ -379,8 +425,8 @@ export function UserDashboardPage() {
         file: receiptFile,
       });
 
-      setSelectedInstallmentId(null);
-      setReportedAmount("");
+      setSelectedAnchorInstallmentId(null);
+      setSelectedInstallmentsCount(1);
       setReportedPaymentDate(getTodayDate());
       setPaymentCurrency("ARS");
       setPaymentMethod("BANK_TRANSFER");
@@ -392,7 +438,7 @@ export function UserDashboardPage() {
 
       setReceiptSuccessData({
         tripDisplayName,
-        installmentNumber: installmentNumberSnapshot,
+        installmentsLabel: installmentsLabelSnapshot,
         amount: amountSnapshot,
         paymentDate: dateSnapshot,
         paymentMethod: methodSnapshot,
@@ -564,13 +610,18 @@ export function UserDashboardPage() {
               {selectedGroupKey != null && !selectedTripHasPending ? (
                 <p className={styles.helperWarning}>Esta inscripción no tiene cuotas pendientes</p>
               ) : null}
+              {selectedGroupHasPendingReview ? (
+                <p className={styles.helperWarning}>
+                  Esta inscripción tiene comprobantes pendientes de revisión. Hasta que el administrador los revise no podés enviar un nuevo pago.
+                </p>
+              ) : null}
 
               {selectedInstallment ? (
                 <div className={styles.selectedInfoBox}>
                   <div className={styles.selectedInfoHeader}>
                     <span>
                       {selectedGroup?.studentName ? `${selectedGroup.studentName} · ` : ""}
-                      Cuota {selectedInstallment.installmentNumber} · vence {formatReportedDate(selectedInstallment.dueDate)} ·{" "}
+                      Primera cuota pendiente #{selectedInstallment.installmentNumber} · vence {formatReportedDate(selectedInstallment.dueDate)} ·{" "}
                       saldo {formatInstallmentAmount(selectedInstallment, selectedInstallmentRemaining)}
                     </span>
                     {selectedInstallmentDisplay ? (
@@ -621,22 +672,47 @@ export function UserDashboardPage() {
               </label>
 
               <label className={styles.formField}>
-                <span className={styles.label}>Monto pagado</span>
-                <input
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={reportedAmount}
-                  onChange={(event) => setReportedAmount(event.target.value)}
-                  className={styles.input}
-                  disabled={!selectedTripHasPending}
-                  required
-                />
+                <span className={styles.label}>Cantidad de cuotas consecutivas</span>
+                <select
+                  value={selectedInstallmentsCount}
+                  onChange={(event) => setSelectedInstallmentsCount(Number(event.target.value))}
+                  className={styles.select}
+                  disabled={!selectedTripHasPending || selectedGroupHasPendingReview}
+                >
+                  {Array.from({ length: selectableInstallments.length }, (_, index) => index + 1).map((count) => (
+                    <option key={count} value={count}>
+                      {count} {count === 1 ? "cuota" : "cuotas"}
+                    </option>
+                  ))}
+                </select>
               </label>
-              {selectedInstallment ? (
-                <p className={styles.helperText}>
-                  Saldo restante sugerido: {formatInstallmentAmount(selectedInstallment, selectedInstallmentRemaining)} · Si pagás más, el excedente se aplica en cascada a cuotas siguientes.
-                </p>
+              {paymentPreview ? (
+                <div className={styles.selectedInfoBox}>
+                  <div className={styles.selectedInfoHeader}>
+                    <span>
+                      Cubrís {formatInstallmentsLabel(paymentPreview.installments)} · total exacto{" "}
+                      {formatAmountByCurrency(paymentPreview.paymentCurrency, paymentPreview.totalReportedAmount)}
+                    </span>
+                    <span className={`${styles.statusBadge} ${styles.statusgreen}`}>Exacto</span>
+                  </div>
+                  <p className={styles.helperText}>
+                    El sistema solo admite la suma exacta de cuotas consecutivas desde la primera pendiente.
+                  </p>
+                  {paymentPreview.paymentCurrency !== paymentPreview.tripCurrency ? (
+                    <p className={styles.helperText}>
+                      Equivale a {formatAmountByCurrency(paymentPreview.tripCurrency, paymentPreview.totalAmountInTripCurrency)} del viaje
+                      {paymentPreview.exchangeRate != null
+                        ? ` · tipo de cambio BNA ${formatAmountByCurrency("ARS", paymentPreview.exchangeRate)}`
+                        : ""}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              {paymentPreviewError ? (
+                <p className={styles.errorText}>{paymentPreviewError.message}</p>
+              ) : null}
+              {isPaymentPreviewLoading && !paymentPreviewError ? (
+                <p className={styles.helperText}>Calculando total exacto...</p>
               ) : null}
 
               <label className={styles.formField}>
@@ -646,7 +722,7 @@ export function UserDashboardPage() {
                   value={reportedPaymentDate}
                   onChange={(event) => setReportedPaymentDate(event.target.value)}
                   className={styles.input}
-                  disabled={!selectedTripHasPending}
+                  disabled={!selectedTripHasPending || selectedGroupHasPendingReview}
                   required
                 />
               </label>
@@ -657,7 +733,7 @@ export function UserDashboardPage() {
                   value={paymentCurrency}
                   onChange={(event) => setPaymentCurrency(event.target.value as "ARS" | "USD")}
                   className={styles.select}
-                  disabled={!selectedTripHasPending}
+                  disabled={!selectedTripHasPending || selectedGroupHasPendingReview}
                 >
                   <option value="ARS">Pesos (ARS)</option>
                   <option value="USD">Dólares (USD)</option>
@@ -676,7 +752,7 @@ export function UserDashboardPage() {
                   value={selectedBankAccountId ?? ""}
                   onChange={(event) => setSelectedBankAccountId(event.target.value === "" ? null : Number(event.target.value))}
                   className={styles.select}
-                  disabled={!selectedTripHasPending || isBankAccountsLoading || availableBankAccounts.length === 0}
+                  disabled={!selectedTripHasPending || selectedGroupHasPendingReview || isBankAccountsLoading || availableBankAccounts.length === 0}
                 >
                   <option value="">Elegí una cuenta</option>
                   {availableBankAccounts.map((account) => (
@@ -699,7 +775,7 @@ export function UserDashboardPage() {
                   value={paymentMethod}
                   onChange={(event) => setPaymentMethod(event.target.value as PaymentMethod)}
                   className={styles.select}
-                  disabled={!selectedTripHasPending}
+                  disabled={!selectedTripHasPending || selectedGroupHasPendingReview}
                 >
                   <option value="BANK_TRANSFER">Transferencia bancaria</option>
                   <option value="CASH">Efectivo</option>

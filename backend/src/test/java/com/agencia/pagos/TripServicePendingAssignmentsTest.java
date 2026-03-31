@@ -117,6 +117,30 @@ class TripServicePendingAssignmentsTest {
     }
 
     @Test
+    void assignUsersInBulk_normalizesFormattedDnisBeforeLookupAndSave() {
+        Trip trip = buildTrip(11L, LocalDate.now().plusMonths(1), false);
+        List<String> requestedDnis = List.of("12.345.678", "87-654-321", "33 444 555");
+        List<String> normalizedDnis = List.of("12345678", "87654321", "33444555");
+
+        when(tripRepository.findByIdForUpdate(11L)).thenReturn(Optional.of(trip));
+        when(studentRepository.findByDniIn(normalizedDnis)).thenReturn(List.of());
+        when(installmentRepository.findAssignedStudentIdsByTripId(11L)).thenReturn(List.of());
+        when(pendingTripStudentRepository.findByTripIdAndStudentDniIn(11L, normalizedDnis)).thenReturn(List.of());
+
+        BulkAssignResultDTO result = tripService.assignUsersInBulk(11L, new UserAssignBulkDTO(requestedDnis));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Iterable<PendingTripStudent>> pendingCaptor = ArgumentCaptor.forClass((Class) Iterable.class);
+
+        verify(pendingTripStudentRepository).saveAll(pendingCaptor.capture());
+
+        List<PendingTripStudent> savedPending = toList(pendingCaptor.getValue());
+        assertEquals(normalizedDnis, savedPending.stream().map(PendingTripStudent::getStudentDni).toList());
+        assertEquals(0, result.assignedCount());
+        assertEquals(3, result.pendingCount());
+    }
+
+    @Test
     void materializePendingAssignmentsForStudent_generatesInstallmentsAndClearsPendingRows() {
         LocalDate firstDueDate = LocalDate.now(ZoneId.of("America/Argentina/Buenos_Aires")).minusMonths(3).withDayOfMonth(1);
         Trip trip = buildTrip(5L, firstDueDate, false);
