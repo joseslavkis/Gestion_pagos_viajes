@@ -94,6 +94,13 @@
   font-size: 0.88rem;
 }
 
+.tripGroupSummaryAccount {
+  margin: 0;
+  color: #334155;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
 .tripGroupActions {
   display: inline-flex;
   align-items: center;
@@ -117,6 +124,22 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.7rem;
+}
+
+.accountSummary {
+  margin: 0 0.9rem 0.9rem;
+  border: 1px solid #cfe0fb;
+  background: #eef5ff;
+  color: #0f2f57;
+  border-radius: 0.75rem;
+  padding: 0.72rem 0.85rem;
+  font-size: 0.9rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.accountSummaryTitle {
+  font-weight: 700;
 }
 
 .installmentChip {
@@ -152,6 +175,12 @@
   background: rgba(22, 163, 74, 0.12);
   border: 1px solid rgba(22, 163, 74, 0.4);
   color: #166534;
+}
+
+.statusneutral {
+  background: rgba(148, 163, 184, 0.14);
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  color: #475569;
 }
 
 .statusyellow {

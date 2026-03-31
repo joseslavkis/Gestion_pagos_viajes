@@ -206,6 +206,10 @@ describe("UserDashboardPage", () => {
       target: { value: "2" },
     });
 
+    expect(await screen.findByText("Estado de cuenta")).toBeInTheDocument();
+    expect(screen.getByText((text) => text.includes("Pagado:") && text.includes("50,00"))).toBeInTheDocument();
+    expect(screen.getByText((text) => text.includes("Resta:") && text.includes("550,00"))).toBeInTheDocument();
+
     await waitFor(() =>
       expect(previewPayload).toMatchObject({
         anchorInstallmentId: 201,
