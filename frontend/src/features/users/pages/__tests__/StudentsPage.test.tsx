@@ -7,14 +7,10 @@ import { server } from "@/test/msw-server";
 import { renderWithProviders } from "@/test/test-utils";
 
 const STUDENTS_URL = "http://localhost:30002/api/v1/users/students";
-const SCHOOLS_URL = "http://localhost:30002/api/v1/schools";
 
 describe("StudentsPage", () => {
   it("muestra mensaje cuando no hay hijos reclamados", async () => {
-    server.use(
-      http.get(STUDENTS_URL, () => HttpResponse.json([])),
-      http.get(SCHOOLS_URL, () => HttpResponse.json([])),
-    );
+    server.use(http.get(STUDENTS_URL, () => HttpResponse.json([])));
 
     renderWithProviders(<StudentsPage />);
 
@@ -25,10 +21,9 @@ describe("StudentsPage", () => {
     server.use(
       http.get(STUDENTS_URL, () =>
         HttpResponse.json([
-          { id: 501, name: "Martina Slavkis", dni: "45678901", schoolName: "Colegio Test", courseName: "5A" },
+          { id: 501, name: "Martina Slavkis", dni: "45678901" },
         ]),
       ),
-      http.get(SCHOOLS_URL, () => HttpResponse.json([{ id: 10, name: "Colegio Test" }])),
     );
 
     renderWithProviders(<StudentsPage />);
@@ -40,11 +35,8 @@ describe("StudentsPage", () => {
   it("muestra notificacion de exito al agregar un alumno", async () => {
     server.use(
       http.get(STUDENTS_URL, () => HttpResponse.json([])),
-      http.get(SCHOOLS_URL, () =>
-        HttpResponse.json([{ id: 10, name: "Colegio Test" }]),
-      ),
       http.post(STUDENTS_URL, async ({ request }) => {
-        const body = await request.json() as { name: string; dni: string; schoolName: string; courseName: string };
+        const body = await request.json() as { name: string; dni: string };
         return HttpResponse.json({ id: 999, ...body }, { status: 201 });
       }),
     );
@@ -57,12 +49,6 @@ describe("StudentsPage", () => {
     fireEvent.change(screen.getByLabelText("DNI"), {
       target: { value: "40111222" },
     });
-    fireEvent.change(screen.getByLabelText("Colegio"), {
-      target: { value: "Colegio Test" },
-    });
-    fireEvent.change(screen.getByLabelText("Curso"), {
-      target: { value: "5A" },
-    });
 
     fireEvent.click(screen.getByRole("button", { name: "Agregar hijo" }));
 
@@ -74,11 +60,8 @@ describe("StudentsPage", () => {
 
     server.use(
       http.get(STUDENTS_URL, () => HttpResponse.json([])),
-      http.get(SCHOOLS_URL, () =>
-        HttpResponse.json([{ id: 10, name: "Colegio Test" }]),
-      ),
       http.post(STUDENTS_URL, async ({ request }) => {
-        const body = await request.json() as { name: string; dni: string; schoolName: string; courseName: string };
+        const body = await request.json() as { name: string; dni: string };
         receivedDni = body.dni;
         return HttpResponse.json({ id: 999, ...body }, { status: 201 });
       }),
@@ -91,12 +74,6 @@ describe("StudentsPage", () => {
     });
     fireEvent.change(screen.getByLabelText("DNI"), {
       target: { value: "40.111.222" },
-    });
-    fireEvent.change(screen.getByLabelText("Colegio"), {
-      target: { value: "Colegio Test" },
-    });
-    fireEvent.change(screen.getByLabelText("Curso"), {
-      target: { value: "5A" },
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Agregar hijo" }));

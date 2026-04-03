@@ -208,9 +208,7 @@ abstract class ControllerIntegrationTestSupport {
                 "123456789",
                 List.of(new StudentCreateDTO(
                         "Alumno",
-                        uniqueDni(),
-                        "Colegio",
-                        "3ro"
+                        uniqueDni()
                 ))
         );
     }

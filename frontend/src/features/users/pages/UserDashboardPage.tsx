@@ -40,11 +40,10 @@ const dateFormatter = new Intl.DateTimeFormat("es-AR", {
 type InstallmentGroup = {
   groupKey: string;
   tripId: number;
+  tripName: string;
   studentId: number | null;
   studentName: string | null;
   studentDni: string | null;
-  schoolName: string | null;
-  courseName: string | null;
   installments: UserInstallmentDTO[];
 };
 
@@ -87,11 +86,10 @@ function buildInstallmentGroups(installments: UserInstallmentDTO[]): Installment
     map.set(groupKey, {
       groupKey,
       tripId: installment.tripId,
+      tripName: installment.tripName,
       studentId: installment.studentId,
       studentName: installment.studentName,
       studentDni: installment.studentDni,
-      schoolName: installment.schoolName,
-      courseName: installment.courseName,
       installments: [installment],
     });
   }
@@ -161,6 +159,29 @@ function formatAmountByCurrency(currency: "ARS" | "USD", amount: number): string
   return currency === "USD" ? usdFormatter.format(amount) : currencyFormatter.format(amount);
 }
 
+function getGroupCurrency(group: InstallmentGroup): "ARS" | "USD" {
+  return group.installments[0]?.tripCurrency ?? "ARS";
+}
+
+function getGroupTotalDue(group: InstallmentGroup): number {
+  return roundMoney(
+    group.installments.reduce((sum, installment) => sum + installment.totalDue, 0),
+  );
+}
+
+function getGroupRemainingAmount(group: InstallmentGroup): number {
+  return roundMoney(
+    group.installments.reduce(
+      (sum, installment) => sum + getInstallmentRemainingAmount(installment),
+      0,
+    ),
+  );
+}
+
+function getGroupPaidAmount(group: InstallmentGroup): number {
+  return roundMoney(getGroupTotalDue(group) - getGroupRemainingAmount(group));
+}
+
 function formatInstallmentsLabel(installments: Array<{ installmentNumber: number }>): string {
   if (installments.length === 0) {
     return "";
@@ -176,7 +197,7 @@ function formatBankAccountTitle(account: BankAccountDTO): string {
 }
 
 function getGroupDisplayName(group: InstallmentGroup, index: number): string {
-  return group.studentName ? `Viaje ${index + 1} - ${group.studentName}` : `Viaje ${index + 1}`;
+  return group.studentName ? `${group.tripName} - ${group.studentName}` : group.tripName || `Viaje ${index + 1}`;
 }
 
 
@@ -480,6 +501,9 @@ export function UserDashboardPage() {
                   const isExpanded = expandedGroupKeys.includes(group.groupKey);
                   const nextDueDate = findNextDueDate(group);
                   const groupColor = getGroupBadgeColor(group);
+                  const accountCurrency = getGroupCurrency(group);
+                  const totalPaid = getGroupPaidAmount(group);
+                  const totalRemaining = getGroupRemainingAmount(group);
 
                   return (
                     <article
@@ -497,6 +521,9 @@ export function UserDashboardPage() {
                             {group.installments.length} cuotas
                             {nextDueDate ? ` · próximo vencimiento ${formatReportedDate(nextDueDate)}` : ""}
                           </p>
+                          <p className={styles.tripGroupSummaryAccount}>
+                            Estado de cuenta: Pagado {formatAmountByCurrency(accountCurrency, totalPaid)} · Resta {formatAmountByCurrency(accountCurrency, totalRemaining)}
+                          </p>
                           {group.studentDni ? (
                             <p className={styles.tripGroupSummary}>DNI alumno: {group.studentDni}</p>
                           ) : null}
@@ -510,49 +537,62 @@ export function UserDashboardPage() {
                       </button>
 
                       {isExpanded ? (
-                        <div className={styles.installmentGrid}>
-                          {group.installments.map((installment) => {
-                            const display = resolveInstallmentDisplay(installment);
+                        <>
+                          <div className={styles.installmentGrid}>
+                            {group.installments.map((installment) => {
+                              const display = resolveInstallmentDisplay(installment);
+                              const statusClass =
+                                installment.uiStatusCode === "UP_TO_DATE"
+                                  ? styles.statusneutral
+                                  : styles[`status${display.color}`];
 
-                            return (
-                              <div key={installment.installmentId} className={styles.installmentChip}>
-                                <div className={styles.chipHeader}>
-                                  <h4 className={styles.chipTitle}>Cuota {installment.installmentNumber}</h4>
-                                  <span className={`${styles.statusBadge} ${styles[`status${display.color}`]}`}>
-                                    {display.label}
-                                  </span>
+                              return (
+                                <div key={installment.installmentId} className={styles.installmentChip}>
+                                  <div className={styles.chipHeader}>
+                                    <h4 className={styles.chipTitle}>Cuota {installment.installmentNumber}</h4>
+                                    <span className={`${styles.statusBadge} ${statusClass}`}>
+                                      {display.label}
+                                    </span>
+                                  </div>
+
+                                  <p className={styles.chipMeta}>{currencyFormatter.format(installment.totalDue)}</p>
+                                  {installment.paidAmount > 0 &&
+                                  installment.uiStatusCode !== "PAID" &&
+                                  getInstallmentRemainingAmount(installment) > 0 ? (
+                                    <p className={styles.chipMeta}>
+                                      Abonado: {formatInstallmentAmount(installment, installment.paidAmount)} · Resta:{" "}
+                                      {formatInstallmentAmount(
+                                        installment,
+                                        getInstallmentRemainingAmount(installment),
+                                      )}
+                                    </p>
+                                  ) : null}
+                                  <p className={styles.chipMeta}>Vence: {formatReportedDate(installment.dueDate)}</p>
+
+                                  {installment.uiStatusCode === "RECEIPT_REJECTED" &&
+                                  installment.latestReceiptObservation ? (
+                                    <p className={styles.rejectedObservation}>
+                                      ⚠ {installment.latestReceiptObservation}
+                                    </p>
+                                  ) : null}
+
+                                  {installment.uiStatusCode === "UNDER_REVIEW" ? (
+                                    <p className={styles.pendingObservation}>
+                                      Tu comprobante está siendo revisado por el administrador
+                                    </p>
+                                  ) : null}
                                 </div>
+                              );
+                            })}
+                          </div>
 
-                                <p className={styles.chipMeta}>{currencyFormatter.format(installment.totalDue)}</p>
-                                {installment.paidAmount > 0 &&
-                                installment.uiStatusCode !== "PAID" &&
-                                getInstallmentRemainingAmount(installment) > 0 ? (
-                                  <p className={styles.chipMeta}>
-                                    Abonado: {formatInstallmentAmount(installment, installment.paidAmount)} · Resta:{" "}
-                                    {formatInstallmentAmount(
-                                      installment,
-                                      getInstallmentRemainingAmount(installment),
-                                    )}
-                                  </p>
-                                ) : null}
-                                <p className={styles.chipMeta}>Vence: {formatReportedDate(installment.dueDate)}</p>
-
-                                {installment.uiStatusCode === "RECEIPT_REJECTED" &&
-                                installment.latestReceiptObservation ? (
-                                  <p className={styles.rejectedObservation}>
-                                    ⚠ {installment.latestReceiptObservation}
-                                  </p>
-                                ) : null}
-
-                                {installment.uiStatusCode === "UNDER_REVIEW" ? (
-                                  <p className={styles.pendingObservation}>
-                                    Tu comprobante está siendo revisado por el administrador
-                                  </p>
-                                ) : null}
-                              </div>
-                            );
-                          })}
-                        </div>
+                          <div className={styles.accountSummary}>
+                            <span className={styles.accountSummaryTitle}>Estado de cuenta</span>
+                            <span>
+                              Pagado: {formatAmountByCurrency(accountCurrency, totalPaid)} · Resta: {formatAmountByCurrency(accountCurrency, totalRemaining)}
+                            </span>
+                          </div>
+                        </>
                       ) : null}
                     </article>
                   );
@@ -713,6 +753,13 @@ export function UserDashboardPage() {
               ) : null}
               {isPaymentPreviewLoading && !paymentPreviewError ? (
                 <p className={styles.helperText}>Calculando total exacto...</p>
+              ) : null}
+
+              {selectedTripHasPending ? (
+                <p className={styles.paymentWarning} role="note">
+                  Importante: transferí exactamente el monto indicado por el sistema. El total debe coincidir con la
+                  suma exacta de cuotas consecutivas desde la primera pendiente.
+                </p>
               ) : null}
 
               <label className={styles.formField}>

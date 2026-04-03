@@ -115,8 +115,6 @@ describe("TripsAdminPage", () => {
         studentDni: "46113387",
         studentId: 12,
         studentName: "Luca Perez",
-        schoolName: "Colegio Test",
-        courseName: "5A",
         parentUserId: 90,
         parentFullName: "Ana Perez",
         parentEmail: "ana@test.com",

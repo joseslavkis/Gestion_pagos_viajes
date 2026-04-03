@@ -215,6 +215,126 @@ class InstallmentReminderSchedulerTest {
         verify(installmentReminderNotificationRepository, times(2)).saveAll(org.mockito.ArgumentMatchers.anyList());
     }
 
+    @Test
+    void sendDailyInstallmentReminders_enviaTambienElRecordatorioDeSieteDias() {
+        InstallmentReminderScheduler scheduler = new InstallmentReminderScheduler(
+                installmentRepository,
+                paymentReceiptRepository,
+                installmentReminderNotificationRepository,
+                installmentStatusResolver,
+                emailService
+        );
+
+        LocalDate today = LocalDate.now(BUSINESS_ZONE);
+        User user = buildUser("padre@example.com", "Jose");
+        Trip trip = buildTrip("Bariloche 2026", 5);
+        Installment overdueSevenDays = buildInstallment(1L, user, trip, 1, today.minusDays(7), "100.00", "0.00", InstallmentStatus.YELLOW);
+
+        when(emailService.isDeliveryConfigured()).thenReturn(true);
+        when(installmentRepository.findAllWithUserAndTrip()).thenReturn(List.of(overdueSevenDays));
+        when(paymentReceiptRepository.findByInstallmentIdIn(List.of(1L))).thenReturn(List.of());
+        when(installmentReminderNotificationRepository.findByInstallmentIdIn(List.of(1L)))
+                .thenReturn(List.of());
+
+        scheduler.sendDailyInstallmentReminders();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<EmailService.InstallmentReminderMailItem>> itemsCaptor = ArgumentCaptor.forClass(List.class);
+
+        verify(emailService).sendInstallmentReminder(
+                org.mockito.ArgumentMatchers.eq("padre@example.com"),
+                org.mockito.ArgumentMatchers.eq("Jose"),
+                itemsCaptor.capture()
+        );
+
+        List<EmailService.InstallmentReminderMailItem> items = itemsCaptor.getValue();
+        assertEquals(2, items.size());
+        assertTrue(items.stream().anyMatch(item ->
+                item.installmentNumber().equals(1)
+                        && item.kind() == EmailService.ReminderKind.OVERDUE
+        ));
+        assertTrue(items.stream().anyMatch(item ->
+                item.installmentNumber().equals(1)
+                        && item.kind() == EmailService.ReminderKind.OVERDUE_7_DAYS
+        ));
+    }
+
+    @Test
+    void sendDailyInstallmentReminders_noReenviaElRecordatorioDeSieteDiasSiYaFueEnviado() {
+        InstallmentReminderScheduler scheduler = new InstallmentReminderScheduler(
+                installmentRepository,
+                paymentReceiptRepository,
+                installmentReminderNotificationRepository,
+                installmentStatusResolver,
+                emailService
+        );
+
+        LocalDate today = LocalDate.now(BUSINESS_ZONE);
+        User user = buildUser("padre@example.com", "Jose");
+        Trip trip = buildTrip("Bariloche 2026", 5);
+        Installment installment = buildInstallment(1L, user, trip, 1, today.minusDays(8), "100.00", "0.00", InstallmentStatus.YELLOW);
+
+        InstallmentReminderNotification overdueNotification = InstallmentReminderNotification.builder()
+                .id(10L)
+                .installment(installment)
+                .type(InstallmentReminderNotificationType.OVERDUE)
+                .sentOn(today.minusDays(7))
+                .build();
+        InstallmentReminderNotification overdueSevenDaysNotification = InstallmentReminderNotification.builder()
+                .id(11L)
+                .installment(installment)
+                .type(InstallmentReminderNotificationType.OVERDUE_7_DAYS)
+                .sentOn(today)
+                .build();
+
+        when(emailService.isDeliveryConfigured()).thenReturn(true);
+        when(installmentRepository.findAllWithUserAndTrip()).thenReturn(List.of(installment));
+        when(paymentReceiptRepository.findByInstallmentIdIn(List.of(1L))).thenReturn(List.of());
+        when(installmentReminderNotificationRepository.findByInstallmentIdIn(List.of(1L)))
+                .thenReturn(List.of(overdueNotification, overdueSevenDaysNotification));
+
+        scheduler.sendDailyInstallmentReminders();
+
+        verify(emailService, never()).sendInstallmentReminder(anyString(), anyString(), anyList());
+    }
+
+    @Test
+    void sendDailyInstallmentReminders_noEnviaRecordatorioDeSieteDiasSiHayComprobantePendiente() {
+        InstallmentReminderScheduler scheduler = new InstallmentReminderScheduler(
+                installmentRepository,
+                paymentReceiptRepository,
+                installmentReminderNotificationRepository,
+                installmentStatusResolver,
+                emailService
+        );
+
+        LocalDate today = LocalDate.now(BUSINESS_ZONE);
+        User user = buildUser("padre@example.com", "Jose");
+        Trip trip = buildTrip("Bariloche 2026", 5);
+        Installment overdueSevenDays = buildInstallment(1L, user, trip, 1, today.minusDays(8), "100.00", "0.00", InstallmentStatus.YELLOW);
+
+        PaymentReceipt pendingReceipt = PaymentReceipt.builder()
+                .id(40L)
+                .installment(overdueSevenDays)
+                .reportedAmount(new BigDecimal("100.00"))
+                .reportedPaymentDate(today)
+                .paymentCurrency(Currency.ARS)
+                .paymentMethod(PaymentMethod.BANK_TRANSFER)
+                .status(ReceiptStatus.PENDING)
+                .fileKey("")
+                .build();
+
+        when(emailService.isDeliveryConfigured()).thenReturn(true);
+        when(installmentRepository.findAllWithUserAndTrip()).thenReturn(List.of(overdueSevenDays));
+        when(paymentReceiptRepository.findByInstallmentIdIn(List.of(1L))).thenReturn(List.of(pendingReceipt));
+        when(installmentReminderNotificationRepository.findByInstallmentIdIn(List.of(1L)))
+                .thenReturn(List.of());
+
+        scheduler.sendDailyInstallmentReminders();
+
+        verify(emailService, never()).sendInstallmentReminder(anyString(), anyString(), anyList());
+    }
+
     private User buildUser(String email, String name) {
         User user = new User();
         user.setRole(Role.USER);

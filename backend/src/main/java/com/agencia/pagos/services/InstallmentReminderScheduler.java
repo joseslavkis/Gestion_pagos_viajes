@@ -114,36 +114,38 @@ public class InstallmentReminderScheduler {
                 continue;
             }
 
-            InstallmentReminderNotificationType reminderType = classifyInstallment(installment, today);
-            if (reminderType == null) {
+            List<InstallmentReminderNotificationType> reminderTypes = classifyInstallment(installment, today);
+            if (reminderTypes.isEmpty()) {
                 continue;
             }
 
-            ReminderNotificationKey reminderKey = new ReminderNotificationKey(
-                    installment.getId(),
-                    reminderType
-            );
-            if (sentReminderKeys.contains(reminderKey)) {
-                continue;
+            for (InstallmentReminderNotificationType reminderType : reminderTypes) {
+                ReminderNotificationKey reminderKey = new ReminderNotificationKey(
+                        installment.getId(),
+                        reminderType
+                );
+                if (sentReminderKeys.contains(reminderKey)) {
+                    continue;
+                }
+
+                UserReminderBundle bundle = remindersByUserId.computeIfAbsent(
+                        user.getId(),
+                        ignored -> new UserReminderBundle(user)
+                );
+
+                bundle.pendingReminders().add(new PendingReminder(
+                        installment,
+                        reminderType,
+                        new EmailService.InstallmentReminderMailItem(
+                                installment.getTrip().getName(),
+                                installment.getInstallmentNumber(),
+                                installment.getDueDate(),
+                                remainingAmount,
+                                installment.getTrip().getCurrency(),
+                                toReminderKind(reminderType)
+                        )
+                ));
             }
-
-            UserReminderBundle bundle = remindersByUserId.computeIfAbsent(
-                    user.getId(),
-                    ignored -> new UserReminderBundle(user)
-            );
-
-            bundle.pendingReminders().add(new PendingReminder(
-                    installment,
-                    reminderType,
-                    new EmailService.InstallmentReminderMailItem(
-                            installment.getTrip().getName(),
-                            installment.getInstallmentNumber(),
-                            installment.getDueDate(),
-                            remainingAmount,
-                            installment.getTrip().getCurrency(),
-                            toReminderKind(reminderType)
-                    )
-            ));
         }
 
         remindersByUserId.values().forEach(bundle -> {
@@ -178,7 +180,7 @@ public class InstallmentReminderScheduler {
         }
     }
 
-    private InstallmentReminderNotificationType classifyInstallment(Installment installment, LocalDate today) {
+    private List<InstallmentReminderNotificationType> classifyInstallment(Installment installment, LocalDate today) {
         int yellowWarningDays = installment.getTrip().getYellowWarningDays() == null
                 ? 0
                 : installment.getTrip().getYellowWarningDays();
@@ -192,21 +194,30 @@ public class InstallmentReminderScheduler {
         );
         if (effectiveStatus == InstallmentStatus.RED
                 || effectiveStatus == InstallmentStatus.RETROACTIVE) {
-            return InstallmentReminderNotificationType.OVERDUE;
+            List<InstallmentReminderNotificationType> reminderTypes = new ArrayList<>();
+            reminderTypes.add(InstallmentReminderNotificationType.OVERDUE);
+            if (!today.isBefore(installment.getDueDate().plusDays(7))) {
+                reminderTypes.add(InstallmentReminderNotificationType.OVERDUE_7_DAYS);
+            }
+            return reminderTypes;
         }
 
         LocalDate yellowWindowEnd = today.plusDays(Math.max(0, yellowWarningDays));
         if (!installment.getDueDate().isAfter(yellowWindowEnd)) {
-            return InstallmentReminderNotificationType.DUE_SOON;
+            return List.of(InstallmentReminderNotificationType.DUE_SOON);
         }
 
-        return null;
+        return List.of();
     }
 
     private EmailService.ReminderKind toReminderKind(InstallmentReminderNotificationType reminderType) {
-        return reminderType == InstallmentReminderNotificationType.OVERDUE
-                ? EmailService.ReminderKind.OVERDUE
-                : EmailService.ReminderKind.DUE_SOON;
+        if (reminderType == InstallmentReminderNotificationType.OVERDUE) {
+            return EmailService.ReminderKind.OVERDUE;
+        }
+        if (reminderType == InstallmentReminderNotificationType.OVERDUE_7_DAYS) {
+            return EmailService.ReminderKind.OVERDUE_7_DAYS;
+        }
+        return EmailService.ReminderKind.DUE_SOON;
     }
 
     private BigDecimal getRemainingAmount(Installment installment) {

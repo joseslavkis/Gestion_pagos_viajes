@@ -25,8 +25,6 @@ function buildAdminUserDetailResponse(userId: number) {
         id: 88,
         name: "Tomas Benitez",
         dni: "44555666",
-        schoolName: "Colegio Demo",
-        courseName: "4to",
       },
     ],
     installments: [
@@ -37,8 +35,6 @@ function buildAdminUserDetailResponse(userId: number) {
         studentId: 88,
         studentName: "Tomas Benitez",
         studentDni: "44555666",
-        schoolName: "Colegio Demo",
-        courseName: "4to",
         installmentId: 100,
         installmentNumber: 1,
         dueDate: "2026-04-10",

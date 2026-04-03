@@ -34,8 +34,6 @@ export const StudentCreateSchema = z.object({
     .string()
     .transform(normalizeStudentDniInput)
     .refine(isCanonicalStudentDni, "El DNI debe tener 7 u 8 números"),
-  schoolName: z.string().trim().min(1, "Seleccioná un colegio"),
-  courseName: z.string().optional(),
 });
 
 export type StudentCreateDTO = z.infer<typeof StudentCreateSchema>;

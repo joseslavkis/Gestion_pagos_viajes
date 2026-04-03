@@ -8,34 +8,21 @@ import { renderWithProviders } from "@/test/test-utils";
 
 describe("User dashboard routes integration", () => {
   it("reclama un hijo pendiente y refresca alumnos y cuotas desde la pagina Mis hijos", async () => {
-    let installmentsRequests = 0;
     let studentItems: Array<{
       id: number;
       name: string;
       dni: string;
-      schoolName: string;
-      courseName: string;
     }> = [];
     let installmentsItems: Array<Record<string, unknown>> = [];
 
     server.use(
-      http.get("http://localhost:30002/api/v1/payments/my/installments", () => {
-        installmentsRequests += 1;
-        return HttpResponse.json(installmentsItems);
-      }),
+      http.get("http://localhost:30002/api/v1/payments/my/installments", () => HttpResponse.json(installmentsItems)),
       http.get("http://localhost:30002/api/v1/bank-accounts", () => HttpResponse.json([])),
       http.get("http://localhost:30002/api/v1/users/students", () => HttpResponse.json(studentItems)),
-      http.get("http://localhost:30002/api/v1/schools", () =>
-        HttpResponse.json([
-          { id: 10, name: "Colegio Test" },
-        ]),
-      ),
       http.post("http://localhost:30002/api/v1/users/students", async ({ request }) => {
         const body = await request.json() as {
           name: string;
           dni: string;
-          schoolName: string;
-          courseName: string;
         };
 
         studentItems = [
@@ -52,8 +39,6 @@ describe("User dashboard routes integration", () => {
             studentId: 900,
             studentName: body.name,
             studentDni: body.dni,
-            schoolName: body.schoolName,
-            courseName: body.courseName,
             installmentId: 101,
             installmentNumber: 1,
             dueDate: "2026-04-10",
@@ -86,12 +71,6 @@ describe("User dashboard routes integration", () => {
     fireEvent.change(screen.getByLabelText("DNI"), {
       target: { value: "40111222" },
     });
-    fireEvent.change(screen.getByLabelText("Colegio"), {
-      target: { value: "Colegio Test" },
-    });
-    fireEvent.change(screen.getByLabelText("Curso"), {
-      target: { value: "5A" },
-    });
 
     fireEvent.click(screen.getByRole("button", { name: "Agregar hijo" }));
 
@@ -102,11 +81,6 @@ describe("User dashboard routes integration", () => {
   it("muestra el error del backend si intenta reclamar un DNI no habilitado", async () => {
     server.use(
       http.get("http://localhost:30002/api/v1/users/students", () => HttpResponse.json([])),
-      http.get("http://localhost:30002/api/v1/schools", () =>
-        HttpResponse.json([
-          { id: 10, name: "Colegio Test" },
-        ]),
-      ),
       http.post("http://localhost:30002/api/v1/users/students", () =>
         new HttpResponse(
           "El DNI de alumno 40111222 no está habilitado todavía. Pedile a la agencia que lo cargue primero.",
@@ -123,12 +97,6 @@ describe("User dashboard routes integration", () => {
     });
     fireEvent.change(screen.getByLabelText("DNI"), {
       target: { value: "40111222" },
-    });
-    fireEvent.change(screen.getByLabelText("Colegio"), {
-      target: { value: "Colegio Test" },
-    });
-    fireEvent.change(screen.getByLabelText("Curso"), {
-      target: { value: "5A" },
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Agregar hijo" }));

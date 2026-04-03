@@ -9,8 +9,6 @@ public record StudentCreateDTO(
         @NotBlank @Pattern(
                 regexp = "^(?=.*\\d)[\\d.\\-\\s]{7,14}$",
                 message = "Student DNI must have 7 or 8 digits (dots, dashes, and spaces are allowed)"
-        ) String dni,
-        String schoolName,
-        String courseName
+        ) String dni
 ) {
 }

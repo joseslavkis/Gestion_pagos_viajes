@@ -418,8 +418,6 @@ public class UserService implements UserDetailsService {
                 .parent(user)
                 .name(dto.name())
                 .dni(dni)
-                .schoolName(dto.schoolName())
-                .courseName(dto.courseName())
                 .build();
 
         Student savedStudent = studentRepository.save(student);
@@ -431,9 +429,7 @@ public class UserService implements UserDetailsService {
         return new StudentDTO(
                 student.getId(),
                 student.getName(),
-                student.getDni(),
-                student.getSchoolName(),
-                student.getCourseName()
+                student.getDni()
         );
     }
 
@@ -469,8 +465,6 @@ public class UserService implements UserDetailsService {
                 student != null ? student.getId() : null,
                 student != null ? student.getName() : null,
                 student != null ? student.getDni() : null,
-                student != null ? student.getSchoolName() : null,
-                student != null ? student.getCourseName() : null,
                 installment.getId(),
                 installment.getInstallmentNumber(),
                 installment.getDueDate(),

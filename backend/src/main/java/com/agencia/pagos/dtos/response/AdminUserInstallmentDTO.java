@@ -15,8 +15,6 @@ public record AdminUserInstallmentDTO(
         Long studentId,
         String studentName,
         String studentDni,
-        String schoolName,
-        String courseName,
         Long installmentId,
         Integer installmentNumber,
         LocalDate dueDate,

@@ -26,7 +26,7 @@ public class EmailService {
     private static final Logger logger = LoggerFactory.getLogger(EmailService.class);
 
     private final RestClient restClient;
-    private final String toEmail;
+    private final String contactToEmail;
     private final String fromEmail;
     private final String fromName;
     private final String replyToEmail;
@@ -35,7 +35,7 @@ public class EmailService {
 
     public EmailService(
             RestClient.Builder restClientBuilder,
-            @Value("${app.mail.to}") String toEmail,
+            @Value("${app.mail.contact.to}") String contactToEmail,
             @Value("${app.mail.from}") String fromEmail,
             @Value("${app.mail.from-name:Proyecto VA}") String fromName,
             @Value("${app.mail.reply-to:}") String replyToEmail,
@@ -45,7 +45,7 @@ public class EmailService {
         this.restClient = restClientBuilder
                 .baseUrl("https://api.brevo.com")
                 .build();
-        this.toEmail = toEmail;
+        this.contactToEmail = contactToEmail;
         this.fromEmail = fromEmail;
         this.fromName = fromName;
         this.replyToEmail = StringUtils.hasText(replyToEmail) ? replyToEmail : fromEmail;
@@ -59,18 +59,18 @@ public class EmailService {
             return;
         }
 
-        if (!StringUtils.hasText(toEmail)) {
-            logger.warn("Skipping contact email because APP_MAIL_TO/app.mail.to is not configured");
+        if (!StringUtils.hasText(contactToEmail)) {
+            logger.warn("Skipping contact email because QUERY_MAIL/app.mail.contact.to is not configured");
             return;
         }
 
         sendEmail(
-                List.of(new BrevoAddress(toEmail, null)),
+                List.of(new BrevoAddress(contactToEmail, null)),
                 new BrevoAddress(dto.email(), dto.name()),
                 "Nueva consulta - Viajes Pagos",
                 buildHtmlBody(dto),
                 "contact",
-                toEmail
+                contactToEmail
         );
     }
 
@@ -241,11 +241,15 @@ public class EmailService {
         List<InstallmentReminderMailItem> overdueItems = items.stream()
                 .filter(item -> item.kind() == ReminderKind.OVERDUE)
                 .toList();
+        List<InstallmentReminderMailItem> overdueSevenDaysItems = items.stream()
+                .filter(item -> item.kind() == ReminderKind.OVERDUE_7_DAYS)
+                .toList();
 
         return """
                 <div style="font-family:Segoe UI,Arial,sans-serif;line-height:1.5;color:#0f2f57;">
                   <h2 style="margin:0 0 12px;">Recordatorio de cuotas</h2>
                   <p style="margin:0 0 16px;">Hola %s, estas son las cuotas de tu viaje que requieren atencion.</p>
+                  %s
                   %s
                   %s
                   <p style="margin:18px 0 0;color:#526883;font-size:14px;">
@@ -265,6 +269,12 @@ public class EmailService {
                         "#fff1f2",
                         "#b91c1c",
                         overdueItems
+                ),
+                buildReminderSection(
+                        "Cuotas vencidas hace 7 dias",
+                        "#fee2e2",
+                        "#991b1b",
+                        overdueSevenDaysItems
                 )
         );
     }
@@ -302,26 +312,75 @@ public class EmailService {
                   <p style="margin:0;"><strong>%s</strong></p>
                 </div>
                 """.formatted(
-                item.kind() == ReminderKind.OVERDUE ? "#fff1f2" : "#fff7e6",
+                reminderBackground(item.kind()),
                 escapeHtml(item.tripName()),
                 item.installmentNumber(),
                 escapeHtml(formatCurrency(item.remainingAmount(), item.currency())),
                 escapeHtml(item.dueDate().format(DATE_FORMATTER)),
-                item.kind() == ReminderKind.OVERDUE ? "Estado: vencida" : "Estado: proxima a vencer"
+                reminderStatusLabel(item.kind())
         );
     }
 
     private String buildReminderSubject(List<InstallmentReminderMailItem> items) {
         long dueSoonCount = items.stream().filter(item -> item.kind() == ReminderKind.DUE_SOON).count();
         long overdueCount = items.stream().filter(item -> item.kind() == ReminderKind.OVERDUE).count();
+        long overdueSevenDaysCount = items.stream().filter(item -> item.kind() == ReminderKind.OVERDUE_7_DAYS).count();
 
-        if (dueSoonCount > 0 && overdueCount > 0) {
+        if (overdueSevenDaysCount == 0 && dueSoonCount > 0 && overdueCount > 0) {
             return "Recordatorio de cuotas: " + dueSoonCount + " por vencer y " + overdueCount + " vencidas";
         }
-        if (overdueCount > 0) {
+        if (overdueSevenDaysCount == 0 && overdueCount > 0) {
             return "Recordatorio de cuotas vencidas: " + overdueCount;
         }
-        return "Recordatorio de cuotas proximas a vencer: " + dueSoonCount;
+        if (overdueSevenDaysCount == 0) {
+            return "Recordatorio de cuotas proximas a vencer: " + dueSoonCount;
+        }
+
+        if (dueSoonCount == 0 && overdueCount == 0) {
+            return "Recordatorio de cuotas vencidas hace 7 dias: " + overdueSevenDaysCount;
+        }
+
+        List<String> subjectParts = new java.util.ArrayList<>();
+        if (dueSoonCount > 0) {
+            subjectParts.add(dueSoonCount + " por vencer");
+        }
+        if (overdueCount > 0) {
+            subjectParts.add(overdueCount + " vencidas");
+        }
+        if (overdueSevenDaysCount > 0) {
+            subjectParts.add(overdueSevenDaysCount + " vencidas hace 7 dias");
+        }
+        return "Recordatorio de cuotas: " + joinSubjectParts(subjectParts);
+    }
+
+    private String reminderBackground(ReminderKind kind) {
+        if (kind == ReminderKind.OVERDUE) {
+            return "#fff1f2";
+        }
+        if (kind == ReminderKind.OVERDUE_7_DAYS) {
+            return "#fee2e2";
+        }
+        return "#fff7e6";
+    }
+
+    private String reminderStatusLabel(ReminderKind kind) {
+        if (kind == ReminderKind.OVERDUE) {
+            return "Estado: vencida";
+        }
+        if (kind == ReminderKind.OVERDUE_7_DAYS) {
+            return "Estado: vencida hace 7 dias";
+        }
+        return "Estado: proxima a vencer";
+    }
+
+    private String joinSubjectParts(List<String> parts) {
+        if (parts.size() == 1) {
+            return parts.get(0);
+        }
+        if (parts.size() == 2) {
+            return parts.get(0) + " y " + parts.get(1);
+        }
+        return String.join(", ", parts.subList(0, parts.size() - 1)) + " y " + parts.get(parts.size() - 1);
     }
 
     private String formatCurrency(java.math.BigDecimal amount, Currency currency) {
@@ -343,7 +402,8 @@ public class EmailService {
 
     public enum ReminderKind {
         DUE_SOON,
-        OVERDUE
+        OVERDUE,
+        OVERDUE_7_DAYS
     }
 
     public record InstallmentReminderMailItem(

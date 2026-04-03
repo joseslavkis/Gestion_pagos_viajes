@@ -188,7 +188,7 @@ export function TripsAdminPage() {
           <div className={styles.titleRow}>
             <div className={styles.titleBlock}>
               <h1 className={styles.title}>Viajes</h1>
-              <p className={styles.subtitle}>Configura montos, cuotas y asignaciones para tus viajes escolares.</p>
+              <p className={styles.subtitle}>Configura montos, cuotas y asignaciones. El nombre del viaje será la referencia visible que verá cada familia.</p>
               <span className={styles.countBadge}>
                 <span>Viajes:</span> <span>{totalTrips}</span>
               </span>
@@ -568,7 +568,7 @@ function TripModalCreate({ onClose }: TripModalCreateProps) {
   return (
     <ModalShell
       title="Nuevo viaje"
-      description="Define el monto total, cuotas y parámetros de vencimiento. Podrás asignar usuarios luego."
+      description="Define el monto total, cuotas y vencimientos. El nombre que elijas será la referencia visible para las familias."
       onClose={onClose}
     >
       <RequestState isLoading={isPending} loadingLabel="Creando viaje...">
@@ -578,11 +578,16 @@ function TripModalCreate({ onClose }: TripModalCreateProps) {
               <formData.AppField
                 name="name"
                 children={(field) => (
-                  <field.TextField
-                    label="Nombre del viaje"
-                    placeholder="Ej: Bariloche 5to año 2025"
-                    autoComplete="off"
-                  />
+                  <div className={styles.fieldGroup}>
+                    <field.TextField
+                      label="Nombre del viaje"
+                      placeholder="Ej: SAN MARTIN DE TOURS 2026"
+                      autoComplete="off"
+                    />
+                    <p className={styles.idsHelper}>
+                      Este nombre será la referencia visible que verá la familia en sus cuotas y pagos.
+                    </p>
+                  </div>
                 )}
               />
 
@@ -602,18 +607,42 @@ function TripModalCreate({ onClose }: TripModalCreateProps) {
                 <formData.AppField
                   name="currency"
                   children={(field) => (
-                    <label className={styles.fieldGroup}>
-                      <span className={styles.label}>Moneda del viaje</span>
-                      <select
-                        name={field.name}
-                        className={styles.selectField}
-                        value={field.state.value}
-                        onChange={(event) => field.handleChange(event.target.value as "ARS" | "USD")}
-                      >
-                        <option value="ARS">Pesos (ARS)</option>
-                        <option value="USD">Dólares (USD)</option>
-                      </select>
-                    </label>
+                    <fieldset className={styles.currencyFieldset}>
+                      <legend className={styles.label}>Moneda del viaje</legend>
+                      <div className={styles.currencyToggle} role="radiogroup" aria-label="Moneda del viaje">
+                        <label
+                          className={`${styles.currencyOption} ${
+                            field.state.value === "ARS" ? styles.currencyOptionActive : ""
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            className={styles.currencyRadio}
+                            name={field.name}
+                            value="ARS"
+                            checked={field.state.value === "ARS"}
+                            onChange={() => field.handleChange("ARS")}
+                          />
+                          <span className={styles.currencyCode}>ARS</span>
+                        </label>
+
+                        <label
+                          className={`${styles.currencyOption} ${
+                            field.state.value === "USD" ? styles.currencyOptionActive : ""
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            className={styles.currencyRadio}
+                            name={field.name}
+                            value="USD"
+                            checked={field.state.value === "USD"}
+                            onChange={() => field.handleChange("USD")}
+                          />
+                          <span className={styles.currencyCode}>USD</span>
+                        </label>
+                      </div>
+                    </fieldset>
                   )}
                 />
               </div>
@@ -916,14 +945,6 @@ function ManageTripStudentsModal({ tripId, tripName, onClose }: ManageTripStuden
                       <div>
                         <span className={styles.metaLabel}>Alumno</span>
                         <strong>{student.studentName ?? "Todavía sin reclamar"}</strong>
-                      </div>
-                      <div>
-                        <span className={styles.metaLabel}>Colegio</span>
-                        <strong>{student.schoolName ?? "Sin dato"}</strong>
-                      </div>
-                      <div>
-                        <span className={styles.metaLabel}>Curso</span>
-                        <strong>{student.courseName ?? "Sin dato"}</strong>
                       </div>
                       <div>
                         <span className={styles.metaLabel}>Padre</span>

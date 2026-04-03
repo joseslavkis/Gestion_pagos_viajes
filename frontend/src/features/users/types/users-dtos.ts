@@ -30,8 +30,6 @@ export const StudentDTOSchema = z.object({
   id: z.number(),
   name: z.string(),
   dni: z.string(),
-  schoolName: z.string().nullable(),
-  courseName: z.string().nullable(),
 });
 
 export type StudentDTO = z.infer<typeof StudentDTOSchema>;
@@ -56,8 +54,6 @@ export const AdminUserInstallmentDTOSchema = z.object({
   studentId: z.number().nullable(),
   studentName: z.string().nullable(),
   studentDni: z.string().nullable(),
-  schoolName: z.string().nullable(),
-  courseName: z.string().nullable(),
   installmentId: z.number(),
   installmentNumber: z.number(),
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),

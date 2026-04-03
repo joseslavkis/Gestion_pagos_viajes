@@ -91,11 +91,10 @@ export type PaymentBatchDTO = z.infer<typeof PaymentBatchDTOSchema>;
 
 export const UserInstallmentDTOSchema = z.object({
   tripId: z.number(),
+  tripName: z.string(),
   studentId: z.number().nullable(),
   studentName: z.string().nullable(),
   studentDni: z.string().nullable(),
-  schoolName: z.string().nullable(),
-  courseName: z.string().nullable(),
   installmentId: z.number(),
   installmentNumber: z.number(),
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),

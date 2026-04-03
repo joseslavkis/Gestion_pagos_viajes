@@ -327,8 +327,6 @@ public class TripService {
                             null,
                             null,
                             null,
-                            null,
-                            null,
                             "PENDING",
                             0
                     )
@@ -344,8 +342,6 @@ public class TripService {
                             item.studentDni(),
                             item.studentId(),
                             item.studentName(),
-                            item.schoolName(),
-                            item.courseName(),
                             item.parentUserId(),
                             item.parentFullName(),
                             item.parentEmail(),
@@ -549,8 +545,6 @@ public class TripService {
                 student.getDni(),
                 student.getId(),
                 student.getName(),
-                student.getSchoolName(),
-                student.getCourseName(),
                 parent != null ? parent.getId() : null,
                 parentFullName == null || parentFullName.isBlank() ? null : parentFullName,
                 parent != null ? parent.getEmail() : null,
@@ -676,9 +670,7 @@ public class TripService {
                 row.email() == null ? "" : row.email(),
                 row.phone() == null ? "" : row.phone(),
                 row.studentName() == null ? "" : row.studentName(),
-                row.studentDni() == null ? "" : row.studentDni(),
-                row.schoolName() == null ? "" : row.schoolName(),
-                row.courseName() == null ? "" : row.courseName()
+                row.studentDni() == null ? "" : row.studentDni()
         ).toLowerCase();
 
         return haystack.contains(search.trim().toLowerCase());
@@ -781,8 +773,6 @@ public class TripService {
                             user.getEmail(),
                             student != null ? student.getName() : null,
                             student != null ? student.getDni() : null,
-                            student != null ? student.getSchoolName() : null,
-                            student != null ? student.getCourseName() : null,
                             userCompleted,
                             rowInstallments
                     );

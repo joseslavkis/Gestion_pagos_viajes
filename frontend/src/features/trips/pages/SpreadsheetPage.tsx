@@ -411,12 +411,6 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                               {row.studentDni ? (
                                 <span className={styles.userSecondary}>DNI alumno: {row.studentDni}</span>
                               ) : null}
-                              {row.schoolName ? (
-                                <span className={styles.userSecondary}>Colegio: {row.schoolName}</span>
-                              ) : null}
-                              {row.courseName ? (
-                                <span className={styles.userSecondary}>Curso: {row.courseName}</span>
-                              ) : null}
                             </td>
                             {Array.from({ length: installmentsCount }).map((_, installmentIndex) => {
                               const installment = row.installments.find(

@@ -11,8 +11,6 @@ public record SpreadsheetRowDTO(
         String email,
         String studentName,
         String studentDni,
-        String schoolName,
-        String courseName,
         Boolean userCompleted,
         List<SpreadsheetRowInstallmentDTO> installments
 ) {
