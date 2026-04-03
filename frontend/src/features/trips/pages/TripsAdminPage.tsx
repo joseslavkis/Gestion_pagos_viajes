@@ -607,18 +607,42 @@ function TripModalCreate({ onClose }: TripModalCreateProps) {
                 <formData.AppField
                   name="currency"
                   children={(field) => (
-                    <label className={styles.fieldGroup}>
-                      <span className={styles.label}>Moneda del viaje</span>
-                      <select
-                        name={field.name}
-                        className={styles.selectField}
-                        value={field.state.value}
-                        onChange={(event) => field.handleChange(event.target.value as "ARS" | "USD")}
-                      >
-                        <option value="ARS">Pesos (ARS)</option>
-                        <option value="USD">Dólares (USD)</option>
-                      </select>
-                    </label>
+                    <fieldset className={styles.currencyFieldset}>
+                      <legend className={styles.label}>Moneda del viaje</legend>
+                      <div className={styles.currencyToggle} role="radiogroup" aria-label="Moneda del viaje">
+                        <label
+                          className={`${styles.currencyOption} ${
+                            field.state.value === "ARS" ? styles.currencyOptionActive : ""
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            className={styles.currencyRadio}
+                            name={field.name}
+                            value="ARS"
+                            checked={field.state.value === "ARS"}
+                            onChange={() => field.handleChange("ARS")}
+                          />
+                          <span className={styles.currencyCode}>ARS</span>
+                        </label>
+
+                        <label
+                          className={`${styles.currencyOption} ${
+                            field.state.value === "USD" ? styles.currencyOptionActive : ""
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            className={styles.currencyRadio}
+                            name={field.name}
+                            value="USD"
+                            checked={field.state.value === "USD"}
+                            onChange={() => field.handleChange("USD")}
+                          />
+                          <span className={styles.currencyCode}>USD</span>
+                        </label>
+                      </div>
+                    </fieldset>
                   )}
                 />
               </div>

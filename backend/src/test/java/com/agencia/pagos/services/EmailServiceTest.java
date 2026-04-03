@@ -75,6 +75,9 @@ class EmailServiceTest {
                         }
                         """, false))
                 .andExpect(content().string(containsString("Nueva consulta")))
+                .andExpect(content().string(containsString("Jose")))
+                .andExpect(content().string(containsString("jose@example.com")))
+                .andExpect(content().string(containsString("Hola equipo")))
                 .andRespond(withSuccess("{\"messageId\":\"abc123\"}", MediaType.APPLICATION_JSON));
 
         emailService.sendContactMessage(new ContactMessageDTO("Jose", "jose@example.com", "Hola equipo"));
@@ -108,6 +111,40 @@ class EmailServiceTest {
                         BigDecimal.valueOf(150000),
                         Currency.ARS,
                         EmailService.ReminderKind.DUE_SOON
+                ))
+        );
+
+        server.verify();
+    }
+
+    @Test
+    void sendInstallmentReminder_enviaAsuntoYContenidoParaCuotasVencidasHaceSieteDias() {
+        server.expect(requestTo("https://api.brevo.com/v3/smtp/email"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(header("api-key", "brevo-api-key-test"))
+                .andExpect(content().json("""
+                        {
+                          "sender": { "email": "proyectova2@gmail.com", "name": "Proyecto VA" },
+                          "to": [{ "email": "familia@example.com", "name": "Jose" }],
+                          "replyTo": { "email": "proyectova2@gmail.com", "name": "Proyecto VA" },
+                          "subject": "Recordatorio de cuotas vencidas hace 7 dias: 1"
+                        }
+                        """, false))
+                .andExpect(content().string(containsString("Viaje Mendoza")))
+                .andExpect(content().string(containsString("Cuotas vencidas hace 7 dias")))
+                .andExpect(content().string(containsString("Estado: vencida hace 7 dias")))
+                .andRespond(withSuccess("{\"messageId\":\"abc123\"}", MediaType.APPLICATION_JSON));
+
+        emailService.sendInstallmentReminder(
+                "familia@example.com",
+                "Jose",
+                List.of(new EmailService.InstallmentReminderMailItem(
+                        "Viaje Mendoza",
+                        2,
+                        LocalDate.of(2026, 4, 3),
+                        BigDecimal.valueOf(90000),
+                        Currency.ARS,
+                        EmailService.ReminderKind.OVERDUE_7_DAYS
                 ))
         );
 

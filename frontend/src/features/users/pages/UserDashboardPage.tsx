@@ -755,6 +755,13 @@ export function UserDashboardPage() {
                 <p className={styles.helperText}>Calculando total exacto...</p>
               ) : null}
 
+              {selectedTripHasPending ? (
+                <p className={styles.paymentWarning} role="note">
+                  Importante: transferí exactamente el monto indicado por el sistema. El total debe coincidir con la
+                  suma exacta de cuotas consecutivas desde la primera pendiente.
+                </p>
+              ) : null}
+
               <label className={styles.formField}>
                 <span className={styles.label}>Fecha de pago</span>
                 <input
