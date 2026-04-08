@@ -1,20 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type {
-  PaymentBatchDTO,
   PaymentBatchPreviewDTO,
+  PaymentInstallmentHistoryDTO,
   PaymentPreviewRequestDTO,
+  PaymentSubmissionDTO,
   PendingPaymentReviewDTO,
-  PaymentReceiptDTO,
   RegisterPaymentFormData,
   ReviewPaymentDTO,
   UserInstallmentDTO,
 } from "@/features/payments/types/payments-dtos";
 import {
-  PaymentBatchDTOSchema,
   PaymentBatchPreviewDTOSchema,
+  PaymentInstallmentHistoryDTOSchema,
+  PaymentSubmissionDTOSchema,
   PendingPaymentReviewDTOSchema,
-  PaymentReceiptDTOSchema,
   UserInstallmentDTOSchema,
 } from "@/features/payments/types/payments-dtos";
 import { ApiError, handleApiResponse } from "@/lib/api-error";
@@ -25,11 +25,11 @@ export function useRegisterPayment() {
   const [tokenState] = useToken();
   const queryClient = useQueryClient();
 
-  return useMutation<PaymentBatchDTO, ApiError, RegisterPaymentFormData>({
+  return useMutation<PaymentSubmissionDTO, ApiError, RegisterPaymentFormData>({
     mutationFn: async (payload) => {
       const formData = new FormData();
       formData.append("anchorInstallmentId", String(payload.anchorInstallmentId));
-      formData.append("installmentsCount", String(payload.installmentsCount));
+      formData.append("reportedAmount", String(payload.reportedAmount));
       formData.append("reportedPaymentDate", payload.reportedPaymentDate);
       formData.append("paymentCurrency", payload.paymentCurrency);
       formData.append("paymentMethod", payload.paymentMethod);
@@ -51,7 +51,7 @@ export function useRegisterPayment() {
 
       if (response.ok) {
         const json: unknown = await response.json();
-        return PaymentBatchDTOSchema.parse(json);
+        return PaymentSubmissionDTOSchema.parse(json);
       }
 
       return handleApiResponse(response);
@@ -61,6 +61,7 @@ export function useRegisterPayment() {
         queryClient.invalidateQueries({ queryKey: ["trips"] }),
         queryClient.invalidateQueries({ queryKey: ["spreadsheet"] }),
         queryClient.invalidateQueries({ queryKey: ["payments", "my", "installments"] }),
+        queryClient.invalidateQueries({ queryKey: ["payments", "my"] }),
         queryClient.invalidateQueries({ queryKey: ["payments", "preview"] }),
         queryClient.invalidateQueries({ queryKey: ["payments", "pending-review"] }),
       ]);
@@ -76,14 +77,14 @@ export function usePaymentPreview(payload: PaymentPreviewRequestDTO | null) {
       "payments",
       "preview",
       payload?.anchorInstallmentId ?? null,
-      payload?.installmentsCount ?? null,
+      payload?.reportedAmount ?? null,
       payload?.reportedPaymentDate ?? null,
       payload?.paymentCurrency ?? null,
     ],
     enabled:
       payload != null &&
       payload.anchorInstallmentId > 0 &&
-      payload.installmentsCount > 0 &&
+      payload.reportedAmount > 0 &&
       payload.reportedPaymentDate.length > 0,
     staleTime: 0,
     queryFn: async () => {
@@ -112,13 +113,9 @@ export function useReviewPayment() {
   const [tokenState] = useToken();
   const queryClient = useQueryClient();
 
-  return useMutation<
-    PaymentReceiptDTO,
-    ApiError,
-    { id: number; installmentId: number; data: ReviewPaymentDTO }
-  >({
+  return useMutation<PaymentSubmissionDTO, ApiError, { id: number; data: ReviewPaymentDTO }>({
     mutationFn: async ({ id, data }) =>
-      apiPatch(`/api/v1/payments/${id}/review`, data, (json) => PaymentReceiptDTOSchema.parse(json), {
+      apiPatch(`/api/v1/payments/${id}/review`, data, (json) => PaymentSubmissionDTOSchema.parse(json), {
         headers:
           tokenState.state === "LOGGED_IN"
             ? {
@@ -126,15 +123,14 @@ export function useReviewPayment() {
               }
             : undefined,
       }),
-    onSuccess: async (_data, variables) => {
+    onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["trips"] }),
-        queryClient.invalidateQueries({
-          queryKey: ["payments", "installment", variables.installmentId],
-        }),
+        queryClient.invalidateQueries({ queryKey: ["payments", "installment"] }),
         queryClient.invalidateQueries({ queryKey: ["payments", "pending-review"] }),
-        queryClient.invalidateQueries({ queryKey: ["spreadsheet"] }),
+        queryClient.invalidateQueries({ queryKey: ["payments", "my"] }),
         queryClient.invalidateQueries({ queryKey: ["payments", "my", "installments"] }),
+        queryClient.invalidateQueries({ queryKey: ["spreadsheet"] }),
       ]);
     },
   });
@@ -144,9 +140,9 @@ export function useVoidPayment() {
   const [tokenState] = useToken();
   const queryClient = useQueryClient();
 
-  return useMutation<PaymentReceiptDTO, ApiError, { id: number; installmentId: number }>({
+  return useMutation<PaymentSubmissionDTO, ApiError, { id: number }>({
     mutationFn: async ({ id }) =>
-      apiPost(`/api/v1/payments/${id}/void`, {}, (json) => PaymentReceiptDTOSchema.parse(json), {
+      apiPost(`/api/v1/payments/${id}/void`, {}, (json) => PaymentSubmissionDTOSchema.parse(json), {
         headers:
           tokenState.state === "LOGGED_IN"
             ? {
@@ -154,15 +150,14 @@ export function useVoidPayment() {
               }
             : undefined,
       }),
-    onSuccess: async (_data, variables) => {
+    onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["trips"] }),
-        queryClient.invalidateQueries({
-          queryKey: ["payments", "installment", variables.installmentId],
-        }),
+        queryClient.invalidateQueries({ queryKey: ["payments", "installment"] }),
         queryClient.invalidateQueries({ queryKey: ["payments", "pending-review"] }),
-        queryClient.invalidateQueries({ queryKey: ["spreadsheet"] }),
+        queryClient.invalidateQueries({ queryKey: ["payments", "my"] }),
         queryClient.invalidateQueries({ queryKey: ["payments", "my", "installments"] }),
+        queryClient.invalidateQueries({ queryKey: ["spreadsheet"] }),
       ]);
     },
   });
@@ -171,14 +166,14 @@ export function useVoidPayment() {
 export function useInstallmentReceipts(installmentId: number | null) {
   const [tokenState] = useToken();
 
-  return useQuery<PaymentReceiptDTO[], ApiError>({
+  return useQuery<PaymentInstallmentHistoryDTO[], ApiError>({
     queryKey: ["payments", "installment", installmentId],
     staleTime: 0,
     enabled: installmentId != null && installmentId > 0,
     queryFn: async () =>
       apiGet(
         `/api/v1/payments/installment/${installmentId}`,
-        (json) => PaymentReceiptDTOSchema.array().parse(json),
+        (json) => PaymentInstallmentHistoryDTOSchema.array().parse(json),
         {
           headers:
             tokenState.state === "LOGGED_IN"

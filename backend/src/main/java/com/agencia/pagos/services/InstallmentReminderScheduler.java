@@ -40,9 +40,9 @@ public class InstallmentReminderScheduler {
     private final PaymentReceiptRepository paymentReceiptRepository;
     private final InstallmentReminderNotificationRepository installmentReminderNotificationRepository;
     private final InstallmentStatusResolver installmentStatusResolver;
+    private final PaymentInstallmentOverlayService paymentInstallmentOverlayService;
     private final EmailService emailService;
 
-    @Autowired
     public InstallmentReminderScheduler(
             InstallmentRepository installmentRepository,
             PaymentReceiptRepository paymentReceiptRepository,
@@ -50,10 +50,30 @@ public class InstallmentReminderScheduler {
             InstallmentStatusResolver installmentStatusResolver,
             EmailService emailService
     ) {
+        this(
+                installmentRepository,
+                paymentReceiptRepository,
+                installmentReminderNotificationRepository,
+                installmentStatusResolver,
+                null,
+                emailService
+        );
+    }
+
+    @Autowired
+    public InstallmentReminderScheduler(
+            InstallmentRepository installmentRepository,
+            PaymentReceiptRepository paymentReceiptRepository,
+            InstallmentReminderNotificationRepository installmentReminderNotificationRepository,
+            InstallmentStatusResolver installmentStatusResolver,
+            PaymentInstallmentOverlayService paymentInstallmentOverlayService,
+            EmailService emailService
+    ) {
         this.installmentRepository = installmentRepository;
         this.paymentReceiptRepository = paymentReceiptRepository;
         this.installmentReminderNotificationRepository = installmentReminderNotificationRepository;
         this.installmentStatusResolver = installmentStatusResolver;
+        this.paymentInstallmentOverlayService = paymentInstallmentOverlayService;
         this.emailService = emailService;
     }
 
@@ -85,6 +105,10 @@ public class InstallmentReminderScheduler {
                         receipt -> receipt.getStatus(),
                         (existing, ignored) -> existing
                 ));
+        Map<Long, PaymentInstallmentOverlayService.InstallmentOverlay> overlays =
+                paymentInstallmentOverlayService == null
+                        ? Map.of()
+                        : paymentInstallmentOverlayService.resolveForInstallments(installments);
 
         Set<ReminderNotificationKey> sentReminderKeys = installmentIds.isEmpty()
                 ? Set.of()
@@ -106,6 +130,11 @@ public class InstallmentReminderScheduler {
 
             BigDecimal remainingAmount = getRemainingAmount(installment);
             if (remainingAmount.compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+
+            PaymentInstallmentOverlayService.InstallmentOverlay overlay = overlays.get(installment.getId());
+            if (overlay != null && overlay.status() == ReceiptStatus.PENDING) {
                 continue;
             }
 

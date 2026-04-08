@@ -8,7 +8,7 @@ import java.time.LocalDate;
 
 public record PaymentPreviewRequestDTO(
         @NotNull Long anchorInstallmentId,
-        @NotNull @Positive Integer installmentsCount,
+        @NotNull @Positive java.math.BigDecimal reportedAmount,
         @NotNull LocalDate reportedPaymentDate,
         @NotNull Currency paymentCurrency
 ) {

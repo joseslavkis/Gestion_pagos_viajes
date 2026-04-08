@@ -108,7 +108,8 @@ describe("Admin trips and payments routes integration", () => {
   it("permite aprobar un comprobante desde /payments/pending-review", async () => {
     let pendingItems = [
       {
-        batchId: 91,
+        submissionId: 91,
+        status: "PENDING",
         reportedAmount: 200,
         paymentCurrency: "ARS",
         exchangeRate: null,
@@ -128,17 +129,18 @@ describe("Admin trips and payments routes integration", () => {
         userEmail: "jose@example.com",
         studentName: "Alumno Test",
         studentDni: "45678901",
-        receipts: [
+        allocations: [
           {
-            receiptId: 33,
+            receiptId: null,
             status: "PENDING",
             reportedAmount: 200,
             amountInTripCurrency: 200,
             installmentId: 12,
             installmentNumber: 4,
-            installmentDueDate: "2026-03-25",
-            installmentTotalDue: 200,
-            adminObservation: null,
+            dueDate: "2026-03-25",
+            totalDue: 200,
+            paidAmount: 0,
+            remainingAmount: 200,
           },
         ],
       },
@@ -147,24 +149,32 @@ describe("Admin trips and payments routes integration", () => {
     server.use(
       http.get("http://localhost:30002/api/v1/trips", () => HttpResponse.json([])),
       http.get("http://localhost:30002/api/v1/payments/pending-review", () => HttpResponse.json(pendingItems)),
-      http.patch("http://localhost:30002/api/v1/payments/33/review", () => {
+      http.patch("http://localhost:30002/api/v1/payments/91/review", () => {
         pendingItems = [];
         return HttpResponse.json({
-          id: 33,
-          installmentId: 12,
-          installmentNumber: 4,
+          submissionId: 91,
+          status: "APPROVED",
           reportedAmount: 200,
+          approvedAmount: 200,
+          rejectedAmount: 0,
           paymentCurrency: "ARS",
           exchangeRate: null,
           amountInTripCurrency: 200,
+          approvedAmountInTripCurrency: 200,
           reportedPaymentDate: "2026-03-23",
           paymentMethod: "BANK_TRANSFER",
-          status: "APPROVED",
           fileKey: "",
           adminObservation: null,
           bankAccountId: 1,
           bankAccountDisplayName: "ICBC - Cuenta en pesos",
           bankAccountAlias: "ICBC.PESOS",
+          tripId: 77,
+          tripName: "Bariloche",
+          tripCurrency: "ARS",
+          studentId: 10,
+          studentName: "Alumno Test",
+          studentDni: "45678901",
+          installments: [],
         });
       }),
     );
@@ -172,8 +182,7 @@ describe("Admin trips and payments routes integration", () => {
     renderAdminRoutes("/payments/pending-review");
 
     expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Desglosar cuotas" }));
-    fireEvent.click(screen.getByRole("button", { name: "Aprobar cuota" }));
+    fireEvent.click(screen.getByRole("button", { name: "Aprobar total" }));
     expect(await screen.findByText("No hay comprobantes pendientes de revisión.")).toBeInTheDocument();
   });
 });

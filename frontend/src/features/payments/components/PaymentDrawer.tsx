@@ -2,12 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   useInstallmentReceipts,
-  useReviewPayment,
   useVoidPayment,
 } from "@/features/payments/services/payments-service";
 import type {
-  PaymentReceiptDTO,
-  ReceiptStatus,
+  PaymentHistoryStatus,
+  PaymentInstallmentHistoryDTO,
 } from "@/features/payments/types/payments-dtos";
 import type {
   SpreadsheetRowDTO,
@@ -22,10 +21,12 @@ const currencyFormatter = new Intl.NumberFormat("es-AR", {
   currency: "ARS",
 });
 
-const receiptStatusLabels: Record<string, string> = {
-  PENDING: "Pendiente de revision",
+const historyStatusLabels: Record<PaymentHistoryStatus, string> = {
+  PENDING: "Pendiente de revisión",
   APPROVED: "Aprobado",
   REJECTED: "Rechazado",
+  PARTIALLY_APPROVED: "Aprobado parcial",
+  VOIDED: "Anulado",
 };
 
 const paymentMethodLabels: Record<string, string> = {
@@ -62,16 +63,12 @@ type PaymentDrawerProps = {
 
 export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps) {
   const {
-    data: receipts,
-    isLoading: isReceiptsLoading,
-    error: receiptsError,
+    data: history,
+    isLoading: isHistoryLoading,
+    error: historyError,
   } = useInstallmentReceipts(installment.id);
-  const reviewPayment = useReviewPayment();
   const voidPayment = useVoidPayment();
 
-  const [rejectingReceiptId, setRejectingReceiptId] = useState<number | null>(null);
-  const [rejectObservation, setRejectObservation] = useState("");
-  const [reviewError, setReviewError] = useState<string | null>(null);
   const [voidError, setVoidError] = useState<string | null>(null);
   const titleId = `payment-drawer-title-${installment.id}`;
   const overlayRef = useRef<HTMLDivElement | null>(null);
@@ -137,52 +134,24 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
-
     document.body.style.overflow = "hidden";
-
     return () => {
       document.body.style.overflow = previousOverflow;
     };
   }, []);
 
-  const isBusy = reviewPayment.isPending || voidPayment.isPending;
+  const historyItems = useMemo(() => history ?? [], [history]);
 
-  const receiptItems = useMemo(() => receipts ?? [], [receipts]);
-
-  const handleApprove = async (receipt: PaymentReceiptDTO) => {
-    setReviewError(null);
-    try {
-      await reviewPayment.mutateAsync({
-        id: receipt.id,
-        installmentId: installment.id,
-        data: { decision: "APPROVED" as ReceiptStatus },
-      });
-    } catch (error) {
-      setReviewError(error instanceof Error ? error.message : "No se pudo aprobar el comprobante");
+  const handleVoid = async (entry: PaymentInstallmentHistoryDTO) => {
+    if (entry.submissionId == null) {
+      return;
     }
-  };
 
-  const handleRejectConfirm = async (receipt: PaymentReceiptDTO) => {
-    setReviewError(null);
-    try {
-      await reviewPayment.mutateAsync({
-        id: receipt.id,
-        installmentId: installment.id,
-        data: { decision: "REJECTED" as ReceiptStatus, adminObservation: rejectObservation },
-      });
-      setRejectingReceiptId(null);
-      setRejectObservation("");
-    } catch (error) {
-      setReviewError(error instanceof Error ? error.message : "No se pudo rechazar el comprobante");
-    }
-  };
-
-  const handleVoid = async (receipt: PaymentReceiptDTO) => {
     setVoidError(null);
     try {
-      await voidPayment.mutateAsync({ id: receipt.id, installmentId: installment.id });
+      await voidPayment.mutateAsync({ id: entry.submissionId });
     } catch (error) {
-      setVoidError(error instanceof Error ? error.message : "No se pudo anular el comprobante");
+      setVoidError(error instanceof Error ? error.message : "No se pudo anular el pago");
     }
   };
 
@@ -237,53 +206,43 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
           </section>
 
           <section className={styles.drawerSection}>
-            <div className={styles.drawerLabel}>Historial de comprobantes</div>
-            {isReceiptsLoading ? <div>Cargando comprobantes...</div> : null}
-            {receiptsError ? <div className={styles.highlightDanger}>{receiptsError.message}</div> : null}
-            {!isReceiptsLoading && receiptItems.length === 0 ? <div>No hay comprobantes registrados.</div> : null}
-            {receiptItems.map((receipt) => (
-              <div key={receipt.id} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, marginTop: 8 }}>
+            <div className={styles.drawerLabel}>Historial del pago imputado</div>
+            {isHistoryLoading ? <div>Cargando movimientos...</div> : null}
+            {historyError ? <div className={styles.highlightDanger}>{historyError.message}</div> : null}
+            {!isHistoryLoading && historyItems.length === 0 ? <div>No hay movimientos registrados.</div> : null}
+            {historyItems.map((entry) => (
+              <div key={entry.id} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 10, marginTop: 8 }}>
                 <div>
-                  <span className={styles.strong}>Estado:</span> {receiptStatusLabels[receipt.status] ?? receipt.status}
+                  <span className={styles.strong}>Estado:</span> {historyStatusLabels[entry.status] ?? entry.status}
                 </div>
                 <div>
-                  <span className={styles.strong}>Monto:</span> {currencyFormatter.format(receipt.reportedAmount)}
-                </div>
-                {receipt.exchangeRate != null ? (
-                  <>
-                    <div>
-                      <span className={styles.strong}>Pagó:</span> {formatMoneyByCurrency(receipt.reportedAmount, receipt.paymentCurrency)}
-                    </div>
-                    <div>
-                      <span className={styles.strong}>Tipo de cambio BNA:</span> {formatMoneyByCurrency(receipt.exchangeRate, "ARS")}
-                    </div>
-                    <div>
-                      <span className={styles.strong}>Equivalente:</span> {formatMoneyByCurrency(receipt.amountInTripCurrency, receipt.paymentCurrency === "ARS" ? "USD" : "ARS")} {receipt.paymentCurrency === "ARS" ? "USD" : "ARS"}
-                    </div>
-                  </>
-                ) : null}
-                <div>
-                  <span className={styles.strong}>Fecha:</span> {formatDate(receipt.reportedPaymentDate)}
+                  <span className={styles.strong}>Monto reportado:</span> {formatMoneyByCurrency(entry.reportedAmount, entry.paymentCurrency)}
                 </div>
                 <div>
-                  <span className={styles.strong}>Método:</span> {paymentMethodLabels[receipt.paymentMethod] ?? receipt.paymentMethod}
+                  <span className={styles.strong}>Equivalente viaje:</span> {entry.amountInTripCurrency.toFixed(2)}
+                </div>
+                <div>
+                  <span className={styles.strong}>Fecha:</span> {formatDate(entry.reportedPaymentDate)}
+                </div>
+                <div>
+                  <span className={styles.strong}>Método:</span> {paymentMethodLabels[entry.paymentMethod] ?? entry.paymentMethod}
                 </div>
                 <div>
                   <span className={styles.strong}>Cuenta acreditada:</span>{" "}
-                  {receipt.bankAccountDisplayName ?? "Cuenta no informada"}
-                  {receipt.bankAccountAlias ? ` · ${receipt.bankAccountAlias}` : ""}
+                  {entry.bankAccountDisplayName ?? "Cuenta no informada"}
+                  {entry.bankAccountAlias ? ` · ${entry.bankAccountAlias}` : ""}
                 </div>
-                {receipt.adminObservation ? (
+                {entry.adminObservation ? (
                   <div>
-                    <span className={styles.strong}>Observación:</span> {receipt.adminObservation}
+                    <span className={styles.strong}>Observación:</span> {entry.adminObservation}
                   </div>
                 ) : null}
 
-                {receipt.fileKey ? (
+                {entry.fileKey ? (
                   <div style={{ marginTop: 8 }}>
-                    {receipt.fileKey.startsWith("data:image") ? (
+                    {entry.fileKey.startsWith("data:image") ? (
                       <img
-                        src={receipt.fileKey}
+                        src={entry.fileKey}
                         alt="Comprobante"
                         style={{
                           maxWidth: "100%",
@@ -294,60 +253,20 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
                         }}
                       />
                     ) : (
-                      <a href={receipt.fileKey} target="_blank" rel="noreferrer">
+                      <a href={entry.fileKey} target="_blank" rel="noreferrer">
                         Ver comprobante adjunto
                       </a>
                     )}
                   </div>
                 ) : null}
 
-                {receipt.status === "PENDING" ? (
-                  <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                    <button
-                      type="button"
-                      className={styles.pageButton}
-                      disabled={isBusy}
-                      onClick={() => handleApprove(receipt)}
-                    >
-                      Aprobar
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.pageButton}
-                      disabled={isBusy}
-                      onClick={() => setRejectingReceiptId(receipt.id)}
-                    >
-                      Rechazar
-                    </button>
-                    {rejectingReceiptId === receipt.id ? (
-                      <div style={{ display: "grid", gap: 6, width: "100%" }}>
-                        <input
-                          type="text"
-                          className={styles.searchInput}
-                          placeholder="Observación de rechazo"
-                          value={rejectObservation}
-                          onChange={(event) => setRejectObservation(event.target.value)}
-                        />
-                        <button
-                          type="button"
-                          className={styles.pageButton}
-                          disabled={isBusy}
-                          onClick={() => handleRejectConfirm(receipt)}
-                        >
-                          Confirmar rechazo
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {receipt.status === "APPROVED" ? (
+                {entry.status === "APPROVED" && entry.submissionId != null ? (
                   <div style={{ marginTop: 8 }}>
                     <button
                       type="button"
                       className={styles.pageButton}
-                      disabled={isBusy}
-                      onClick={() => handleVoid(receipt)}
+                      disabled={voidPayment.isPending}
+                      onClick={() => handleVoid(entry)}
                     >
                       Anular
                     </button>
@@ -355,10 +274,8 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
                 ) : null}
               </div>
             ))}
-            {reviewError ? <div className={styles.highlightDanger}>{reviewError}</div> : null}
             {voidError ? <div className={styles.highlightDanger}>{voidError}</div> : null}
           </section>
-
         </div>
       </aside>
     </div>

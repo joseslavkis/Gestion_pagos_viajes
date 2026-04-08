@@ -7,9 +7,8 @@ import {
   useReviewPayment,
 } from "@/features/payments/services/payments-service";
 import type {
+  PaymentBatchInstallmentDTO,
   PendingPaymentReviewDTO,
-  PendingPaymentReviewLineDTO,
-  ReceiptStatus,
 } from "@/features/payments/types/payments-dtos";
 
 import styles from "./PendingReviewPage.module.css";
@@ -28,12 +27,6 @@ const paymentMethodLabels: Record<string, string> = {
   OTHER: "Otro",
 };
 
-const receiptStatusLabels: Record<string, string> = {
-  PENDING: "Pendiente",
-  APPROVED: "Aprobada",
-  REJECTED: "Rechazada",
-};
-
 function formatMoneyByCurrency(amount: number, currency: "ARS" | "USD"): string {
   return new Intl.NumberFormat("es-AR", {
     style: "currency",
@@ -46,15 +39,18 @@ function formatDate(isoDate: string): string {
   return Number.isNaN(date.getTime()) ? isoDate : dateFormatter.format(date);
 }
 
-function getBatchKey(item: PendingPaymentReviewDTO): string {
-  if (item.batchId != null) {
-    return `batch-${item.batchId}`;
-  }
-  return `legacy-${item.receipts[0]?.receiptId ?? `${item.tripId}-${item.userId}`}`;
+function formatInstallmentList(allocations: PaymentBatchInstallmentDTO[]): string {
+  return allocations.map((allocation) => `#${allocation.installmentNumber}`).join(", ");
 }
 
-function formatInstallmentList(lines: PendingPaymentReviewLineDTO[]): string {
-  return lines.map((line) => `#${line.installmentNumber}`).join(", ");
+function parseAmount(value: string, fallback: number): number {
+  const normalized = value.replace(",", ".").trim();
+  if (normalized.length === 0) {
+    return fallback;
+  }
+
+  const parsed = Number.parseFloat(normalized);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 export function PendingReviewPage() {
@@ -62,9 +58,9 @@ export function PendingReviewPage() {
   const reviewPayment = useReviewPayment();
 
   const [search, setSearch] = useState("");
-  const [expandedBatchKeys, setExpandedBatchKeys] = useState<string[]>([]);
-  const [rejectingReceiptId, setRejectingReceiptId] = useState<number | null>(null);
-  const [rejectObservation, setRejectObservation] = useState("");
+  const [expandedSubmissionIds, setExpandedSubmissionIds] = useState<number[]>([]);
+  const [approvedAmounts, setApprovedAmounts] = useState<Record<number, string>>({});
+  const [observations, setObservations] = useState<Record<number, string>>({});
   const [actionError, setActionError] = useState<string | null>(null);
 
   const items = useMemo(() => {
@@ -85,7 +81,7 @@ export function PendingReviewPage() {
         item.studentDni ?? "",
         item.bankAccountDisplayName ?? "",
         item.bankAccountAlias ?? "",
-        formatInstallmentList(item.receipts),
+        formatInstallmentList(item.allocations),
       ]
         .join(" ")
         .toLowerCase();
@@ -93,40 +89,36 @@ export function PendingReviewPage() {
     });
   }, [data, search]);
 
-  const handleApprove = async (line: PendingPaymentReviewLineDTO) => {
-    setActionError(null);
-    try {
-      await reviewPayment.mutateAsync({
-        id: line.receiptId,
-        installmentId: line.installmentId,
-        data: { decision: "APPROVED" as ReceiptStatus },
-      });
-    } catch (reviewError) {
-      setActionError(reviewError instanceof Error ? reviewError.message : "No se pudo aprobar el comprobante.");
-    }
-  };
-
-  const handleReject = async (line: PendingPaymentReviewLineDTO) => {
-    setActionError(null);
-    try {
-      await reviewPayment.mutateAsync({
-        id: line.receiptId,
-        installmentId: line.installmentId,
-        data: { decision: "REJECTED" as ReceiptStatus, adminObservation: rejectObservation },
-      });
-      setRejectingReceiptId(null);
-      setRejectObservation("");
-    } catch (reviewError) {
-      setActionError(reviewError instanceof Error ? reviewError.message : "No se pudo rechazar el comprobante.");
-    }
-  };
-
-  const toggleBatch = (batchKey: string) => {
-    setExpandedBatchKeys((current) =>
-      current.includes(batchKey)
-        ? current.filter((item) => item !== batchKey)
-        : [...current, batchKey],
+  const toggleSubmission = (submissionId: number) => {
+    setExpandedSubmissionIds((current) =>
+      current.includes(submissionId)
+        ? current.filter((item) => item !== submissionId)
+        : [...current, submissionId],
     );
+  };
+
+  const submitDecision = async (item: PendingPaymentReviewDTO, approvedAmount: number) => {
+    setActionError(null);
+
+    const safeApprovedAmount = Math.max(0, approvedAmount);
+    const observation = observations[item.submissionId]?.trim() ?? "";
+
+    if (safeApprovedAmount < item.reportedAmount && observation.length === 0) {
+      setActionError("La observación es obligatoria cuando no se aprueba el monto completo.");
+      return;
+    }
+
+    try {
+      await reviewPayment.mutateAsync({
+        id: item.submissionId,
+        data: {
+          approvedAmount: safeApprovedAmount,
+          adminObservation: observation.length > 0 ? observation : undefined,
+        },
+      });
+    } catch (reviewError) {
+      setActionError(reviewError instanceof Error ? reviewError.message : "No se pudo guardar la decisión.");
+    }
   };
 
   return (
@@ -137,7 +129,7 @@ export function PendingReviewPage() {
             <div>
               <h1 className={styles.title}>Pendientes de revisión</h1>
               <p className={styles.subtitle}>
-                Cada envío entra agrupado por comprobante. Desplegalo para revisar cuota por cuota.
+                Cada envío representa un pago completo. Podés aprobarlo total o parcialmente, o rechazarlo.
               </p>
             </div>
             <label className={styles.searchBox}>
@@ -154,12 +146,13 @@ export function PendingReviewPage() {
             {items.length === 0 ? <p className={styles.emptyText}>No hay comprobantes pendientes de revisión.</p> : null}
             <div className={styles.list}>
               {items.map((item) => {
-                const batchKey = getBatchKey(item);
-                const isExpanded = expandedBatchKeys.includes(batchKey);
-                const pendingLines = item.receipts.filter((line) => line.status === "PENDING");
+                const isExpanded = expandedSubmissionIds.includes(item.submissionId);
+                const approvedAmountInput = approvedAmounts[item.submissionId] ?? String(item.reportedAmount);
+                const approvedAmountValue = parseAmount(approvedAmountInput, item.reportedAmount);
+                const observation = observations[item.submissionId] ?? "";
 
                 return (
-                  <article key={batchKey} className={styles.card}>
+                  <article key={item.submissionId} className={styles.card}>
                     <div className={styles.cardHeader}>
                       <div>
                         <h2 className={styles.cardTitle}>{item.userLastname}, {item.userName}</h2>
@@ -168,9 +161,7 @@ export function PendingReviewPage() {
                           {item.studentDni ? ` · DNI ${item.studentDni}` : ""}
                         </p>
                       </div>
-                      <span className={styles.pendingBadge}>
-                        {pendingLines.length} pendiente{pendingLines.length === 1 ? "" : "s"}
-                      </span>
+                      <span className={styles.pendingBadge}>Pago pendiente</span>
                     </div>
 
                     <div className={styles.grid}>
@@ -179,11 +170,11 @@ export function PendingReviewPage() {
                         <p className={styles.value}>{item.tripName}</p>
                       </div>
                       <div>
-                        <span className={styles.label}>Cuotas</span>
-                        <p className={styles.value}>{formatInstallmentList(item.receipts)}</p>
+                        <span className={styles.label}>Imputación prevista</span>
+                        <p className={styles.value}>{formatInstallmentList(item.allocations)}</p>
                       </div>
                       <div>
-                        <span className={styles.label}>Monto total informado</span>
+                        <span className={styles.label}>Monto informado</span>
                         <p className={styles.value}>{formatMoneyByCurrency(item.reportedAmount, item.paymentCurrency)}</p>
                       </div>
                       <div>
@@ -203,11 +194,12 @@ export function PendingReviewPage() {
                       </div>
                     </div>
 
-                    {item.exchangeRate != null ? (
-                      <p className={styles.exchangeInfo}>
-                        Pagó {formatMoneyByCurrency(item.reportedAmount, item.paymentCurrency)} · tipo de cambio {formatMoneyByCurrency(item.exchangeRate, "ARS")} · equivalente {formatMoneyByCurrency(item.amountInTripCurrency, item.tripCurrency)}
-                      </p>
-                    ) : null}
+                    <p className={styles.exchangeInfo}>
+                      Equivale a {formatMoneyByCurrency(item.amountInTripCurrency, item.tripCurrency)} del viaje
+                      {item.exchangeRate != null
+                        ? ` · tipo de cambio ${formatMoneyByCurrency(item.exchangeRate, "ARS")}`
+                        : ""}
+                    </p>
 
                     {item.fileKey ? (
                       <div className={styles.attachmentBox}>
@@ -224,18 +216,26 @@ export function PendingReviewPage() {
                     <div className={styles.actionsRow}>
                       <button
                         type="button"
-                        className={styles.secondaryButton}
-                        onClick={() => toggleBatch(batchKey)}
+                        className={styles.primaryButton}
+                        disabled={reviewPayment.isPending}
+                        onClick={() => submitDecision(item, item.reportedAmount)}
                       >
-                        {isExpanded ? "Ocultar cuotas" : "Desglosar cuotas"}
+                        Aprobar total
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.secondaryButton}
+                        onClick={() => toggleSubmission(item.submissionId)}
+                      >
+                        {isExpanded ? "Ocultar detalle" : "Ver imputación y decidir"}
                       </button>
                     </div>
 
                     {isExpanded ? (
                       <div style={{ display: "grid", gap: 12 }}>
-                        {item.receipts.map((line) => (
+                        {item.allocations.map((allocation) => (
                           <div
-                            key={line.receiptId}
+                            key={`${item.submissionId}-${allocation.installmentId}`}
                             style={{
                               border: "1px solid #d8e6fb",
                               borderRadius: 12,
@@ -247,90 +247,77 @@ export function PendingReviewPage() {
                           >
                             <div className={styles.cardHeader}>
                               <div>
-                                <h3 className={styles.cardTitle}>Cuota #{line.installmentNumber}</h3>
+                                <h3 className={styles.cardTitle}>Cuota #{allocation.installmentNumber}</h3>
                                 <p className={styles.cardSubtitle}>
-                                  Vence {formatDate(line.installmentDueDate)} · total {formatMoneyByCurrency(line.installmentTotalDue, item.tripCurrency)}
+                                  Vence {formatDate(allocation.dueDate)} · total {formatMoneyByCurrency(allocation.totalDue, item.tripCurrency)}
                                 </p>
                               </div>
                               <span className={styles.pendingBadge}>
-                                {receiptStatusLabels[line.status] ?? line.status}
+                                {formatMoneyByCurrency(allocation.amountInTripCurrency, item.tripCurrency)}
                               </span>
                             </div>
-
                             <div className={styles.grid}>
                               <div>
-                                <span className={styles.label}>Importe línea</span>
-                                <p className={styles.value}>{formatMoneyByCurrency(line.reportedAmount, item.paymentCurrency)}</p>
+                                <span className={styles.label}>Saldo previo</span>
+                                <p className={styles.value}>{formatMoneyByCurrency(allocation.remainingAmount, item.tripCurrency)}</p>
                               </div>
                               <div>
-                                <span className={styles.label}>Importe viaje</span>
-                                <p className={styles.value}>{formatMoneyByCurrency(line.amountInTripCurrency, item.tripCurrency)}</p>
-                              </div>
-                              <div>
-                                <span className={styles.label}>Estado</span>
-                                <p className={styles.value}>{receiptStatusLabels[line.status] ?? line.status}</p>
+                                <span className={styles.label}>Monto imputado</span>
+                                <p className={styles.value}>{formatMoneyByCurrency(allocation.amountInTripCurrency, item.tripCurrency)}</p>
                               </div>
                             </div>
-
-                            {line.adminObservation ? (
-                              <p className={styles.errorText}>{line.adminObservation}</p>
-                            ) : null}
-
-                            {line.status === "PENDING" ? (
-                              <div className={styles.actionsRow}>
-                                <button
-                                  type="button"
-                                  className={styles.primaryButton}
-                                  disabled={reviewPayment.isPending}
-                                  onClick={() => handleApprove(line)}
-                                >
-                                  Aprobar cuota
-                                </button>
-                                <button
-                                  type="button"
-                                  className={styles.secondaryButton}
-                                  disabled={reviewPayment.isPending}
-                                  onClick={() => {
-                                    setRejectingReceiptId(line.receiptId);
-                                    setRejectObservation("");
-                                  }}
-                                >
-                                  Rechazar cuota
-                                </button>
-                              </div>
-                            ) : null}
-
-                            {rejectingReceiptId === line.receiptId ? (
-                              <div className={styles.rejectBox}>
-                                <input
-                                  value={rejectObservation}
-                                  onChange={(event) => setRejectObservation(event.target.value)}
-                                  placeholder="Observación obligatoria para rechazar"
-                                />
-                                <div className={styles.actionsRow}>
-                                  <button
-                                    type="button"
-                                    className={styles.secondaryButton}
-                                    onClick={() => {
-                                      setRejectingReceiptId(null);
-                                      setRejectObservation("");
-                                    }}
-                                  >
-                                    Cancelar
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className={styles.primaryButton}
-                                    disabled={reviewPayment.isPending}
-                                    onClick={() => handleReject(line)}
-                                  >
-                                    Confirmar rechazo
-                                  </button>
-                                </div>
-                              </div>
-                            ) : null}
                           </div>
                         ))}
+
+                        <div className={styles.rejectBox}>
+                          <label className={styles.searchBox}>
+                            <span>Monto a aprobar</span>
+                            <input
+                              value={approvedAmountInput}
+                              onChange={(event) =>
+                                setApprovedAmounts((current) => ({
+                                  ...current,
+                                  [item.submissionId]: event.target.value,
+                                }))
+                              }
+                              placeholder="0.00"
+                              inputMode="decimal"
+                            />
+                          </label>
+
+                          <label className={styles.searchBox}>
+                            <span>Observación admin</span>
+                            <input
+                              value={observation}
+                              onChange={(event) =>
+                                setObservations((current) => ({
+                                  ...current,
+                                  [item.submissionId]: event.target.value,
+                                }))
+                              }
+                              placeholder="Obligatoria si aprobás menos del total"
+                            />
+                          </label>
+
+                          <div className={styles.actionsRow}>
+                            <button
+                              type="button"
+                              className={styles.secondaryButton}
+                              disabled={reviewPayment.isPending}
+                              onClick={() => submitDecision(item, 0)}
+                            >
+                              Rechazar total
+                            </button>
+                            <button
+                              type="button"
+                              className={styles.primaryButton}
+                              disabled={reviewPayment.isPending}
+                              onClick={() => submitDecision(item, approvedAmountValue)}
+                            >
+                              Guardar decisión
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     ) : null}
                   </article>

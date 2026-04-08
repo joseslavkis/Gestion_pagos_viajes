@@ -3,7 +3,7 @@ import {
   CurrencySchema,
   InstallmentUiStatusCodeSchema,
   InstallmentUiStatusToneSchema,
-  PaymentReceiptDTOSchema,
+  PaymentSubmissionDTOSchema,
   ReceiptStatusSchema,
 } from "@/features/payments/types/payments-dtos";
 import { StatusResponseDTOSchema } from "@/lib/backend-dtos";
@@ -79,7 +79,7 @@ export const AdminUserDetailDTOSchema = z.object({
   role: RoleDTOSchema,
   students: StudentDTOSchema.array(),
   installments: AdminUserInstallmentDTOSchema.array(),
-  receipts: PaymentReceiptDTOSchema.array(),
+  payments: PaymentSubmissionDTOSchema.array(),
 });
 
 export type AdminUserDetailDTO = z.infer<typeof AdminUserDetailDTOSchema>;

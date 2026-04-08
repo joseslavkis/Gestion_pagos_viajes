@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 const MoneySchema = z.union([z.string(), z.number()]).transform((value) => Number(value));
+
 export const CurrencySchema = z.enum(["ARS", "USD"]);
 export type Currency = z.infer<typeof CurrencySchema>;
 
@@ -9,6 +10,15 @@ export type PaymentMethod = z.infer<typeof PaymentMethodSchema>;
 
 export const ReceiptStatusSchema = z.enum(["PENDING", "APPROVED", "REJECTED"]);
 export type ReceiptStatus = z.infer<typeof ReceiptStatusSchema>;
+
+export const PaymentHistoryStatusSchema = z.enum([
+  "PENDING",
+  "APPROVED",
+  "REJECTED",
+  "PARTIALLY_APPROVED",
+  "VOIDED",
+]);
+export type PaymentHistoryStatus = z.infer<typeof PaymentHistoryStatusSchema>;
 
 export const InstallmentUiStatusCodeSchema = z.enum([
   "PAID",
@@ -24,26 +34,6 @@ export type InstallmentUiStatusCode = z.infer<typeof InstallmentUiStatusCodeSche
 export const InstallmentUiStatusToneSchema = z.enum(["green", "yellow", "red"]);
 export type InstallmentUiStatusTone = z.infer<typeof InstallmentUiStatusToneSchema>;
 
-export const PaymentReceiptDTOSchema = z.object({
-  id: z.number(),
-  installmentId: z.number(),
-  installmentNumber: z.number(),
-  reportedAmount: MoneySchema,
-  paymentCurrency: CurrencySchema,
-  exchangeRate: MoneySchema.nullable(),
-  amountInTripCurrency: MoneySchema,
-  reportedPaymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  paymentMethod: PaymentMethodSchema,
-  status: ReceiptStatusSchema,
-  fileKey: z.string(),
-  adminObservation: z.string().nullable(),
-  bankAccountId: z.number().nullable(),
-  bankAccountDisplayName: z.string().nullable(),
-  bankAccountAlias: z.string().nullable(),
-});
-
-export type PaymentReceiptDTO = z.infer<typeof PaymentReceiptDTOSchema>;
-
 export const PaymentBatchInstallmentDTOSchema = z.object({
   receiptId: z.number().nullable(),
   installmentId: z.number(),
@@ -56,38 +46,75 @@ export const PaymentBatchInstallmentDTOSchema = z.object({
   amountInTripCurrency: MoneySchema,
   status: ReceiptStatusSchema.nullable(),
 });
-
 export type PaymentBatchInstallmentDTO = z.infer<typeof PaymentBatchInstallmentDTOSchema>;
 
 export const PaymentBatchPreviewDTOSchema = z.object({
   anchorInstallmentId: z.number(),
-  installmentsCount: z.number().int().positive(),
   tripCurrency: CurrencySchema,
   paymentCurrency: CurrencySchema,
-  totalReportedAmount: MoneySchema,
+  reportedAmount: MoneySchema,
+  maxAllowedAmount: MoneySchema,
   exchangeRate: MoneySchema.nullable(),
-  totalAmountInTripCurrency: MoneySchema,
+  totalPendingAmountInTripCurrency: MoneySchema,
+  amountInTripCurrency: MoneySchema,
   reportedPaymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   installments: PaymentBatchInstallmentDTOSchema.array(),
 });
-
 export type PaymentBatchPreviewDTO = z.infer<typeof PaymentBatchPreviewDTOSchema>;
 
-export const PaymentBatchDTOSchema = z.object({
-  batchId: z.number(),
+export const PaymentSubmissionDTOSchema = z.object({
+  submissionId: z.number(),
+  status: PaymentHistoryStatusSchema,
+  reportedAmount: MoneySchema,
+  approvedAmount: MoneySchema,
+  rejectedAmount: MoneySchema,
+  paymentCurrency: CurrencySchema,
+  exchangeRate: MoneySchema.nullable(),
+  amountInTripCurrency: MoneySchema,
+  approvedAmountInTripCurrency: MoneySchema,
+  reportedPaymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  paymentMethod: PaymentMethodSchema,
+  fileKey: z.string(),
+  adminObservation: z.string().nullable(),
+  bankAccountId: z.number().nullable(),
+  bankAccountDisplayName: z.string().nullable(),
+  bankAccountAlias: z.string().nullable(),
+  tripId: z.number(),
+  tripName: z.string(),
+  tripCurrency: CurrencySchema,
+  studentId: z.number().nullable(),
+  studentName: z.string().nullable(),
+  studentDni: z.string().nullable(),
+  installments: PaymentBatchInstallmentDTOSchema.array(),
+});
+export type PaymentSubmissionDTO = z.infer<typeof PaymentSubmissionDTOSchema>;
+
+// Backward-compatible aliases while the UI finishes migrating.
+export const PaymentBatchDTOSchema = PaymentSubmissionDTOSchema;
+export type PaymentBatchDTO = PaymentSubmissionDTO;
+
+export const PaymentInstallmentHistoryDTOSchema = z.object({
+  id: z.number(),
+  submissionId: z.number().nullable(),
+  installmentId: z.number(),
+  installmentNumber: z.number(),
   reportedAmount: MoneySchema,
   paymentCurrency: CurrencySchema,
   exchangeRate: MoneySchema.nullable(),
   amountInTripCurrency: MoneySchema,
   reportedPaymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   paymentMethod: PaymentMethodSchema,
+  status: PaymentHistoryStatusSchema,
+  fileKey: z.string(),
+  adminObservation: z.string().nullable(),
   bankAccountId: z.number().nullable(),
   bankAccountDisplayName: z.string().nullable(),
   bankAccountAlias: z.string().nullable(),
-  installments: PaymentBatchInstallmentDTOSchema.array(),
 });
+export type PaymentInstallmentHistoryDTO = z.infer<typeof PaymentInstallmentHistoryDTOSchema>;
 
-export type PaymentBatchDTO = z.infer<typeof PaymentBatchDTOSchema>;
+export const PaymentReceiptDTOSchema = PaymentInstallmentHistoryDTOSchema;
+export type PaymentReceiptDTO = PaymentInstallmentHistoryDTO;
 
 export const UserInstallmentDTOSchema = z.object({
   tripId: z.number(),
@@ -110,25 +137,23 @@ export const UserInstallmentDTOSchema = z.object({
   latestReceiptObservation: z.string().nullable(),
   userCompletedTrip: z.boolean(),
 });
-
 export type UserInstallmentDTO = z.infer<typeof UserInstallmentDTOSchema>;
 
 export const RegisterPaymentDTOSchema = z.object({
   anchorInstallmentId: z.number().int().positive(),
-  installmentsCount: z.number().int().positive(),
+  reportedAmount: MoneySchema.refine((value) => value > 0, "El monto debe ser mayor a cero."),
   reportedPaymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   paymentCurrency: CurrencySchema,
   paymentMethod: PaymentMethodSchema,
   bankAccountId: z.number().int().positive(),
 });
-
 export type RegisterPaymentDTO = z.infer<typeof RegisterPaymentDTOSchema>;
 
 export type RegisterPaymentFormData = {
   anchorInstallmentId: number;
-  installmentsCount: number;
+  reportedAmount: number;
   reportedPaymentDate: string;
-  paymentCurrency: z.infer<typeof CurrencySchema>;
+  paymentCurrency: Currency;
   paymentMethod: PaymentMethod;
   bankAccountId: number;
   file?: File | null;
@@ -136,36 +161,21 @@ export type RegisterPaymentFormData = {
 
 export const PaymentPreviewRequestDTOSchema = z.object({
   anchorInstallmentId: z.number().int().positive(),
-  installmentsCount: z.number().int().positive(),
+  reportedAmount: MoneySchema.refine((value) => value > 0, "El monto debe ser mayor a cero."),
   reportedPaymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   paymentCurrency: CurrencySchema,
 });
-
 export type PaymentPreviewRequestDTO = z.infer<typeof PaymentPreviewRequestDTOSchema>;
 
 export const ReviewPaymentDTOSchema = z.object({
-  decision: ReceiptStatusSchema,
+  approvedAmount: MoneySchema.refine((value) => value >= 0, "El monto aprobado no puede ser negativo."),
   adminObservation: z.string().optional(),
 });
-
 export type ReviewPaymentDTO = z.infer<typeof ReviewPaymentDTOSchema>;
 
-export const PendingPaymentReviewLineDTOSchema = z.object({
-  receiptId: z.number(),
-  status: ReceiptStatusSchema,
-  reportedAmount: MoneySchema,
-  amountInTripCurrency: MoneySchema,
-  installmentId: z.number(),
-  installmentNumber: z.number(),
-  installmentDueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  installmentTotalDue: MoneySchema,
-  adminObservation: z.string().nullable(),
-});
-
-export type PendingPaymentReviewLineDTO = z.infer<typeof PendingPaymentReviewLineDTOSchema>;
-
 export const PendingPaymentReviewDTOSchema = z.object({
-  batchId: z.number().nullable(),
+  submissionId: z.number(),
+  status: PaymentHistoryStatusSchema,
   reportedAmount: MoneySchema,
   paymentCurrency: CurrencySchema,
   exchangeRate: MoneySchema.nullable(),
@@ -185,7 +195,6 @@ export const PendingPaymentReviewDTOSchema = z.object({
   userEmail: z.string(),
   studentName: z.string().nullable(),
   studentDni: z.string().nullable(),
-  receipts: PendingPaymentReviewLineDTOSchema.array(),
+  allocations: PaymentBatchInstallmentDTOSchema.array(),
 });
-
 export type PendingPaymentReviewDTO = z.infer<typeof PendingPaymentReviewDTOSchema>;

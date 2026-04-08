@@ -21,7 +21,10 @@ import com.agencia.pagos.entities.user.User;
 import com.agencia.pagos.repositories.InstallmentRepository;
 import com.agencia.pagos.repositories.InstallmentReminderNotificationRepository;
 import com.agencia.pagos.repositories.PendingTripStudentRepository;
+import com.agencia.pagos.repositories.PaymentAllocationRepository;
+import com.agencia.pagos.repositories.PaymentOutcomeRepository;
 import com.agencia.pagos.repositories.PaymentReceiptRepository;
+import com.agencia.pagos.repositories.PaymentSubmissionRepository;
 import com.agencia.pagos.repositories.StudentRepository;
 import com.agencia.pagos.repositories.TripRepository;
 import com.agencia.pagos.repositories.UserRepository;
@@ -60,13 +63,49 @@ public class TripService {
     private final StudentRepository studentRepository;
     private final InstallmentRepository installmentRepository;
     private final PaymentReceiptRepository paymentReceiptRepository;
+    private final PaymentSubmissionRepository paymentSubmissionRepository;
+    private final PaymentOutcomeRepository paymentOutcomeRepository;
+    private final PaymentAllocationRepository paymentAllocationRepository;
     private final InstallmentReminderNotificationRepository installmentReminderNotificationRepository;
     private final PendingTripStudentRepository pendingTripStudentRepository;
     private final InstallmentStatusResolver installmentStatusResolver;
     private final InstallmentUiStatusResolver installmentUiStatusResolver;
+    private final PaymentInstallmentOverlayService paymentInstallmentOverlayService;
     private final TripExcelExporter tripExcelExporter;
 
     @Autowired
+    public TripService(
+            TripRepository tripRepository,
+            UserRepository userRepository,
+            StudentRepository studentRepository,
+            InstallmentRepository installmentRepository,
+            PaymentReceiptRepository paymentReceiptRepository,
+            PaymentSubmissionRepository paymentSubmissionRepository,
+            PaymentOutcomeRepository paymentOutcomeRepository,
+            PaymentAllocationRepository paymentAllocationRepository,
+            InstallmentReminderNotificationRepository installmentReminderNotificationRepository,
+            PendingTripStudentRepository pendingTripStudentRepository,
+            InstallmentStatusResolver installmentStatusResolver,
+            InstallmentUiStatusResolver installmentUiStatusResolver,
+            PaymentInstallmentOverlayService paymentInstallmentOverlayService,
+            TripExcelExporter tripExcelExporter
+    ) {
+        this.tripRepository = tripRepository;
+        this.userRepository = userRepository;
+        this.studentRepository = studentRepository;
+        this.installmentRepository = installmentRepository;
+        this.paymentReceiptRepository = paymentReceiptRepository;
+        this.paymentSubmissionRepository = paymentSubmissionRepository;
+        this.paymentOutcomeRepository = paymentOutcomeRepository;
+        this.paymentAllocationRepository = paymentAllocationRepository;
+        this.installmentReminderNotificationRepository = installmentReminderNotificationRepository;
+        this.pendingTripStudentRepository = pendingTripStudentRepository;
+        this.installmentStatusResolver = installmentStatusResolver;
+        this.installmentUiStatusResolver = installmentUiStatusResolver;
+        this.paymentInstallmentOverlayService = paymentInstallmentOverlayService;
+        this.tripExcelExporter = tripExcelExporter;
+    }
+
     public TripService(
             TripRepository tripRepository,
             UserRepository userRepository,
@@ -79,16 +118,22 @@ public class TripService {
             InstallmentUiStatusResolver installmentUiStatusResolver,
             TripExcelExporter tripExcelExporter
     ) {
-        this.tripRepository = tripRepository;
-        this.userRepository = userRepository;
-        this.studentRepository = studentRepository;
-        this.installmentRepository = installmentRepository;
-        this.paymentReceiptRepository = paymentReceiptRepository;
-        this.installmentReminderNotificationRepository = installmentReminderNotificationRepository;
-        this.pendingTripStudentRepository = pendingTripStudentRepository;
-        this.installmentStatusResolver = installmentStatusResolver;
-        this.installmentUiStatusResolver = installmentUiStatusResolver;
-        this.tripExcelExporter = tripExcelExporter;
+        this(
+                tripRepository,
+                userRepository,
+                studentRepository,
+                installmentRepository,
+                paymentReceiptRepository,
+                null,
+                null,
+                null,
+                installmentReminderNotificationRepository,
+                pendingTripStudentRepository,
+                installmentStatusResolver,
+                installmentUiStatusResolver,
+                null,
+                tripExcelExporter
+        );
     }
 
     // Backward-compatible constructor for tests that still instantiate TripService with 3 args.
@@ -105,8 +150,12 @@ public class TripService {
                 null,
                 null,
                 null,
+                null,
+                null,
+                null,
                 new InstallmentStatusResolver(),
                 new InstallmentUiStatusResolver(),
+                null,
                 new TripExcelExporter()
         );
     }
@@ -171,6 +220,15 @@ public class TripService {
 
         if (paymentReceiptRepository != null) {
             paymentReceiptRepository.deleteByInstallmentTripId(trip.getId());
+        }
+        if (paymentAllocationRepository != null) {
+            paymentAllocationRepository.deleteByTripId(trip.getId());
+        }
+        if (paymentOutcomeRepository != null) {
+            paymentOutcomeRepository.deleteByTripId(trip.getId());
+        }
+        if (paymentSubmissionRepository != null) {
+            paymentSubmissionRepository.deleteByTripId(trip.getId());
         }
         if (installmentReminderNotificationRepository != null) {
             installmentReminderNotificationRepository.deleteByInstallmentTripId(trip.getId());
@@ -588,7 +646,8 @@ public class TripService {
 
     private SpreadsheetRowInstallmentDTO toSpreadsheetInstallmentDTO(
             Installment installment,
-            PaymentReceipt latestReceipt
+            PaymentReceipt latestReceipt,
+            PaymentInstallmentOverlayService.InstallmentOverlay overlay
     ) {
         Trip trip = installment.getTrip();
         int yellowWarningDays = trip.getYellowWarningDays() == null ? 0 : trip.getYellowWarningDays();
@@ -601,7 +660,7 @@ public class TripService {
         );
         InstallmentUiStatus uiStatus = installmentUiStatusResolver.resolve(
                 effectiveStatus,
-                latestReceipt != null ? latestReceipt.getStatus() : null,
+                overlay != null ? overlay.status() : latestReceipt != null ? latestReceipt.getStatus() : null,
                 installment.getDueDate(),
                 yellowWarningDays,
                 installment.getPaidAmount(),
@@ -746,6 +805,10 @@ public class TripService {
                         Function.identity(),
                         (existing, ignored) -> existing
                 ));
+        Map<Long, PaymentInstallmentOverlayService.InstallmentOverlay> overlays =
+                paymentInstallmentOverlayService == null
+                        ? Map.of()
+                        : paymentInstallmentOverlayService.resolveForInstallments(tripInstallments);
 
         List<SpreadsheetRowDTO> rows = installmentsByParticipant.values().stream()
                 .map(participantInstallments -> {
@@ -760,7 +823,8 @@ public class TripService {
                             .sorted(Comparator.comparing(Installment::getInstallmentNumber))
                             .map(installment -> toSpreadsheetInstallmentDTO(
                                     installment,
-                                    latestReceiptByInstallmentId.get(installment.getId())
+                                    latestReceiptByInstallmentId.get(installment.getId()),
+                                    overlays.get(installment.getId())
                             ))
                             .toList();
 

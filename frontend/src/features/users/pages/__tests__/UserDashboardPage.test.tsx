@@ -63,7 +63,7 @@ const usdBankAccount = {
 };
 
 describe("UserDashboardPage", () => {
-  it("muestra estados y permite enviar un comprobante por cuotas exactas", async () => {
+  it("muestra estados y permite enviar un comprobante con monto libre", async () => {
     let previewPayload: Record<string, unknown> | null = null;
     let paymentPayload: Record<string, FormDataEntryValue> | null = null;
 
@@ -130,28 +130,42 @@ describe("UserDashboardPage", () => {
         const body = (await request.json()) as Record<string, unknown>;
         previewPayload = body;
 
-        const installmentsCount = Number(body.installmentsCount);
         return HttpResponse.json({
           anchorInstallmentId: body.anchorInstallmentId,
-          installmentsCount,
           tripCurrency: "ARS",
           paymentCurrency: "USD",
-          totalReportedAmount: installmentsCount * 200,
+          reportedAmount: Number(body.reportedAmount),
+          maxAllowedAmount: 400,
           exchangeRate: null,
-          totalAmountInTripCurrency: installmentsCount * 200,
+          totalPendingAmountInTripCurrency: 400,
+          amountInTripCurrency: Number(body.reportedAmount),
           reportedPaymentDate: body.reportedPaymentDate,
-          installments: Array.from({ length: installmentsCount }, (_, index) => ({
-            receiptId: null,
-            installmentId: 201 + index,
-            installmentNumber: index + 1,
-            dueDate: `2026-0${6 + index}-25`,
-            totalDue: 200,
-            paidAmount: 0,
-            remainingAmount: 200,
-            reportedAmount: 200,
-            amountInTripCurrency: 200,
-            status: null,
-          })),
+          installments: [
+            {
+              receiptId: null,
+              installmentId: 201,
+              installmentNumber: 1,
+              dueDate: "2026-06-25",
+              totalDue: 200,
+              paidAmount: 0,
+              remainingAmount: 200,
+              reportedAmount: 200,
+              amountInTripCurrency: 200,
+              status: null,
+            },
+            {
+              receiptId: null,
+              installmentId: 202,
+              installmentNumber: 2,
+              dueDate: "2026-07-25",
+              totalDue: 200,
+              paidAmount: 0,
+              remainingAmount: 200,
+              reportedAmount: 150,
+              amountInTripCurrency: 150,
+              status: null,
+            },
+          ],
         });
       }),
       http.post(PAYMENTS_URL, async ({ request }) => {
@@ -160,19 +174,31 @@ describe("UserDashboardPage", () => {
 
         return HttpResponse.json(
           {
-            batchId: 999,
-            reportedAmount: 400,
+            submissionId: 999,
+            status: "PENDING",
+            reportedAmount: 350,
+            approvedAmount: 0,
+            rejectedAmount: 0,
             paymentCurrency: "USD",
             exchangeRate: null,
-            amountInTripCurrency: 400,
+            amountInTripCurrency: 350,
+            approvedAmountInTripCurrency: 0,
             reportedPaymentDate: "2026-03-31",
             paymentMethod: "BANK_TRANSFER",
+            fileKey: "",
+            adminObservation: null,
             bankAccountId: 2,
             bankAccountDisplayName: "ICBC - Cuenta en dólares",
             bankAccountAlias: "ICBC.USD",
+            tripId: 88,
+            tripName: "Bariloche 2026",
+            tripCurrency: "ARS",
+            studentId: 502,
+            studentName: "Bruno Slavkis",
+            studentDni: "45678902",
             installments: [
               {
-                receiptId: 501,
+                receiptId: null,
                 installmentId: 201,
                 installmentNumber: 1,
                 dueDate: "2026-06-25",
@@ -184,15 +210,15 @@ describe("UserDashboardPage", () => {
                 status: "PENDING",
               },
               {
-                receiptId: 502,
+                receiptId: null,
                 installmentId: 202,
                 installmentNumber: 2,
                 dueDate: "2026-07-25",
                 totalDue: 200,
                 paidAmount: 0,
                 remainingAmount: 200,
-                reportedAmount: 200,
-                amountInTripCurrency: 200,
+                reportedAmount: 150,
+                amountInTripCurrency: 150,
                 status: "PENDING",
               },
             ],
@@ -210,30 +236,25 @@ describe("UserDashboardPage", () => {
     expect(
       screen.getByText("Tu comprobante está siendo revisado por el administrador"),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText((text) => text.includes("Abonado:") && text.includes("Resta:")),
-    ).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Seleccioná el viaje"), {
       target: { value: "88:502" },
     });
-    fireEvent.change(await screen.findByLabelText("Cantidad de cuotas consecutivas"), {
-      target: { value: "2" },
+    fireEvent.change(await screen.findByLabelText("Monto a reportar"), {
+      target: { value: "350" },
     });
 
     expect(await screen.findByText("Estado de cuenta")).toBeInTheDocument();
-    expect(screen.getByText((text) => text.includes("Pagado:") && text.includes("50,00"))).toBeInTheDocument();
-    expect(screen.getByText((text) => text.includes("Resta:") && text.includes("550,00"))).toBeInTheDocument();
 
     await waitFor(() =>
       expect(previewPayload).toMatchObject({
         anchorInstallmentId: 201,
-        installmentsCount: 2,
+        reportedAmount: 350,
         paymentCurrency: "USD",
       }),
     );
 
-    expect(await screen.findByText((text) => text.includes("Cubrís #1, #2"))).toBeInTheDocument();
+    expect(await screen.findByText((text) => text.includes("Se imputa en #1, #2"))).toBeInTheDocument();
 
     const fileInput = document.querySelector("input[type='file']") as HTMLInputElement;
     const file = new File(["test"], "comprobante.jpg", { type: "image/jpeg" });
@@ -251,7 +272,7 @@ describe("UserDashboardPage", () => {
     await waitFor(() =>
       expect(paymentPayload).toMatchObject({
         anchorInstallmentId: "201",
-        installmentsCount: "2",
+        reportedAmount: "350",
         bankAccountId: "2",
       }),
     );
@@ -288,7 +309,7 @@ describe("UserDashboardPage", () => {
       ),
     ).toBeInTheDocument();
 
-    expect(screen.getByLabelText("Cantidad de cuotas consecutivas")).toBeDisabled();
+    expect(screen.getByLabelText("Monto a reportar")).toBeDisabled();
     expect(screen.getByLabelText("Fecha de pago")).toBeDisabled();
     expect(screen.getByLabelText("Cuenta donde acreditaste el pago")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Enviar comprobante" })).toBeDisabled();

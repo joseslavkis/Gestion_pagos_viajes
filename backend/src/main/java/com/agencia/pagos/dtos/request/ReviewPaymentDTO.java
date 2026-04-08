@@ -1,10 +1,11 @@
 package com.agencia.pagos.dtos.request;
 
-import com.agencia.pagos.entities.ReceiptStatus;
 import jakarta.validation.constraints.NotNull;
 
+import java.math.BigDecimal;
+
 public record ReviewPaymentDTO(
-        @NotNull ReceiptStatus decision,
+        @NotNull BigDecimal approvedAmount,
         String adminObservation
 ) {
 }

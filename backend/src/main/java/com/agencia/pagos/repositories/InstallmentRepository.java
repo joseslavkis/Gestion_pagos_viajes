@@ -1,7 +1,9 @@
 package com.agencia.pagos.repositories;
 
 import com.agencia.pagos.entities.Installment;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -16,6 +18,9 @@ public interface InstallmentRepository extends JpaRepository<Installment, Long> 
 
     @Query("SELECT i FROM Installment i JOIN FETCH i.trip WHERE i.id = :id")
     Optional<Installment> findByIdWithTrip(@Param("id") Long id);
+
+    @Query("SELECT i FROM Installment i JOIN FETCH i.trip JOIN FETCH i.user LEFT JOIN FETCH i.student WHERE i.id = :id")
+    Optional<Installment> findByIdWithTripUserAndStudent(@Param("id") Long id);
 
     @Query("SELECT i FROM Installment i JOIN FETCH i.trip LEFT JOIN FETCH i.student WHERE i.user.id = :userId")
     List<Installment> findByUserIdWithTrip(@Param("userId") Long userId);
@@ -34,6 +39,27 @@ public interface InstallmentRepository extends JpaRepository<Installment, Long> 
         @Param("tripId") Long tripId,
         @Param("userId") Long userId,
         @Param("studentId") Long studentId
+    );
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+        SELECT i
+        FROM Installment i
+        JOIN FETCH i.trip
+        JOIN FETCH i.user
+        LEFT JOIN FETCH i.student
+        WHERE i.trip.id = :tripId
+          AND i.user.id = :userId
+          AND (
+            (:studentId IS NULL AND i.student IS NULL)
+            OR i.student.id = :studentId
+          )
+        ORDER BY i.installmentNumber ASC
+        """)
+    List<Installment> findByTripIdAndUserIdAndStudentIdForUpdate(
+            @Param("tripId") Long tripId,
+            @Param("userId") Long userId,
+            @Param("studentId") Long studentId
     );
 
     /**

@@ -3,28 +3,36 @@ package com.agencia.pagos.services;
 import com.agencia.pagos.dtos.request.PaymentPreviewRequestDTO;
 import com.agencia.pagos.dtos.request.RegisterPaymentDTO;
 import com.agencia.pagos.dtos.request.ReviewPaymentDTO;
-import com.agencia.pagos.dtos.response.PaymentBatchDTO;
 import com.agencia.pagos.dtos.response.PaymentBatchInstallmentDTO;
 import com.agencia.pagos.dtos.response.PaymentBatchPreviewDTO;
 import com.agencia.pagos.dtos.response.PendingPaymentReviewDTO;
-import com.agencia.pagos.dtos.response.PendingPaymentReviewLineDTO;
-import com.agencia.pagos.dtos.response.PaymentReceiptDTO;
+import com.agencia.pagos.dtos.response.PaymentInstallmentHistoryDTO;
+import com.agencia.pagos.dtos.response.PaymentSubmissionDTO;
 import com.agencia.pagos.dtos.response.UserInstallmentDTO;
 import com.agencia.pagos.entities.BankAccount;
 import com.agencia.pagos.entities.Currency;
 import com.agencia.pagos.entities.Installment;
 import com.agencia.pagos.entities.InstallmentStatus;
+import com.agencia.pagos.entities.PaymentAllocation;
 import com.agencia.pagos.entities.PaymentBatch;
+import com.agencia.pagos.entities.PaymentHistoryStatus;
 import com.agencia.pagos.entities.PaymentMethod;
+import com.agencia.pagos.entities.PaymentOutcome;
+import com.agencia.pagos.entities.PaymentOutcomeStatus;
 import com.agencia.pagos.entities.PaymentReceipt;
+import com.agencia.pagos.entities.PaymentSubmission;
+import com.agencia.pagos.entities.PaymentSubmissionStatus;
 import com.agencia.pagos.entities.ReceiptStatus;
 import com.agencia.pagos.entities.Role;
 import com.agencia.pagos.entities.Student;
 import com.agencia.pagos.entities.user.User;
 import com.agencia.pagos.repositories.BankAccountRepository;
 import com.agencia.pagos.repositories.InstallmentRepository;
+import com.agencia.pagos.repositories.PaymentAllocationRepository;
 import com.agencia.pagos.repositories.PaymentBatchRepository;
+import com.agencia.pagos.repositories.PaymentOutcomeRepository;
 import com.agencia.pagos.repositories.PaymentReceiptRepository;
+import com.agencia.pagos.repositories.PaymentSubmissionRepository;
 import com.agencia.pagos.repositories.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -44,6 +52,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -51,74 +60,81 @@ import java.util.stream.Collectors;
 @Transactional
 public class PaymentService {
 
-    private record UserInstallmentGroupKey(Long tripId, Long studentId) {}
+    private record UserInstallmentGroupKey(Long tripId, Long studentId) {
+    }
 
-    private record InstallmentSelection(Installment anchorInstallment, List<Installment> installments) {}
+    private record PaymentScopeSelection(Installment anchorInstallment, List<Installment> installments) {
+    }
 
-    private record InstallmentAllocation(
-            Installment installment,
-            BigDecimal remainingAmount,
-            BigDecimal reportedAmount
-    ) {}
-
-    private record BatchAmounts(
-            Currency tripCurrency,
-            Currency paymentCurrency,
-            BigDecimal exchangeRate,
-            BigDecimal totalReportedAmount,
-            BigDecimal totalAmountInTripCurrency,
-            List<InstallmentAllocation> allocations
-    ) {}
+    private record LegacySubmissionKey(Long batchId, Long receiptId) {
+    }
 
     private final PaymentReceiptRepository paymentReceiptRepository;
     private final PaymentBatchRepository paymentBatchRepository;
+    private final PaymentSubmissionRepository paymentSubmissionRepository;
+    private final PaymentOutcomeRepository paymentOutcomeRepository;
+    private final PaymentAllocationRepository paymentAllocationRepository;
     private final InstallmentRepository installmentRepository;
     private final UserRepository userRepository;
     private final BankAccountRepository bankAccountRepository;
     private final InstallmentStatusResolver installmentStatusResolver;
     private final InstallmentUiStatusResolver installmentUiStatusResolver;
     private final ExchangeRateService exchangeRateService;
+    private final PaymentAllocationPlanner paymentAllocationPlanner;
+    private final PaymentInstallmentOverlayService paymentInstallmentOverlayService;
 
     @Autowired
     public PaymentService(
             PaymentReceiptRepository paymentReceiptRepository,
             PaymentBatchRepository paymentBatchRepository,
+            PaymentSubmissionRepository paymentSubmissionRepository,
+            PaymentOutcomeRepository paymentOutcomeRepository,
+            PaymentAllocationRepository paymentAllocationRepository,
             InstallmentRepository installmentRepository,
             UserRepository userRepository,
             BankAccountRepository bankAccountRepository,
             InstallmentStatusResolver installmentStatusResolver,
             InstallmentUiStatusResolver installmentUiStatusResolver,
-            ExchangeRateService exchangeRateService
+            ExchangeRateService exchangeRateService,
+            PaymentAllocationPlanner paymentAllocationPlanner,
+            PaymentInstallmentOverlayService paymentInstallmentOverlayService
     ) {
         this.paymentReceiptRepository = paymentReceiptRepository;
         this.paymentBatchRepository = paymentBatchRepository;
+        this.paymentSubmissionRepository = paymentSubmissionRepository;
+        this.paymentOutcomeRepository = paymentOutcomeRepository;
+        this.paymentAllocationRepository = paymentAllocationRepository;
         this.installmentRepository = installmentRepository;
         this.userRepository = userRepository;
         this.bankAccountRepository = bankAccountRepository;
         this.installmentStatusResolver = installmentStatusResolver;
         this.installmentUiStatusResolver = installmentUiStatusResolver;
         this.exchangeRateService = exchangeRateService;
+        this.paymentAllocationPlanner = paymentAllocationPlanner;
+        this.paymentInstallmentOverlayService = paymentInstallmentOverlayService;
     }
 
     @Transactional(readOnly = true)
     public PaymentBatchPreviewDTO previewPayment(PaymentPreviewRequestDTO dto, String email) {
         User user = getUserByEmail(email);
-        InstallmentSelection selection = resolveInstallmentSelection(
-                user,
-                dto.anchorInstallmentId(),
-                dto.installmentsCount()
-        );
-        BatchAmounts batchAmounts = computeBatchAmounts(
-                selection.installments(),
+        PaymentScopeSelection selection = resolvePaymentScope(user, dto.anchorInstallmentId(), false);
+        BigDecimal exchangeRate = resolveExchangeRate(
+                selection.anchorInstallment().getTrip().getCurrency(),
                 dto.paymentCurrency(),
                 dto.reportedPaymentDate()
         );
-        return toPreviewDTO(selection.anchorInstallment(), dto.installmentsCount(), dto.reportedPaymentDate(), batchAmounts);
+        PaymentAllocationPlanner.PlanResult plan = paymentAllocationPlanner.plan(
+                selection.installments(),
+                dto.reportedAmount(),
+                dto.paymentCurrency(),
+                exchangeRate
+        );
+        return toPreviewDTO(selection.anchorInstallment(), dto.reportedPaymentDate(), plan);
     }
 
-    public PaymentBatchDTO registerPayment(
+    public PaymentSubmissionDTO registerPayment(
             Long anchorInstallmentId,
-            Integer installmentsCount,
+            BigDecimal reportedAmount,
             LocalDate reportedPaymentDate,
             Currency paymentCurrency,
             PaymentMethod paymentMethod,
@@ -127,55 +143,43 @@ public class PaymentService {
             String email
     ) {
         User user = getUserByEmail(email);
-        InstallmentSelection selection = resolveInstallmentSelection(user, anchorInstallmentId, installmentsCount);
+        PaymentScopeSelection selection = resolvePaymentScope(user, anchorInstallmentId, true);
         BankAccount bankAccount = resolveBankAccount(bankAccountId, paymentCurrency);
-        BatchAmounts batchAmounts = computeBatchAmounts(
-                selection.installments(),
+        BigDecimal exchangeRate = resolveExchangeRate(
+                selection.anchorInstallment().getTrip().getCurrency(),
                 paymentCurrency,
                 reportedPaymentDate
         );
-        String fileKey = extractFileKey(file);
+        PaymentAllocationPlanner.PlanResult plan = paymentAllocationPlanner.plan(
+                selection.installments(),
+                reportedAmount,
+                paymentCurrency,
+                exchangeRate
+        );
 
-        PaymentBatch batch = new PaymentBatch();
-        batch.setReportedAmount(batchAmounts.totalReportedAmount());
-        batch.setPaymentCurrency(paymentCurrency);
-        batch.setExchangeRate(batchAmounts.exchangeRate());
-        batch.setAmountInTripCurrency(batchAmounts.totalAmountInTripCurrency());
-        batch.setReportedPaymentDate(reportedPaymentDate);
-        batch.setPaymentMethod(paymentMethod);
-        batch.setBankAccount(bankAccount);
-        batch.setFileKey(fileKey);
-        PaymentBatch savedBatch = paymentBatchRepository.save(batch);
+        PaymentSubmission submission = new PaymentSubmission();
+        submission.setTrip(selection.anchorInstallment().getTrip());
+        submission.setUser(selection.anchorInstallment().getUser());
+        submission.setStudent(selection.anchorInstallment().getStudent());
+        submission.setAnchorInstallment(selection.anchorInstallment());
+        submission.setBankAccount(bankAccount);
+        submission.setReportedAmount(plan.reportedAmount());
+        submission.setPaymentCurrency(paymentCurrency);
+        submission.setExchangeRate(plan.exchangeRate());
+        submission.setAmountInTripCurrency(plan.amountInTripCurrency());
+        submission.setReportedPaymentDate(reportedPaymentDate);
+        submission.setPaymentMethod(paymentMethod);
+        submission.setStatus(PaymentSubmissionStatus.PENDING);
+        submission.setFileKey(extractFileKey(file));
 
-        List<PaymentReceipt> receipts = new ArrayList<>();
-        for (InstallmentAllocation allocation : batchAmounts.allocations()) {
-            PaymentReceipt receipt = PaymentReceipt.builder()
-                    .installment(allocation.installment())
-                    .batch(savedBatch)
-                    .bankAccount(bankAccount)
-                    .reportedAmount(allocation.reportedAmount())
-                    .paymentCurrency(paymentCurrency)
-                    .exchangeRate(batchAmounts.exchangeRate())
-                    .amountInTripCurrency(allocation.remainingAmount())
-                    .reportedPaymentDate(reportedPaymentDate)
-                    .paymentMethod(paymentMethod)
-                    .status(ReceiptStatus.PENDING)
-                    .fileKey("")
-                    .adminObservation(null)
-                    .build();
-            receipts.add(receipt);
-        }
-
-        List<PaymentReceipt> savedReceipts = paymentReceiptRepository.saveAll(receipts).stream()
-                .sorted(Comparator.comparing(receipt -> receipt.getInstallment().getInstallmentNumber()))
-                .toList();
-        return toBatchDTO(savedBatch, savedReceipts);
+        PaymentSubmission saved = paymentSubmissionRepository.save(submission);
+        return toSubmissionDTO(saved, toInstallmentDTOs(plan.allocations(), null));
     }
 
-    public PaymentBatchDTO registerPayment(RegisterPaymentDTO dto, String email) {
+    public PaymentSubmissionDTO registerPayment(RegisterPaymentDTO dto, String email) {
         return registerPayment(
                 dto.anchorInstallmentId(),
-                dto.installmentsCount(),
+                dto.reportedAmount(),
                 dto.reportedPaymentDate(),
                 dto.paymentCurrency(),
                 dto.paymentMethod(),
@@ -185,125 +189,167 @@ public class PaymentService {
         );
     }
 
-    public PaymentReceiptDTO reviewPayment(Long receiptId, ReviewPaymentDTO dto) {
-        PaymentReceipt receipt = paymentReceiptRepository.findById(receiptId)
-                .orElseThrow(() -> new EntityNotFoundException("PaymentReceipt not found with id " + receiptId));
+    public PaymentSubmissionDTO reviewPayment(Long submissionId, ReviewPaymentDTO dto, String reviewerEmail) {
+        PaymentSubmission submission = paymentSubmissionRepository.findByIdWithContext(submissionId)
+                .orElseThrow(() -> new EntityNotFoundException("PaymentSubmission not found with id " + submissionId));
 
-        if (receipt.getStatus() != ReceiptStatus.PENDING) {
-            throw new IllegalStateException("Este comprobante ya fue revisado");
+        if (submission.getStatus() != PaymentSubmissionStatus.PENDING) {
+            throw new IllegalStateException("Este pago ya fue revisado");
         }
 
-        if (dto.decision() != ReceiptStatus.APPROVED && dto.decision() != ReceiptStatus.REJECTED) {
-            throw new IllegalStateException("La decision debe ser APPROVED o REJECTED");
+        BigDecimal approvedAmount = safeAmount(dto.approvedAmount()).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal reportedAmount = safeAmount(submission.getReportedAmount()).setScale(2, RoundingMode.HALF_UP);
+        if (approvedAmount.compareTo(BigDecimal.ZERO) < 0) {
+            throw new IllegalArgumentException("El monto aprobado no puede ser negativo");
+        }
+        if (approvedAmount.compareTo(reportedAmount) > 0) {
+            throw new IllegalArgumentException("El monto aprobado no puede superar el monto informado");
         }
 
-        if (dto.decision() == ReceiptStatus.REJECTED
+        BigDecimal rejectedAmount = reportedAmount.subtract(approvedAmount).setScale(2, RoundingMode.HALF_UP);
+        if (rejectedAmount.compareTo(BigDecimal.ZERO) > 0
                 && (dto.adminObservation() == null || dto.adminObservation().isBlank())) {
-            throw new IllegalStateException("Se requiere una observación al rechazar un comprobante");
+            throw new IllegalStateException("Se requiere una observación al no aprobar el monto completo");
         }
 
-        Installment installment = receipt.getInstallment();
+        List<Installment> scopedInstallments = installmentRepository.findByTripIdAndUserIdAndStudentIdForUpdate(
+                submission.getTrip().getId(),
+                submission.getUser().getId(),
+                submission.getStudent() != null ? submission.getStudent().getId() : null
+        );
 
-        if (dto.decision() == ReceiptStatus.APPROVED) {
-            BigDecimal remainingAmount = getRemainingAmount(installment);
-            if (remainingAmount.compareTo(BigDecimal.ZERO) <= 0) {
-                throw new IllegalStateException("Esta cuota ya está totalmente cubierta");
+        BigDecimal approvedTripAmount = BigDecimal.ZERO;
+        if (approvedAmount.compareTo(BigDecimal.ZERO) > 0) {
+            PaymentAllocationPlanner.PlanResult approvedPlan = paymentAllocationPlanner.plan(
+                    scopedInstallments,
+                    approvedAmount,
+                    submission.getPaymentCurrency(),
+                    submission.getExchangeRate()
+            );
+            approvedTripAmount = approvedPlan.amountInTripCurrency();
+
+            PaymentOutcome approvedOutcome = new PaymentOutcome();
+            approvedOutcome.setSubmission(submission);
+            approvedOutcome.setStatus(PaymentOutcomeStatus.APPROVED);
+            approvedOutcome.setReportedAmount(approvedPlan.reportedAmount());
+            approvedOutcome.setAmountInTripCurrency(approvedPlan.amountInTripCurrency());
+            approvedOutcome.setAdminObservation(null);
+            approvedOutcome.setResolvedByEmail(reviewerEmail);
+            PaymentOutcome savedOutcome = paymentOutcomeRepository.save(approvedOutcome);
+            submission.getOutcomes().add(savedOutcome);
+
+            List<PaymentAllocation> allocations = new ArrayList<>();
+            for (PaymentAllocationPlanner.PlannedAllocation allocation : approvedPlan.allocations()) {
+                Installment installment = allocation.installment();
+                installment.setPaidAmount(safeAmount(installment.getPaidAmount()).add(allocation.amountInTripCurrency()));
+
+                PaymentAllocation entity = new PaymentAllocation();
+                entity.setOutcome(savedOutcome);
+                entity.setInstallment(installment);
+                entity.setAllocationOrder(allocation.allocationOrder());
+                entity.setReportedAmount(allocation.reportedAmount());
+                entity.setAmountInTripCurrency(allocation.amountInTripCurrency());
+                allocations.add(entity);
             }
-            if (receipt.getAmountInTripCurrency().compareTo(remainingAmount) > 0) {
-                throw new IllegalStateException("El saldo de la cuota cambió y este comprobante ya no coincide con el importe pendiente");
-            }
-
-            installment.setPaidAmount(safeAmount(installment.getPaidAmount()).add(receipt.getAmountInTripCurrency()));
-            installmentRepository.save(installment);
-
-            receipt.setStatus(ReceiptStatus.APPROVED);
-            receipt.setAdminObservation(null);
-        } else {
-            receipt.setStatus(ReceiptStatus.REJECTED);
-            receipt.setAdminObservation(dto.adminObservation().trim());
+            installmentRepository.saveAll(scopedInstallments);
+            paymentAllocationRepository.saveAll(allocations);
+            savedOutcome.getAllocations().addAll(allocations);
         }
 
-        PaymentReceipt saved = paymentReceiptRepository.save(receipt);
-        return toDTO(saved);
+        if (rejectedAmount.compareTo(BigDecimal.ZERO) > 0) {
+            PaymentOutcome rejectedOutcome = new PaymentOutcome();
+            rejectedOutcome.setSubmission(submission);
+            rejectedOutcome.setStatus(PaymentOutcomeStatus.REJECTED);
+            rejectedOutcome.setReportedAmount(rejectedAmount);
+            rejectedOutcome.setAmountInTripCurrency(safeAmount(submission.getAmountInTripCurrency()).subtract(approvedTripAmount).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP));
+            rejectedOutcome.setAdminObservation(dto.adminObservation().trim());
+            rejectedOutcome.setResolvedByEmail(reviewerEmail);
+            submission.getOutcomes().add(paymentOutcomeRepository.save(rejectedOutcome));
+        }
+
+        submission.setStatus(PaymentSubmissionStatus.RESOLVED);
+        paymentSubmissionRepository.save(submission);
+
+        return toSubmissionDTO(paymentSubmissionRepository.findByIdWithContext(submissionId).orElseThrow(), null);
     }
 
-    public PaymentReceiptDTO voidPayment(Long receiptId) {
-        PaymentReceipt receipt = paymentReceiptRepository.findById(receiptId)
-                .orElseThrow(() -> new EntityNotFoundException("PaymentReceipt not found with id " + receiptId));
+    public PaymentSubmissionDTO voidPayment(Long submissionId, String reviewerEmail) {
+        PaymentSubmission submission = paymentSubmissionRepository.findByIdWithContext(submissionId)
+                .orElseThrow(() -> new EntityNotFoundException("PaymentSubmission not found with id " + submissionId));
 
-        if (receipt.getStatus() != ReceiptStatus.APPROVED) {
-            throw new IllegalStateException("Solo se puede anular un comprobante aprobado");
+        PaymentOutcome approvedOutcome = submission.getOutcomes().stream()
+                .filter(outcome -> outcome.getStatus() == PaymentOutcomeStatus.APPROVED)
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("Solo se puede anular un pago con tramo aprobado"));
+
+        if (submission.getStatus() == PaymentSubmissionStatus.VOIDED || approvedOutcome.getStatus() == PaymentOutcomeStatus.VOIDED) {
+            throw new IllegalStateException("Este pago ya fue anulado");
         }
 
-        Installment installment = receipt.getInstallment();
-        BigDecimal currentPaid = safeAmount(installment.getPaidAmount());
-        BigDecimal amountToRevert = safeAmount(receipt.getAmountInTripCurrency());
+        List<Installment> scopedInstallments = installmentRepository.findByTripIdAndUserIdAndStudentIdForUpdate(
+                submission.getTrip().getId(),
+                submission.getUser().getId(),
+                submission.getStudent() != null ? submission.getStudent().getId() : null
+        );
+        Map<Long, Installment> installmentsById = scopedInstallments.stream()
+                .collect(Collectors.toMap(Installment::getId, Function.identity()));
 
-        if (currentPaid.compareTo(amountToRevert) < 0) {
-            throw new IllegalStateException("La cuota no tiene saldo suficiente para anular este comprobante");
+        List<PaymentAllocation> allocations = approvedOutcome.getAllocations().stream()
+                .sorted(Comparator.comparing(PaymentAllocation::getAllocationOrder))
+                .toList();
+        for (PaymentAllocation allocation : allocations) {
+            Installment installment = installmentsById.get(allocation.getInstallment().getId());
+            if (installment == null) {
+                throw new IllegalStateException("No se encontró la cuota a revertir");
+            }
+
+            BigDecimal currentPaidAmount = safeAmount(installment.getPaidAmount());
+            if (currentPaidAmount.compareTo(allocation.getAmountInTripCurrency()) < 0) {
+                throw new IllegalStateException("La cuota no tiene saldo suficiente para anular este pago");
+            }
+
+            installment.setPaidAmount(currentPaidAmount.subtract(allocation.getAmountInTripCurrency()));
         }
+        installmentRepository.saveAll(scopedInstallments);
 
-        installment.setPaidAmount(currentPaid.subtract(amountToRevert));
-        installmentRepository.save(installment);
+        approvedOutcome.setStatus(PaymentOutcomeStatus.VOIDED);
+        approvedOutcome.setAdminObservation("Anulado por administrador");
+        approvedOutcome.setResolvedByEmail(reviewerEmail);
+        paymentOutcomeRepository.save(approvedOutcome);
 
-        receipt.setStatus(ReceiptStatus.REJECTED);
-        receipt.setAdminObservation("Anulado por administrador");
+        submission.setStatus(PaymentSubmissionStatus.VOIDED);
+        paymentSubmissionRepository.save(submission);
 
-        PaymentReceipt saved = paymentReceiptRepository.save(receipt);
-        return toDTO(saved);
+        return toSubmissionDTO(paymentSubmissionRepository.findByIdWithContext(submissionId).orElseThrow(), null);
     }
 
     @Transactional(readOnly = true)
-    public List<PaymentReceiptDTO> getReceiptsForInstallment(Long installmentId) {
-        return paymentReceiptRepository.findByInstallmentId(installmentId).stream()
+    public List<PaymentInstallmentHistoryDTO> getReceiptsForInstallment(Long installmentId) {
+        List<PaymentInstallmentHistoryDTO> legacyHistory = paymentReceiptRepository.findByInstallmentId(installmentId).stream()
                 .sorted(Comparator.comparing(PaymentReceipt::getId).reversed())
-                .map(this::toDTO)
+                .map(this::toInstallmentHistoryDTO)
+                .toList();
+
+        List<PaymentInstallmentHistoryDTO> newHistory = paymentAllocationRepository.findByInstallmentIdWithContext(installmentId).stream()
+                .map(this::toInstallmentHistoryDTO)
+                .toList();
+
+        return java.util.stream.Stream.concat(legacyHistory.stream(), newHistory.stream())
+                .sorted(Comparator
+                        .comparing(PaymentInstallmentHistoryDTO::reportedPaymentDate, Comparator.nullsLast(Comparator.reverseOrder()))
+                        .thenComparing(PaymentInstallmentHistoryDTO::id, Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
     }
 
     @Transactional(readOnly = true)
-    public List<PaymentReceiptDTO> getReceiptsForCurrentUser(String email) {
+    public List<PaymentSubmissionDTO> getReceiptsForCurrentUser(String email) {
         User user = getUserByEmail(email);
-
-        return paymentReceiptRepository.findByInstallmentUserIdWithContext(user.getId()).stream()
-                .map(this::toDTO)
-                .toList();
+        return buildUnifiedSubmissionHistory(user.getId());
     }
 
     @Transactional(readOnly = true)
     public List<PendingPaymentReviewDTO> getPendingReviewReceipts() {
-        List<PaymentReceipt> pendingReceipts = paymentReceiptRepository.findByStatusWithContext(ReceiptStatus.PENDING);
-        if (pendingReceipts.isEmpty()) {
-            return List.of();
-        }
-
-        List<Long> batchIds = pendingReceipts.stream()
-                .map(PaymentReceipt::getBatch)
-                .filter(Objects::nonNull)
-                .map(PaymentBatch::getId)
-                .distinct()
-                .toList();
-
-        Map<Long, List<PaymentReceipt>> receiptsByBatchId = batchIds.isEmpty()
-                ? Map.of()
-                : paymentReceiptRepository.findByBatchIdInWithContext(batchIds).stream()
-                        .collect(Collectors.groupingBy(
-                                receipt -> receipt.getBatch().getId(),
-                                LinkedHashMap::new,
-                                Collectors.toList()
-                        ));
-
-        Map<String, List<PaymentReceipt>> grouped = new LinkedHashMap<>();
-        for (PaymentReceipt pendingReceipt : pendingReceipts) {
-            PaymentBatch batch = pendingReceipt.getBatch();
-            if (batch != null) {
-                grouped.putIfAbsent("batch:" + batch.getId(), receiptsByBatchId.getOrDefault(batch.getId(), List.of(pendingReceipt)));
-            } else {
-                grouped.putIfAbsent("legacy:" + pendingReceipt.getId(), List.of(pendingReceipt));
-            }
-        }
-
-        return grouped.values().stream()
+        return paymentSubmissionRepository.findByStatusWithContext(PaymentSubmissionStatus.PENDING).stream()
                 .map(this::toPendingReviewDTO)
                 .toList();
     }
@@ -320,11 +366,13 @@ public class PaymentService {
         Map<Long, PaymentReceipt> latestReceiptByInstallmentId = installmentIds.isEmpty()
                 ? Map.of()
                 : paymentReceiptRepository.findByInstallmentIdIn(installmentIds).stream()
-                        .collect(Collectors.toMap(
-                                receipt -> receipt.getInstallment().getId(),
-                                Function.identity(),
-                                (existing, ignored) -> existing
-                        ));
+                .collect(Collectors.toMap(
+                        receipt -> receipt.getInstallment().getId(),
+                        Function.identity(),
+                        (existing, ignored) -> existing
+                ));
+        Map<Long, PaymentInstallmentOverlayService.InstallmentOverlay> overlays =
+                paymentInstallmentOverlayService.resolveForInstallments(installments);
 
         Map<UserInstallmentGroupKey, List<Installment>> installmentsByTripId = installments.stream()
                 .collect(Collectors.groupingBy(i -> new UserInstallmentGroupKey(
@@ -335,8 +383,15 @@ public class PaymentService {
         return installments.stream()
                 .map(installment -> {
                     PaymentReceipt latestReceipt = latestReceiptByInstallmentId.get(installment.getId());
-                    Student student = installment.getStudent();
+                    PaymentInstallmentOverlayService.InstallmentOverlay overlay = overlays.get(installment.getId());
+                    ReceiptStatus latestStatus = overlay != null
+                            ? overlay.status()
+                            : latestReceipt != null ? latestReceipt.getStatus() : null;
+                    String latestObservation = overlay != null
+                            ? overlay.observation()
+                            : latestReceipt != null ? latestReceipt.getAdminObservation() : null;
 
+                    Student student = installment.getStudent();
                     int yellowDays = installment.getTrip().getYellowWarningDays() == null
                             ? 0
                             : installment.getTrip().getYellowWarningDays();
@@ -350,7 +405,7 @@ public class PaymentService {
                     );
                     InstallmentUiStatus uiStatus = installmentUiStatusResolver.resolve(
                             effectiveStatus,
-                            latestReceipt != null ? latestReceipt.getStatus() : null,
+                            latestStatus,
                             installment.getDueDate(),
                             yellowDays,
                             installment.getPaidAmount(),
@@ -380,21 +435,39 @@ public class PaymentService {
                             yellowDays,
                             installment.getTrip().getCurrency(),
                             effectiveStatus,
-                            latestReceipt != null ? latestReceipt.getStatus() : null,
+                            latestStatus,
                             uiStatus.code(),
                             uiStatus.label(),
                             uiStatus.tone(),
-                            latestReceipt != null ? latestReceipt.getAdminObservation() : null,
+                            latestObservation,
                             userCompletedTrip
                     );
                 })
                 .sorted(Comparator
                         .comparing(UserInstallmentDTO::tripId)
-                        .thenComparing(
-                                UserInstallmentDTO::studentId,
-                                Comparator.nullsFirst(Comparator.naturalOrder())
-                        )
+                        .thenComparing(UserInstallmentDTO::studentId, Comparator.nullsFirst(Comparator.naturalOrder()))
                         .thenComparing(UserInstallmentDTO::installmentNumber))
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<PaymentSubmissionDTO> getUnifiedSubmissionHistoryForUserId(Long userId) {
+        return buildUnifiedSubmissionHistory(userId);
+    }
+
+    private List<PaymentSubmissionDTO> buildUnifiedSubmissionHistory(Long userId) {
+        List<PaymentSubmissionDTO> newSubmissions = paymentSubmissionRepository.findByUserIdWithContext(userId).stream()
+                .map(submission -> toSubmissionDTO(submission, null))
+                .toList();
+
+        List<PaymentSubmissionDTO> legacySubmissions = toLegacySubmissionDTOs(
+                paymentReceiptRepository.findByInstallmentUserIdWithContext(userId)
+        );
+
+        return java.util.stream.Stream.concat(newSubmissions.stream(), legacySubmissions.stream())
+                .sorted(Comparator
+                        .comparing(PaymentSubmissionDTO::reportedPaymentDate, Comparator.nullsLast(Comparator.reverseOrder()))
+                        .thenComparing(PaymentSubmissionDTO::submissionId, Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
     }
 
@@ -403,12 +476,8 @@ public class PaymentService {
                 .orElseThrow(() -> new EntityNotFoundException("User not found with email " + email));
     }
 
-    private InstallmentSelection resolveInstallmentSelection(User user, Long anchorInstallmentId, Integer installmentsCount) {
-        if (installmentsCount == null || installmentsCount <= 0) {
-            throw new IllegalArgumentException("La cantidad de cuotas debe ser mayor a 0");
-        }
-
-        Installment anchorInstallment = installmentRepository.findByIdWithTrip(anchorInstallmentId)
+    private PaymentScopeSelection resolvePaymentScope(User user, Long anchorInstallmentId, boolean forUpdate) {
+        Installment anchorInstallment = installmentRepository.findByIdWithTripUserAndStudent(anchorInstallmentId)
                 .orElseThrow(() -> new EntityNotFoundException("Installment not found with id " + anchorInstallmentId));
 
         boolean isAdmin = user.getRole() == Role.ADMIN;
@@ -417,28 +486,25 @@ public class PaymentService {
         }
 
         Long studentId = anchorInstallment.getStudent() != null ? anchorInstallment.getStudent().getId() : null;
-        boolean hasPendingReview = paymentReceiptRepository.existsByTripIdAndUserIdAndStudentIdAndStatus(
-                anchorInstallment.getTrip().getId(),
-                anchorInstallment.getUser().getId(),
-                studentId,
-                ReceiptStatus.PENDING
-        );
-        if (hasPendingReview) {
-            throw new IllegalStateException("Ya existe al menos un comprobante pendiente para esta inscripción");
+        if (hasPendingReview(anchorInstallment.getTrip().getId(), anchorInstallment.getUser().getId(), studentId)) {
+            throw new IllegalStateException("Ya existe al menos un pago pendiente para esta inscripción");
         }
 
-        List<Installment> groupInstallments = installmentRepository
-                .findByTripIdAndUserIdAndStudentId(
+        List<Installment> groupInstallments = forUpdate
+                ? installmentRepository.findByTripIdAndUserIdAndStudentIdForUpdate(
                         anchorInstallment.getTrip().getId(),
                         anchorInstallment.getUser().getId(),
                         studentId
                 )
-                .stream()
-                .sorted(Comparator.comparing(Installment::getInstallmentNumber))
-                .toList();
+                : installmentRepository.findByTripIdAndUserIdAndStudentId(
+                        anchorInstallment.getTrip().getId(),
+                        anchorInstallment.getUser().getId(),
+                        studentId
+                ).stream().sorted(Comparator.comparing(Installment::getInstallmentNumber)).toList();
 
         List<Installment> payableInstallments = groupInstallments.stream()
                 .filter(this::hasRemainingBalance)
+                .sorted(Comparator.comparing(Installment::getInstallmentNumber))
                 .toList();
 
         if (payableInstallments.isEmpty()) {
@@ -450,14 +516,23 @@ public class PaymentService {
             throw new IllegalStateException("Solo podés pagar desde la primera cuota pendiente");
         }
 
-        if (installmentsCount > payableInstallments.size()) {
-            throw new IllegalStateException("La cantidad de cuotas seleccionada excede las cuotas pendientes");
-        }
+        return new PaymentScopeSelection(anchorInstallment, payableInstallments);
+    }
 
-        return new InstallmentSelection(
-                anchorInstallment,
-                List.copyOf(payableInstallments.subList(0, installmentsCount))
+    private boolean hasPendingReview(Long tripId, Long userId, Long studentId) {
+        boolean hasLegacyPending = paymentReceiptRepository.existsByTripIdAndUserIdAndStudentIdAndStatus(
+                tripId,
+                userId,
+                studentId,
+                ReceiptStatus.PENDING
         );
+        boolean hasPendingSubmission = paymentSubmissionRepository.existsByTripIdAndUserIdAndStudentIdAndStatus(
+                tripId,
+                userId,
+                studentId,
+                PaymentSubmissionStatus.PENDING
+        );
+        return hasLegacyPending || hasPendingSubmission;
     }
 
     private BankAccount resolveBankAccount(Long bankAccountId, Currency paymentCurrency) {
@@ -479,95 +554,11 @@ public class PaymentService {
         return bankAccount;
     }
 
-    private BatchAmounts computeBatchAmounts(
-            List<Installment> installments,
-            Currency paymentCurrency,
-            LocalDate reportedPaymentDate
-    ) {
-        if (installments.isEmpty()) {
-            throw new IllegalArgumentException("Debe haber al menos una cuota seleccionada");
-        }
-
-        Currency tripCurrency = installments.get(0).getTrip().getCurrency();
-        List<BigDecimal> remainingTripAmounts = installments.stream()
-                .map(this::getRemainingAmount)
-                .toList();
-
-        BigDecimal totalAmountInTripCurrency = remainingTripAmounts.stream()
-                .reduce(BigDecimal.ZERO, BigDecimal::add)
-                .setScale(2, RoundingMode.HALF_UP);
-
-        BigDecimal exchangeRate = null;
-        BigDecimal totalReportedAmount;
-        if (paymentCurrency == tripCurrency) {
-            totalReportedAmount = totalAmountInTripCurrency;
-        } else {
-            exchangeRate = exchangeRateService.getOfficialRateForDate(reportedPaymentDate);
-            totalReportedAmount = convertTripToPaymentCurrency(
-                    totalAmountInTripCurrency,
-                    tripCurrency,
-                    paymentCurrency,
-                    exchangeRate
-            );
-        }
-
-        List<InstallmentAllocation> allocations = new ArrayList<>();
-        BigDecimal accumulatedReported = BigDecimal.ZERO;
-        for (int index = 0; index < installments.size(); index++) {
-            Installment installment = installments.get(index);
-            BigDecimal remainingAmount = remainingTripAmounts.get(index).setScale(2, RoundingMode.HALF_UP);
-
-            BigDecimal lineReportedAmount;
-            if (paymentCurrency == tripCurrency) {
-                lineReportedAmount = remainingAmount;
-            } else if (index == installments.size() - 1) {
-                lineReportedAmount = totalReportedAmount.subtract(accumulatedReported).setScale(2, RoundingMode.HALF_UP);
-            } else {
-                lineReportedAmount = convertTripToPaymentCurrency(
-                        remainingAmount,
-                        tripCurrency,
-                        paymentCurrency,
-                        exchangeRate
-                );
-                accumulatedReported = accumulatedReported.add(lineReportedAmount);
-            }
-
-            allocations.add(new InstallmentAllocation(
-                    installment,
-                    remainingAmount,
-                    lineReportedAmount
-            ));
-        }
-
-        return new BatchAmounts(
-                tripCurrency,
-                paymentCurrency,
-                exchangeRate,
-                totalReportedAmount,
-                totalAmountInTripCurrency,
-                allocations
-        );
-    }
-
-    private BigDecimal convertTripToPaymentCurrency(
-            BigDecimal amountInTripCurrency,
-            Currency tripCurrency,
-            Currency paymentCurrency,
-            BigDecimal exchangeRate
-    ) {
+    private BigDecimal resolveExchangeRate(Currency tripCurrency, Currency paymentCurrency, LocalDate reportedPaymentDate) {
         if (tripCurrency == paymentCurrency) {
-            return amountInTripCurrency.setScale(2, RoundingMode.HALF_UP);
+            return null;
         }
-
-        if (tripCurrency == Currency.USD && paymentCurrency == Currency.ARS) {
-            return amountInTripCurrency.multiply(exchangeRate).setScale(2, RoundingMode.HALF_UP);
-        }
-
-        if (tripCurrency == Currency.ARS && paymentCurrency == Currency.USD) {
-            return amountInTripCurrency.divide(exchangeRate, 2, RoundingMode.HALF_UP);
-        }
-
-        throw new IllegalStateException("Conversión de moneda no soportada");
+        return exchangeRateService.getOfficialRateForDate(reportedPaymentDate);
     }
 
     private String extractFileKey(MultipartFile file) {
@@ -601,60 +592,290 @@ public class PaymentService {
 
     private PaymentBatchPreviewDTO toPreviewDTO(
             Installment anchorInstallment,
-            Integer installmentsCount,
             LocalDate reportedPaymentDate,
-            BatchAmounts batchAmounts
+            PaymentAllocationPlanner.PlanResult plan
     ) {
-        List<PaymentBatchInstallmentDTO> installments = batchAmounts.allocations().stream()
-                .map(allocation -> new PaymentBatchInstallmentDTO(
-                        null,
-                        allocation.installment().getId(),
-                        allocation.installment().getInstallmentNumber(),
-                        allocation.installment().getDueDate(),
-                        allocation.installment().getTotalDue(),
-                        allocation.installment().getPaidAmount(),
-                        allocation.remainingAmount(),
-                        allocation.reportedAmount(),
-                        allocation.remainingAmount(),
-                        null
-                ))
-                .toList();
-
         return new PaymentBatchPreviewDTO(
                 anchorInstallment.getId(),
-                installmentsCount,
-                batchAmounts.tripCurrency(),
-                batchAmounts.paymentCurrency(),
-                batchAmounts.totalReportedAmount(),
-                batchAmounts.exchangeRate(),
-                batchAmounts.totalAmountInTripCurrency(),
+                plan.tripCurrency(),
+                plan.paymentCurrency(),
+                plan.reportedAmount(),
+                plan.maxAllowedAmount(),
+                plan.exchangeRate(),
+                plan.totalPendingAmountInTripCurrency(),
+                plan.amountInTripCurrency(),
                 reportedPaymentDate,
+                toInstallmentDTOs(plan.allocations(), null)
+        );
+    }
+
+    private PaymentSubmissionDTO toSubmissionDTO(PaymentSubmission submission, List<PaymentBatchInstallmentDTO> fallbackInstallments) {
+        PaymentHistoryStatus status = resolveSubmissionStatus(submission);
+        PaymentOutcome approvedOutcome = submission.getOutcomes().stream()
+                .filter(outcome -> outcome.getStatus() == PaymentOutcomeStatus.APPROVED || outcome.getStatus() == PaymentOutcomeStatus.VOIDED)
+                .findFirst()
+                .orElse(null);
+        BigDecimal approvedAmount = approvedOutcome != null && approvedOutcome.getStatus() == PaymentOutcomeStatus.APPROVED
+                ? approvedOutcome.getReportedAmount()
+                : BigDecimal.ZERO;
+        BigDecimal approvedAmountInTripCurrency = approvedOutcome != null && approvedOutcome.getStatus() == PaymentOutcomeStatus.APPROVED
+                ? approvedOutcome.getAmountInTripCurrency()
+                : BigDecimal.ZERO;
+        BigDecimal rejectedAmount = submission.getOutcomes().stream()
+                .filter(outcome -> outcome.getStatus() == PaymentOutcomeStatus.REJECTED)
+                .map(PaymentOutcome::getReportedAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        String adminObservation = submission.getOutcomes().stream()
+                .filter(outcome -> outcome.getAdminObservation() != null && !outcome.getAdminObservation().isBlank())
+                .map(PaymentOutcome::getAdminObservation)
+                .findFirst()
+                .orElse(null);
+
+        List<PaymentBatchInstallmentDTO> installments = fallbackInstallments != null
+                ? fallbackInstallments
+                : resolveSubmissionInstallments(submission, status);
+
+        return new PaymentSubmissionDTO(
+                submission.getId(),
+                status,
+                submission.getReportedAmount(),
+                approvedAmount,
+                rejectedAmount,
+                submission.getPaymentCurrency(),
+                submission.getExchangeRate(),
+                submission.getAmountInTripCurrency(),
+                approvedAmountInTripCurrency,
+                submission.getReportedPaymentDate(),
+                submission.getPaymentMethod(),
+                submission.getFileKey(),
+                adminObservation,
+                submission.getBankAccount() != null ? submission.getBankAccount().getId() : null,
+                submission.getBankAccount() != null ? formatBankAccountDisplay(submission.getBankAccount()) : null,
+                submission.getBankAccount() != null ? submission.getBankAccount().getAlias() : null,
+                submission.getTrip().getId(),
+                submission.getTrip().getName(),
+                submission.getTrip().getCurrency(),
+                submission.getStudent() != null ? submission.getStudent().getId() : null,
+                submission.getStudent() != null ? submission.getStudent().getName() : null,
+                submission.getStudent() != null ? submission.getStudent().getDni() : null,
                 installments
         );
     }
 
-    private PaymentBatchDTO toBatchDTO(PaymentBatch batch, List<PaymentReceipt> receipts) {
-        List<PaymentBatchInstallmentDTO> installments = receipts.stream()
-                .sorted(Comparator.comparing(receipt -> receipt.getInstallment().getInstallmentNumber()))
-                .map(this::toBatchInstallmentDTO)
+    private List<PaymentBatchInstallmentDTO> resolveSubmissionInstallments(PaymentSubmission submission, PaymentHistoryStatus status) {
+        PaymentOutcome approvedOrVoidedOutcome = submission.getOutcomes().stream()
+                .filter(outcome -> outcome.getStatus() == PaymentOutcomeStatus.APPROVED || outcome.getStatus() == PaymentOutcomeStatus.VOIDED)
+                .findFirst()
+                .orElse(null);
+        if (approvedOrVoidedOutcome != null && !approvedOrVoidedOutcome.getAllocations().isEmpty()) {
+            ReceiptStatus allocationStatus = approvedOrVoidedOutcome.getStatus() == PaymentOutcomeStatus.VOIDED
+                    ? ReceiptStatus.REJECTED
+                    : ReceiptStatus.APPROVED;
+            return approvedOrVoidedOutcome.getAllocations().stream()
+                    .sorted(Comparator.comparing(PaymentAllocation::getAllocationOrder))
+                    .map(allocation -> toInstallmentDTO(allocation, allocationStatus))
+                    .toList();
+        }
+
+        if (status == PaymentHistoryStatus.PENDING || status == PaymentHistoryStatus.REJECTED) {
+            return projectSubmissionInstallments(submission, status);
+        }
+
+        return List.of();
+    }
+
+    private List<PaymentBatchInstallmentDTO> projectSubmissionInstallments(PaymentSubmission submission, PaymentHistoryStatus status) {
+        List<Installment> scopedInstallments = installmentRepository.findByTripIdAndUserIdAndStudentId(
+                submission.getTrip().getId(),
+                submission.getUser().getId(),
+                submission.getStudent() != null ? submission.getStudent().getId() : null
+        ).stream().sorted(Comparator.comparing(Installment::getInstallmentNumber)).toList();
+        List<Installment> payableInstallments = scopedInstallments.stream()
+                .filter(this::hasRemainingBalance)
                 .toList();
+        if (payableInstallments.isEmpty()) {
+            return List.of();
+        }
 
-        return new PaymentBatchDTO(
-                batch.getId(),
-                batch.getReportedAmount(),
-                batch.getPaymentCurrency(),
-                batch.getExchangeRate(),
-                batch.getAmountInTripCurrency(),
-                batch.getReportedPaymentDate(),
-                batch.getPaymentMethod(),
-                batch.getBankAccount() != null ? batch.getBankAccount().getId() : null,
-                batch.getBankAccount() != null ? formatBankAccountDisplay(batch.getBankAccount()) : null,
-                batch.getBankAccount() != null ? batch.getBankAccount().getAlias() : null,
-                installments
+        try {
+            PaymentAllocationPlanner.PlanResult plan = paymentAllocationPlanner.plan(
+                    payableInstallments,
+                    submission.getReportedAmount(),
+                    submission.getPaymentCurrency(),
+                    submission.getExchangeRate()
+            );
+            ReceiptStatus projectedStatus = status == PaymentHistoryStatus.PENDING ? ReceiptStatus.PENDING : ReceiptStatus.REJECTED;
+            return toInstallmentDTOs(plan.allocations(), projectedStatus);
+        } catch (IllegalStateException | IllegalArgumentException ex) {
+            return List.of();
+        }
+    }
+
+    private PendingPaymentReviewDTO toPendingReviewDTO(PaymentSubmission submission) {
+        return new PendingPaymentReviewDTO(
+                submission.getId(),
+                PaymentHistoryStatus.PENDING,
+                submission.getReportedAmount(),
+                submission.getPaymentCurrency(),
+                submission.getExchangeRate(),
+                submission.getAmountInTripCurrency(),
+                submission.getReportedPaymentDate(),
+                submission.getPaymentMethod(),
+                submission.getFileKey(),
+                submission.getBankAccount() != null ? submission.getBankAccount().getId() : null,
+                submission.getBankAccount() != null ? formatBankAccountDisplay(submission.getBankAccount()) : null,
+                submission.getBankAccount() != null ? submission.getBankAccount().getAlias() : null,
+                submission.getTrip().getId(),
+                submission.getTrip().getName(),
+                submission.getTrip().getCurrency(),
+                submission.getUser().getId(),
+                submission.getUser().getName(),
+                submission.getUser().getLastname(),
+                submission.getUser().getEmail(),
+                submission.getStudent() != null ? submission.getStudent().getName() : null,
+                submission.getStudent() != null ? submission.getStudent().getDni() : null,
+                resolveSubmissionInstallments(submission, PaymentHistoryStatus.PENDING)
         );
     }
 
-    private PaymentBatchInstallmentDTO toBatchInstallmentDTO(PaymentReceipt receipt) {
+    private PaymentInstallmentHistoryDTO toInstallmentHistoryDTO(PaymentReceipt receipt) {
+        return new PaymentInstallmentHistoryDTO(
+                receipt.getId(),
+                null,
+                receipt.getInstallment().getId(),
+                receipt.getInstallment().getInstallmentNumber(),
+                receipt.getReportedAmount(),
+                receipt.getPaymentCurrency(),
+                receipt.getExchangeRate(),
+                receipt.getAmountInTripCurrency(),
+                receipt.getReportedPaymentDate(),
+                receipt.getPaymentMethod(),
+                toHistoryStatus(receipt.getStatus()),
+                resolveFileKey(receipt),
+                receipt.getAdminObservation(),
+                resolveBankAccountId(receipt),
+                resolveBankAccountDisplayName(receipt),
+                resolveBankAccountAlias(receipt)
+        );
+    }
+
+    private PaymentInstallmentHistoryDTO toInstallmentHistoryDTO(PaymentAllocation allocation) {
+        PaymentSubmission submission = allocation.getOutcome().getSubmission();
+        return new PaymentInstallmentHistoryDTO(
+                allocation.getId(),
+                submission.getId(),
+                allocation.getInstallment().getId(),
+                allocation.getInstallment().getInstallmentNumber(),
+                allocation.getReportedAmount(),
+                submission.getPaymentCurrency(),
+                submission.getExchangeRate(),
+                allocation.getAmountInTripCurrency(),
+                submission.getReportedPaymentDate(),
+                submission.getPaymentMethod(),
+                allocation.getOutcome().getStatus() == PaymentOutcomeStatus.VOIDED ? PaymentHistoryStatus.VOIDED : PaymentHistoryStatus.APPROVED,
+                submission.getFileKey(),
+                allocation.getOutcome().getAdminObservation(),
+                submission.getBankAccount() != null ? submission.getBankAccount().getId() : null,
+                submission.getBankAccount() != null ? formatBankAccountDisplay(submission.getBankAccount()) : null,
+                submission.getBankAccount() != null ? submission.getBankAccount().getAlias() : null
+        );
+    }
+
+    private List<PaymentSubmissionDTO> toLegacySubmissionDTOs(List<PaymentReceipt> receipts) {
+        Map<LegacySubmissionKey, List<PaymentReceipt>> grouped = new LinkedHashMap<>();
+        for (PaymentReceipt receipt : receipts) {
+            PaymentBatch batch = receipt.getBatch();
+            LegacySubmissionKey key = batch != null
+                    ? new LegacySubmissionKey(batch.getId(), null)
+                    : new LegacySubmissionKey(null, receipt.getId());
+            grouped.computeIfAbsent(key, ignored -> new ArrayList<>()).add(receipt);
+        }
+
+        return grouped.entrySet().stream()
+                .map(entry -> toLegacySubmissionDTO(entry.getKey(), entry.getValue()))
+                .toList();
+    }
+
+    private PaymentSubmissionDTO toLegacySubmissionDTO(LegacySubmissionKey key, List<PaymentReceipt> receipts) {
+        List<PaymentReceipt> sortedReceipts = receipts.stream()
+                .sorted(Comparator.comparing(receipt -> receipt.getInstallment().getInstallmentNumber()))
+                .toList();
+        PaymentReceipt firstReceipt = sortedReceipts.get(0);
+        PaymentBatch batch = firstReceipt.getBatch();
+
+        BigDecimal reportedAmount = batch != null
+                ? batch.getReportedAmount()
+                : sortedReceipts.stream().map(PaymentReceipt::getReportedAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal amountInTripCurrency = batch != null
+                ? batch.getAmountInTripCurrency()
+                : sortedReceipts.stream().map(PaymentReceipt::getAmountInTripCurrency).reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal approvedAmount = sortedReceipts.stream()
+                .filter(receipt -> receipt.getStatus() == ReceiptStatus.APPROVED)
+                .map(PaymentReceipt::getReportedAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal rejectedAmount = sortedReceipts.stream()
+                .filter(receipt -> receipt.getStatus() == ReceiptStatus.REJECTED)
+                .map(PaymentReceipt::getReportedAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal approvedAmountInTripCurrency = sortedReceipts.stream()
+                .filter(receipt -> receipt.getStatus() == ReceiptStatus.APPROVED)
+                .map(PaymentReceipt::getAmountInTripCurrency)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        PaymentHistoryStatus status;
+        boolean hasPending = sortedReceipts.stream().anyMatch(receipt -> receipt.getStatus() == ReceiptStatus.PENDING);
+        boolean hasApproved = sortedReceipts.stream().anyMatch(receipt -> receipt.getStatus() == ReceiptStatus.APPROVED);
+        boolean hasRejected = sortedReceipts.stream().anyMatch(receipt -> receipt.getStatus() == ReceiptStatus.REJECTED);
+        if (hasPending) {
+            status = PaymentHistoryStatus.PENDING;
+        } else if (hasApproved && hasRejected) {
+            status = PaymentHistoryStatus.PARTIALLY_APPROVED;
+        } else if (hasApproved) {
+            status = PaymentHistoryStatus.APPROVED;
+        } else {
+            status = PaymentHistoryStatus.REJECTED;
+        }
+
+        Installment installment = firstReceipt.getInstallment();
+        Student student = installment.getStudent();
+        return new PaymentSubmissionDTO(
+                batch != null ? -batch.getId() : -firstReceipt.getId(),
+                status,
+                reportedAmount,
+                approvedAmount,
+                rejectedAmount,
+                batch != null ? batch.getPaymentCurrency() : firstReceipt.getPaymentCurrency(),
+                batch != null ? batch.getExchangeRate() : firstReceipt.getExchangeRate(),
+                amountInTripCurrency,
+                approvedAmountInTripCurrency,
+                batch != null ? batch.getReportedPaymentDate() : firstReceipt.getReportedPaymentDate(),
+                batch != null ? batch.getPaymentMethod() : firstReceipt.getPaymentMethod(),
+                batch != null ? batch.getFileKey() : firstReceipt.getFileKey(),
+                sortedReceipts.stream()
+                        .map(PaymentReceipt::getAdminObservation)
+                        .filter(value -> value != null && !value.isBlank())
+                        .findFirst()
+                        .orElse(null),
+                batch != null && batch.getBankAccount() != null
+                        ? batch.getBankAccount().getId()
+                        : firstReceipt.getBankAccount() != null ? firstReceipt.getBankAccount().getId() : null,
+                batch != null && batch.getBankAccount() != null
+                        ? formatBankAccountDisplay(batch.getBankAccount())
+                        : firstReceipt.getBankAccount() != null ? formatBankAccountDisplay(firstReceipt.getBankAccount()) : null,
+                batch != null && batch.getBankAccount() != null
+                        ? batch.getBankAccount().getAlias()
+                        : firstReceipt.getBankAccount() != null ? firstReceipt.getBankAccount().getAlias() : null,
+                installment.getTrip().getId(),
+                installment.getTrip().getName(),
+                installment.getTrip().getCurrency(),
+                student != null ? student.getId() : null,
+                student != null ? student.getName() : null,
+                student != null ? student.getDni() : null,
+                sortedReceipts.stream().map(this::toLegacyInstallmentDTO).toList()
+        );
+    }
+
+    private PaymentBatchInstallmentDTO toLegacyInstallmentDTO(PaymentReceipt receipt) {
         Installment installment = receipt.getInstallment();
         return new PaymentBatchInstallmentDTO(
                 receipt.getId(),
@@ -670,92 +891,73 @@ public class PaymentService {
         );
     }
 
-    private PaymentReceiptDTO toDTO(PaymentReceipt receipt) {
-        return new PaymentReceiptDTO(
-                receipt.getId(),
-                receipt.getInstallment().getId(),
-                receipt.getInstallment().getInstallmentNumber(),
-                receipt.getReportedAmount(),
-                receipt.getPaymentCurrency(),
-                receipt.getExchangeRate(),
-                receipt.getAmountInTripCurrency(),
-                receipt.getReportedPaymentDate(),
-                receipt.getPaymentMethod(),
-                receipt.getStatus(),
-                resolveFileKey(receipt),
-                receipt.getAdminObservation(),
-                resolveBankAccountId(receipt),
-                resolveBankAccountDisplayName(receipt),
-                resolveBankAccountAlias(receipt)
+    private List<PaymentBatchInstallmentDTO> toInstallmentDTOs(
+            List<PaymentAllocationPlanner.PlannedAllocation> allocations,
+            ReceiptStatus status
+    ) {
+        return allocations.stream()
+                .map(allocation -> new PaymentBatchInstallmentDTO(
+                        null,
+                        allocation.installment().getId(),
+                        allocation.installment().getInstallmentNumber(),
+                        allocation.installment().getDueDate(),
+                        allocation.installment().getTotalDue(),
+                        allocation.installment().getPaidAmount(),
+                        allocation.remainingAmount(),
+                        allocation.reportedAmount(),
+                        allocation.amountInTripCurrency(),
+                        status
+                ))
+                .toList();
+    }
+
+    private PaymentBatchInstallmentDTO toInstallmentDTO(PaymentAllocation allocation, ReceiptStatus status) {
+        Installment installment = allocation.getInstallment();
+        return new PaymentBatchInstallmentDTO(
+                allocation.getId(),
+                installment.getId(),
+                installment.getInstallmentNumber(),
+                installment.getDueDate(),
+                installment.getTotalDue(),
+                installment.getPaidAmount(),
+                getRemainingAmount(installment),
+                allocation.getReportedAmount(),
+                allocation.getAmountInTripCurrency(),
+                status
         );
     }
 
-    private PendingPaymentReviewDTO toPendingReviewDTO(List<PaymentReceipt> receipts) {
-        List<PaymentReceipt> sortedReceipts = receipts.stream()
-                .sorted(Comparator.comparing(receipt -> receipt.getInstallment().getInstallmentNumber()))
-                .toList();
-        PaymentReceipt firstReceipt = sortedReceipts.get(0);
-        Installment installment = firstReceipt.getInstallment();
-        User user = installment.getUser();
-        Student student = installment.getStudent();
-        PaymentBatch batch = firstReceipt.getBatch();
+    private PaymentHistoryStatus resolveSubmissionStatus(PaymentSubmission submission) {
+        if (submission.getStatus() == PaymentSubmissionStatus.PENDING) {
+            return PaymentHistoryStatus.PENDING;
+        }
+        if (submission.getStatus() == PaymentSubmissionStatus.VOIDED) {
+            return PaymentHistoryStatus.VOIDED;
+        }
 
-        BigDecimal reportedAmount = batch != null
-                ? batch.getReportedAmount()
-                : firstReceipt.getReportedAmount();
-        Currency paymentCurrency = batch != null
-                ? batch.getPaymentCurrency()
-                : firstReceipt.getPaymentCurrency();
-        BigDecimal exchangeRate = batch != null
-                ? batch.getExchangeRate()
-                : firstReceipt.getExchangeRate();
-        BigDecimal amountInTripCurrency = batch != null
-                ? batch.getAmountInTripCurrency()
-                : firstReceipt.getAmountInTripCurrency();
-        LocalDate reportedPaymentDate = batch != null
-                ? batch.getReportedPaymentDate()
-                : firstReceipt.getReportedPaymentDate();
-        PaymentMethod paymentMethod = batch != null
-                ? batch.getPaymentMethod()
-                : firstReceipt.getPaymentMethod();
+        boolean hasApproved = submission.getOutcomes().stream()
+                .anyMatch(outcome -> outcome.getStatus() == PaymentOutcomeStatus.APPROVED);
+        boolean hasRejected = submission.getOutcomes().stream()
+                .anyMatch(outcome -> outcome.getStatus() == PaymentOutcomeStatus.REJECTED);
 
-        List<PendingPaymentReviewLineDTO> lines = sortedReceipts.stream()
-                .map(receipt -> new PendingPaymentReviewLineDTO(
-                        receipt.getId(),
-                        receipt.getStatus(),
-                        receipt.getReportedAmount(),
-                        receipt.getAmountInTripCurrency(),
-                        receipt.getInstallment().getId(),
-                        receipt.getInstallment().getInstallmentNumber(),
-                        receipt.getInstallment().getDueDate(),
-                        receipt.getInstallment().getTotalDue(),
-                        receipt.getAdminObservation()
-                ))
-                .toList();
+        if (hasApproved && hasRejected) {
+            return PaymentHistoryStatus.PARTIALLY_APPROVED;
+        }
+        if (hasApproved) {
+            return PaymentHistoryStatus.APPROVED;
+        }
+        return PaymentHistoryStatus.REJECTED;
+    }
 
-        return new PendingPaymentReviewDTO(
-                batch != null ? batch.getId() : null,
-                reportedAmount,
-                paymentCurrency,
-                exchangeRate,
-                amountInTripCurrency,
-                reportedPaymentDate,
-                paymentMethod,
-                resolveFileKey(firstReceipt),
-                resolveBankAccountId(firstReceipt),
-                resolveBankAccountDisplayName(firstReceipt),
-                resolveBankAccountAlias(firstReceipt),
-                installment.getTrip().getId(),
-                installment.getTrip().getName(),
-                installment.getTrip().getCurrency(),
-                user.getId(),
-                user.getName(),
-                user.getLastname(),
-                user.getEmail(),
-                student != null ? student.getName() : null,
-                student != null ? student.getDni() : null,
-                lines
-        );
+    private PaymentHistoryStatus toHistoryStatus(ReceiptStatus status) {
+        if (status == null) {
+            return PaymentHistoryStatus.PENDING;
+        }
+        return switch (status) {
+            case PENDING -> PaymentHistoryStatus.PENDING;
+            case APPROVED -> PaymentHistoryStatus.APPROVED;
+            case REJECTED -> PaymentHistoryStatus.REJECTED;
+        };
     }
 
     private String resolveFileKey(PaymentReceipt receipt) {
@@ -804,10 +1006,7 @@ public class PaymentService {
     }
 
     private BigDecimal getRemainingAmount(Installment installment) {
-        return safeAmount(installment.getTotalDue())
-                .subtract(safeAmount(installment.getPaidAmount()))
-                .max(BigDecimal.ZERO)
-                .setScale(2, RoundingMode.HALF_UP);
+        return paymentAllocationPlanner.getRemainingAmount(installment);
     }
 
     private boolean hasRemainingBalance(Installment installment) {

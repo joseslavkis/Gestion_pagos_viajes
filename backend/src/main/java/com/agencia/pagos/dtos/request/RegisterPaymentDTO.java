@@ -5,11 +5,12 @@ import com.agencia.pagos.entities.PaymentMethod;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
 public record RegisterPaymentDTO(
         @NotNull Long anchorInstallmentId,
-        @NotNull @Positive Integer installmentsCount,
+        @NotNull @Positive BigDecimal reportedAmount,
         @NotNull LocalDate reportedPaymentDate,
         @NotNull Currency paymentCurrency,
         @NotNull PaymentMethod paymentMethod,
@@ -17,20 +18,20 @@ public record RegisterPaymentDTO(
 ) {
         public RegisterPaymentDTO(
                         Long anchorInstallmentId,
-                        Integer installmentsCount,
+                        BigDecimal reportedAmount,
                         LocalDate reportedPaymentDate,
                         PaymentMethod paymentMethod,
                         Long bankAccountId
         ) {
-                this(anchorInstallmentId, installmentsCount, reportedPaymentDate, Currency.ARS, paymentMethod, bankAccountId);
+                this(anchorInstallmentId, reportedAmount, reportedPaymentDate, Currency.ARS, paymentMethod, bankAccountId);
         }
 
         public RegisterPaymentDTO(
                         Long anchorInstallmentId,
-                        Integer installmentsCount,
+                        BigDecimal reportedAmount,
                         LocalDate reportedPaymentDate,
                         PaymentMethod paymentMethod
         ) {
-                this(anchorInstallmentId, installmentsCount, reportedPaymentDate, Currency.ARS, paymentMethod, null);
+                this(anchorInstallmentId, reportedAmount, reportedPaymentDate, Currency.ARS, paymentMethod, null);
         }
 }

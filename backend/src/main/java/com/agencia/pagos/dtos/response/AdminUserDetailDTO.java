@@ -14,6 +14,6 @@ public record AdminUserDetailDTO(
         Role role,
         List<StudentDTO> students,
         List<AdminUserInstallmentDTO> installments,
-        List<PaymentReceiptDTO> receipts
+        List<PaymentSubmissionDTO> payments
 ) {
 }

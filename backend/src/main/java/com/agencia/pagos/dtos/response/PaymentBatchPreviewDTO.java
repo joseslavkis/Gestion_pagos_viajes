@@ -8,12 +8,13 @@ import java.util.List;
 
 public record PaymentBatchPreviewDTO(
         Long anchorInstallmentId,
-        Integer installmentsCount,
         Currency tripCurrency,
         Currency paymentCurrency,
-        BigDecimal totalReportedAmount,
+        BigDecimal reportedAmount,
+        BigDecimal maxAllowedAmount,
         BigDecimal exchangeRate,
-        BigDecimal totalAmountInTripCurrency,
+        BigDecimal totalPendingAmountInTripCurrency,
+        BigDecimal amountInTripCurrency,
         LocalDate reportedPaymentDate,
         List<PaymentBatchInstallmentDTO> installments
 ) {

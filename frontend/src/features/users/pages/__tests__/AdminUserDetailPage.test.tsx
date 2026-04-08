@@ -46,23 +46,44 @@ describe("AdminUserDetailPage", () => {
               latestReceiptObservation: "Pago verificado",
             },
           ],
-          receipts: [
+          payments: [
             {
-              id: 501,
-              installmentId: 100,
-              installmentNumber: 1,
+              submissionId: 501,
+              status: "APPROVED",
               reportedAmount: 15000,
+              approvedAmount: 15000,
+              rejectedAmount: 0,
               paymentCurrency: "ARS",
               exchangeRate: null,
               amountInTripCurrency: 15000,
+              approvedAmountInTripCurrency: 15000,
               reportedPaymentDate: "2026-04-02",
               paymentMethod: "BANK_TRANSFER",
-              status: "APPROVED",
               fileKey: "https://example.com/comprobante.pdf",
               adminObservation: "Pago verificado",
               bankAccountId: 3,
               bankAccountDisplayName: "Banco Test - Cuenta corriente",
               bankAccountAlias: "agencia.test",
+              tripId: 9,
+              tripName: "Viaje a Mendoza",
+              tripCurrency: "ARS",
+              studentId: 88,
+              studentName: "Tomas Benitez",
+              studentDni: "44555666",
+              installments: [
+                {
+                  receiptId: null,
+                  installmentId: 100,
+                  installmentNumber: 1,
+                  dueDate: "2026-04-10",
+                  totalDue: 40000,
+                  paidAmount: 15000,
+                  remainingAmount: 25000,
+                  reportedAmount: 15000,
+                  amountInTripCurrency: 15000,
+                  status: "APPROVED",
+                },
+              ],
             },
           ],
         }),
@@ -75,6 +96,7 @@ describe("AdminUserDetailPage", () => {
     expect(screen.getAllByText("Tomas Benitez")).toHaveLength(2);
     expect(screen.getByText("Viaje a Mendoza")).toBeInTheDocument();
     expect(screen.getAllByText(/Pago verificado/)).toHaveLength(2);
+    expect(screen.getByText("Pago #501")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Ver comprobante adjunto" })).toBeInTheDocument();
   });
 });
