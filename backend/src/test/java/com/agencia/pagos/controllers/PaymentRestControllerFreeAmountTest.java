@@ -48,6 +48,9 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
     @MockBean
     private JavaMailSender javaMailSender;
 
+    @MockBean
+    private com.agencia.pagos.services.ExchangeRateService exchangeRateService;
+
     @Autowired
     private TripRepository tripRepository;
 
@@ -130,6 +133,9 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
         PaymentFixture fixture = createPaymentFixture("pmt-free-usd", Currency.USD);
         Installment first = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
         createInstallment(fixture.trip(), fixture.user(), fixture.student(), 2, "100.00", InstallmentStatus.YELLOW);
+
+        org.mockito.Mockito.when(exchangeRateService.getOfficialRateForDate(org.mockito.ArgumentMatchers.any(LocalDate.class)))
+                .thenReturn(new BigDecimal("1000.00"));
 
         mockMvc.perform(post("/api/v1/payments/preview")
                         .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
