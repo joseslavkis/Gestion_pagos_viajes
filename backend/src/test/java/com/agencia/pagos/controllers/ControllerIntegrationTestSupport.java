@@ -15,7 +15,10 @@ import com.agencia.pagos.repositories.InstallmentReminderNotificationRepository;
 import com.agencia.pagos.repositories.InstallmentRepository;
 import com.agencia.pagos.repositories.PasswordResetTokenRepository;
 import com.agencia.pagos.repositories.PaymentBatchRepository;
+import com.agencia.pagos.repositories.PaymentOutcomeRepository;
 import com.agencia.pagos.repositories.PaymentReceiptRepository;
+import com.agencia.pagos.repositories.PaymentAllocationRepository;
+import com.agencia.pagos.repositories.PaymentSubmissionRepository;
 import com.agencia.pagos.repositories.PendingTripStudentRepository;
 import com.agencia.pagos.repositories.RefreshTokenRepository;
 import com.agencia.pagos.repositories.SchoolRepository;
@@ -74,6 +77,15 @@ abstract class ControllerIntegrationTestSupport {
     protected PaymentBatchRepository paymentBatchRepository;
 
     @Autowired
+    protected PaymentSubmissionRepository paymentSubmissionRepository;
+
+    @Autowired
+    protected PaymentOutcomeRepository paymentOutcomeRepository;
+
+    @Autowired
+    protected PaymentAllocationRepository paymentAllocationRepository;
+
+    @Autowired
     protected InstallmentReminderNotificationRepository installmentReminderNotificationRepository;
 
     @Autowired
@@ -97,6 +109,9 @@ abstract class ControllerIntegrationTestSupport {
     @BeforeEach
     void cleanDatabase() {
         installmentReminderNotificationRepository.deleteAll();
+        paymentAllocationRepository.deleteAll();
+        paymentOutcomeRepository.deleteAll();
+        paymentSubmissionRepository.deleteAll();
         paymentReceiptRepository.deleteAll();
         paymentBatchRepository.deleteAll();
         installmentRepository.deleteAll();
@@ -183,6 +198,9 @@ abstract class ControllerIntegrationTestSupport {
         transactionTemplate.executeWithoutResult(status -> {
             installmentReminderNotificationRepository.deleteByInstallmentTripId(tripId);
             List<Long> batchIds = paymentReceiptRepository.findDistinctBatchIdsByInstallmentTripId(tripId);
+            paymentAllocationRepository.deleteByTripId(tripId);
+            paymentOutcomeRepository.deleteByTripId(tripId);
+            paymentSubmissionRepository.deleteByTripId(tripId);
             paymentReceiptRepository.deleteByInstallmentTripId(tripId);
             paymentBatchRepository.deleteAllById(batchIds);
             installmentRepository.deleteByTripId(tripId);

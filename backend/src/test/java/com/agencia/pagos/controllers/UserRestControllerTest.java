@@ -528,7 +528,7 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
                 .andExpect(jsonPath("$.email").value(userDto.email()))
                 .andExpect(jsonPath("$.students[0].name").value("Alumno Clara"))
                 .andExpect(jsonPath("$.installments[0].tripName").value("Viaje a Mendoza"))
-                .andExpect(jsonPath("$.receipts[0].adminObservation").value("Pago verificado"));
+                .andExpect(jsonPath("$.payments[0].adminObservation").value("Pago verificado"));
     }
 
     @Test
@@ -562,7 +562,7 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
                 .andExpect(jsonPath("$.id").value(userId))
                 .andExpect(jsonPath("$.students", hasSize(1)))
                 .andExpect(jsonPath("$.installments", hasSize(0)))
-                .andExpect(jsonPath("$.receipts", hasSize(0)));
+                .andExpect(jsonPath("$.payments", hasSize(0)));
     }
 
     @Test

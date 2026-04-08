@@ -11,11 +11,10 @@ import com.agencia.pagos.dtos.request.UserUpdateDTO;
 import com.agencia.pagos.dtos.response.AdminUserDetailDTO;
 import com.agencia.pagos.dtos.response.AdminUserInstallmentDTO;
 import com.agencia.pagos.dtos.response.AdminUserSearchResultDTO;
-import com.agencia.pagos.dtos.response.PaymentReceiptDTO;
+import com.agencia.pagos.dtos.response.PaymentSubmissionDTO;
 import com.agencia.pagos.dtos.response.StudentDTO;
 import com.agencia.pagos.dtos.response.TokenDTO;
 import com.agencia.pagos.dtos.response.UserProfileDTO;
-import com.agencia.pagos.entities.BankAccount;
 import com.agencia.pagos.entities.Installment;
 import com.agencia.pagos.entities.InstallmentStatus;
 import com.agencia.pagos.entities.PaymentReceipt;
@@ -68,6 +67,8 @@ public class UserService implements UserDetailsService {
     private final PasswordResetTokenRepository passwordResetTokenRepository;
     private final InstallmentStatusResolver installmentStatusResolver;
     private final InstallmentUiStatusResolver installmentUiStatusResolver;
+    private final PaymentInstallmentOverlayService paymentInstallmentOverlayService;
+    private final PaymentService paymentService;
     private final EmailService emailService;
     private final TripService tripService;
 
@@ -84,6 +85,8 @@ public class UserService implements UserDetailsService {
             PasswordResetTokenRepository passwordResetTokenRepository,
             InstallmentStatusResolver installmentStatusResolver,
             InstallmentUiStatusResolver installmentUiStatusResolver,
+            PaymentInstallmentOverlayService paymentInstallmentOverlayService,
+            PaymentService paymentService,
             EmailService emailService,
             TripService tripService
     ) {
@@ -98,6 +101,8 @@ public class UserService implements UserDetailsService {
         this.passwordResetTokenRepository = passwordResetTokenRepository;
         this.installmentStatusResolver = installmentStatusResolver;
         this.installmentUiStatusResolver = installmentUiStatusResolver;
+        this.paymentInstallmentOverlayService = paymentInstallmentOverlayService;
+        this.paymentService = paymentService;
         this.emailService = emailService;
         this.tripService = tripService;
     }
@@ -251,11 +256,14 @@ public class UserService implements UserDetailsService {
                                 Function.identity(),
                                 (existing, ignored) -> existing
                         ));
+        Map<Long, PaymentInstallmentOverlayService.InstallmentOverlay> overlays =
+                paymentInstallmentOverlayService.resolveForInstallments(installments);
 
         List<AdminUserInstallmentDTO> installmentDTOs = installments.stream()
                 .map(installment -> toAdminInstallmentDTO(
                         installment,
-                        latestReceiptByInstallmentId.get(installment.getId())
+                        latestReceiptByInstallmentId.get(installment.getId()),
+                        overlays.get(installment.getId())
                 ))
                 .sorted(Comparator
                         .comparing(AdminUserInstallmentDTO::tripName, String.CASE_INSENSITIVE_ORDER)
@@ -266,9 +274,7 @@ public class UserService implements UserDetailsService {
                         .thenComparing(AdminUserInstallmentDTO::installmentNumber))
                 .toList();
 
-        List<PaymentReceiptDTO> receiptDTOs = paymentReceiptRepository.findByInstallmentUserIdWithContext(user.getId()).stream()
-                .map(this::toPaymentReceiptDTO)
-                .toList();
+        List<PaymentSubmissionDTO> paymentDTOs = paymentService.getUnifiedSubmissionHistoryForUserId(user.getId());
 
         return new AdminUserDetailDTO(
                 user.getId(),
@@ -280,7 +286,7 @@ public class UserService implements UserDetailsService {
                 user.getRole(),
                 students,
                 installmentDTOs,
-                receiptDTOs
+                paymentDTOs
         );
     }
 
@@ -435,7 +441,8 @@ public class UserService implements UserDetailsService {
 
     private AdminUserInstallmentDTO toAdminInstallmentDTO(
             Installment installment,
-            PaymentReceipt latestReceipt
+            PaymentReceipt latestReceipt,
+            PaymentInstallmentOverlayService.InstallmentOverlay overlay
     ) {
         Student student = installment.getStudent();
         int yellowDays = installment.getTrip().getYellowWarningDays() == null
@@ -451,7 +458,7 @@ public class UserService implements UserDetailsService {
         );
         InstallmentUiStatus uiStatus = installmentUiStatusResolver.resolve(
                 effectiveStatus,
-                latestReceipt != null ? latestReceipt.getStatus() : null,
+                overlay != null ? overlay.status() : latestReceipt != null ? latestReceipt.getStatus() : null,
                 installment.getDueDate(),
                 yellowDays,
                 installment.getPaidAmount(),
@@ -471,36 +478,12 @@ public class UserService implements UserDetailsService {
                 installment.getTotalDue(),
                 installment.getPaidAmount(),
                 effectiveStatus,
-                latestReceipt != null ? latestReceipt.getStatus() : null,
+                overlay != null ? overlay.status() : latestReceipt != null ? latestReceipt.getStatus() : null,
                 uiStatus.code(),
                 uiStatus.label(),
                 uiStatus.tone(),
-                latestReceipt != null ? latestReceipt.getAdminObservation() : null
+                overlay != null ? overlay.observation() : latestReceipt != null ? latestReceipt.getAdminObservation() : null
         );
-    }
-
-    private PaymentReceiptDTO toPaymentReceiptDTO(PaymentReceipt receipt) {
-        return new PaymentReceiptDTO(
-                receipt.getId(),
-                receipt.getInstallment().getId(),
-                receipt.getInstallment().getInstallmentNumber(),
-                receipt.getReportedAmount(),
-                receipt.getPaymentCurrency(),
-                receipt.getExchangeRate(),
-                receipt.getAmountInTripCurrency(),
-                receipt.getReportedPaymentDate(),
-                receipt.getPaymentMethod(),
-                receipt.getStatus(),
-                receipt.getFileKey(),
-                receipt.getAdminObservation(),
-                receipt.getBankAccount() != null ? receipt.getBankAccount().getId() : null,
-                receipt.getBankAccount() != null ? formatBankAccountDisplay(receipt.getBankAccount()) : null,
-                receipt.getBankAccount() != null ? receipt.getBankAccount().getAlias() : null
-        );
-    }
-
-    private String formatBankAccountDisplay(BankAccount bankAccount) {
-        return bankAccount.getBankName() + " - " + bankAccount.getAccountLabel();
     }
 
     private boolean installmentRepositoryExistsByStudentId(Long studentId) {

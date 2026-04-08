@@ -147,6 +147,16 @@ function roundMoney(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
+function parseAmountInput(value: string): number {
+  const normalized = value.replace(",", ".").trim();
+  if (normalized.length === 0) {
+    return 0;
+  }
+
+  const parsed = Number.parseFloat(normalized);
+  return Number.isFinite(parsed) ? roundMoney(parsed) : 0;
+}
+
 function getInstallmentRemainingAmount(installment: Pick<UserInstallmentDTO, "totalDue" | "paidAmount">): number {
   return Math.max(0, roundMoney(installment.totalDue - installment.paidAmount));
 }
@@ -214,7 +224,7 @@ export function UserDashboardPage() {
   const [expandedGroupKeys, setExpandedGroupKeys] = useState<string[]>([]);
   const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null);
   const [selectedAnchorInstallmentId, setSelectedAnchorInstallmentId] = useState<number | null>(null);
-  const [selectedInstallmentsCount, setSelectedInstallmentsCount] = useState(1);
+  const [reportedAmountInput, setReportedAmountInput] = useState("");
   const [reportedPaymentDate, setReportedPaymentDate] = useState(getTodayDate);
   const [paymentCurrency, setPaymentCurrency] = useState<"ARS" | "USD">("USD");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("BANK_TRANSFER");
@@ -256,11 +266,12 @@ export function UserDashboardPage() {
   const selectedGroupHasPendingReview = selectedGroup != null ? groupHasPendingReview(selectedGroup) : false;
   const selectableInstallments = selectedGroup != null ? getPayableInstallments(selectedGroup) : [];
   const selectedTripHasPending = selectableInstallments.length > 0;
+  const reportedAmountValue = parseAmountInput(reportedAmountInput);
 
   const previewPayload = selectedAnchorInstallmentId != null && !selectedGroupHasPendingReview
     ? {
         anchorInstallmentId: selectedAnchorInstallmentId,
-        installmentsCount: selectedInstallmentsCount,
+        reportedAmount: reportedAmountValue,
         reportedPaymentDate,
         paymentCurrency,
       }
@@ -290,6 +301,7 @@ export function UserDashboardPage() {
     !registerPayment.isPending &&
     !isPaymentPreviewLoading &&
     paymentPreview != null &&
+    reportedAmountValue > 0 &&
     !isBankAccountsLoading &&
     availableBankAccounts.length > 0 &&
     selectedBankAccountId != null &&
@@ -338,40 +350,27 @@ export function UserDashboardPage() {
   useEffect(() => {
     if (selectedGroupKey == null) {
       setSelectedAnchorInstallmentId(null);
-      setSelectedInstallmentsCount(1);
+      setReportedAmountInput("");
       return;
     }
 
     const group = groups.find((item) => item.groupKey === selectedGroupKey) ?? null;
     if (!group) {
       setSelectedAnchorInstallmentId(null);
-      setSelectedInstallmentsCount(1);
+      setReportedAmountInput("");
       return;
     }
 
     const pendingInstallment = findPendingInstallment(group);
     if (!pendingInstallment) {
       setSelectedAnchorInstallmentId(null);
-      setSelectedInstallmentsCount(1);
+      setReportedAmountInput("");
       return;
     }
 
     setSelectedAnchorInstallmentId(pendingInstallment.installmentId);
-    setSelectedInstallmentsCount(1);
+    setReportedAmountInput(String(getInstallmentRemainingAmount(pendingInstallment)));
   }, [selectedGroupKey, groups]);
-
-  useEffect(() => {
-    if (selectableInstallments.length === 0) {
-      if (selectedInstallmentsCount !== 1) {
-        setSelectedInstallmentsCount(1);
-      }
-      return;
-    }
-
-    if (selectedInstallmentsCount > selectableInstallments.length) {
-      setSelectedInstallmentsCount(selectableInstallments.length);
-    }
-  }, [selectableInstallments, selectedInstallmentsCount]);
 
   const toggleGroup = (groupKey: string) => {
     setExpandedGroupKeys((current) => {
@@ -418,7 +417,12 @@ export function UserDashboardPage() {
     }
 
     if (!paymentPreview) {
-      toast.error("Todavía no pudimos calcular el total exacto del pago. Reintentá en unos segundos.");
+      toast.error("Todavía no pudimos calcular la imputación del pago. Reintentá en unos segundos.");
+      return;
+    }
+
+    if (reportedAmountValue <= 0) {
+      toast.error("Ingresá un monto válido antes de enviar el comprobante.");
       return;
     }
 
@@ -426,7 +430,7 @@ export function UserDashboardPage() {
     const groupIndex = groups.findIndex((g) => g.groupKey === selectedGroupKey);
     const tripDisplayName = selectedGroup ? getGroupDisplayName(selectedGroup, groupIndex) : "";
     const installmentsLabelSnapshot = formatInstallmentsLabel(paymentPreview.installments);
-    const amountSnapshot = formatAmountByCurrency(paymentPreview.paymentCurrency, paymentPreview.totalReportedAmount);
+    const amountSnapshot = formatAmountByCurrency(paymentPreview.paymentCurrency, paymentPreview.reportedAmount);
     const dateSnapshot = formatReportedDate(reportedPaymentDate);
     const methodSnapshot = paymentMethod;
     const bankSnapshot =
@@ -438,7 +442,7 @@ export function UserDashboardPage() {
     try {
       await registerPayment.mutateAsync({
         anchorInstallmentId: selectedAnchorInstallmentId,
-        installmentsCount: selectedInstallmentsCount,
+        reportedAmount: reportedAmountValue,
         reportedPaymentDate,
         paymentCurrency,
         paymentMethod,
@@ -447,7 +451,7 @@ export function UserDashboardPage() {
       });
 
       setSelectedAnchorInstallmentId(null);
-      setSelectedInstallmentsCount(1);
+      setReportedAmountInput("");
       setReportedPaymentDate(getTodayDate());
       setPaymentCurrency("USD");
       setPaymentMethod("BANK_TRANSFER");
@@ -712,53 +716,53 @@ export function UserDashboardPage() {
               </label>
 
               <label className={styles.formField}>
-                <span className={styles.label}>Cantidad de cuotas consecutivas</span>
-                <select
-                  value={selectedInstallmentsCount}
-                  onChange={(event) => setSelectedInstallmentsCount(Number(event.target.value))}
-                  className={styles.select}
+                <span className={styles.label}>Monto a reportar</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  inputMode="decimal"
+                  value={reportedAmountInput}
+                  onChange={(event) => setReportedAmountInput(event.target.value)}
+                  className={styles.input}
                   disabled={!selectedTripHasPending || selectedGroupHasPendingReview}
-                >
-                  {Array.from({ length: selectableInstallments.length }, (_, index) => index + 1).map((count) => (
-                    <option key={count} value={count}>
-                      {count} {count === 1 ? "cuota" : "cuotas"}
-                    </option>
-                  ))}
-                </select>
+                />
               </label>
               {paymentPreview ? (
                 <div className={styles.selectedInfoBox}>
                   <div className={styles.selectedInfoHeader}>
                     <span>
-                      Cubrís {formatInstallmentsLabel(paymentPreview.installments)} · total exacto{" "}
-                      {formatAmountByCurrency(paymentPreview.paymentCurrency, paymentPreview.totalReportedAmount)}
+                      Se imputa en {formatInstallmentsLabel(paymentPreview.installments)} · monto reportado{" "}
+                      {formatAmountByCurrency(paymentPreview.paymentCurrency, paymentPreview.reportedAmount)}
                     </span>
-                    <span className={`${styles.statusBadge} ${styles.statusgreen}`}>Exacto</span>
+                    <span className={`${styles.statusBadge} ${styles.statusgreen}`}>Monto libre</span>
                   </div>
                   <p className={styles.helperText}>
-                    El sistema solo admite la suma exacta de cuotas consecutivas desde la primera pendiente.
+                    Máximo permitido para esta inscripción:{" "}
+                    {formatAmountByCurrency(paymentPreview.paymentCurrency, paymentPreview.maxAllowedAmount)}.
                   </p>
-                  {paymentPreview.paymentCurrency !== paymentPreview.tripCurrency ? (
-                    <p className={styles.helperText}>
-                      Equivale a {formatAmountByCurrency(paymentPreview.tripCurrency, paymentPreview.totalAmountInTripCurrency)} del viaje
-                      {paymentPreview.exchangeRate != null
-                        ? ` · tipo de cambio BNA ${formatAmountByCurrency("ARS", paymentPreview.exchangeRate)}`
-                        : ""}
-                    </p>
-                  ) : null}
+                  <p className={styles.helperText}>
+                    Saldo pendiente total:{" "}
+                    {formatAmountByCurrency(paymentPreview.tripCurrency, paymentPreview.totalPendingAmountInTripCurrency)}.
+                    {" "}Equivale a{" "}
+                    {formatAmountByCurrency(paymentPreview.tripCurrency, paymentPreview.amountInTripCurrency)} del viaje
+                    {paymentPreview.exchangeRate != null
+                      ? ` · tipo de cambio BNA ${formatAmountByCurrency("ARS", paymentPreview.exchangeRate)}`
+                      : ""}
+                  </p>
                 </div>
               ) : null}
               {paymentPreviewError ? (
                 <p className={styles.errorText}>{paymentPreviewError.message}</p>
               ) : null}
               {isPaymentPreviewLoading && !paymentPreviewError ? (
-                <p className={styles.helperText}>Calculando total exacto...</p>
+                <p className={styles.helperText}>Calculando imputación...</p>
               ) : null}
 
               {selectedTripHasPending ? (
                 <p className={styles.paymentWarning} role="note">
-                  Importante: transferí exactamente el monto indicado por el sistema. El total debe coincidir con la
-                  suma exacta de cuotas consecutivas desde la primera pendiente.
+                  Importante: el pago siempre se aplica desde la primera cuota pendiente hacia adelante. Si pagás una
+                  cuota y media, la mitad restante quedará imputada como saldo a favor de la siguiente.
                 </p>
               ) : null}
 

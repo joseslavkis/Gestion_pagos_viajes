@@ -4,9 +4,9 @@ import com.agencia.pagos.dtos.request.PaymentPreviewRequestDTO;
 import com.agencia.pagos.dtos.request.RegisterPaymentDTO;
 import com.agencia.pagos.dtos.request.ReviewPaymentDTO;
 import com.agencia.pagos.dtos.response.PendingPaymentReviewDTO;
-import com.agencia.pagos.dtos.response.PaymentBatchDTO;
 import com.agencia.pagos.dtos.response.PaymentBatchPreviewDTO;
-import com.agencia.pagos.dtos.response.PaymentReceiptDTO;
+import com.agencia.pagos.dtos.response.PaymentInstallmentHistoryDTO;
+import com.agencia.pagos.dtos.response.PaymentSubmissionDTO;
 import com.agencia.pagos.dtos.response.UserInstallmentDTO;
 import com.agencia.pagos.entities.Currency;
 import com.agencia.pagos.entities.PaymentMethod;
@@ -24,6 +24,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.math.BigDecimal;
 
 @RestController
 @RequestMapping("/api/v1/payments")
@@ -49,7 +50,7 @@ class PaymentRestController {
     @PreAuthorize("hasAnyRole('USER','ADMIN')")
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE)
-    ResponseEntity<PaymentBatchDTO> registerPaymentJson(
+    ResponseEntity<PaymentSubmissionDTO> registerPaymentJson(
             @Valid @RequestBody RegisterPaymentDTO dto,
             @AuthenticationPrincipal(expression = "username") String email
     ) {
@@ -60,9 +61,9 @@ class PaymentRestController {
     @PreAuthorize("hasAnyRole('USER','ADMIN')")
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE)
-    ResponseEntity<PaymentBatchDTO> registerPayment(
+    ResponseEntity<PaymentSubmissionDTO> registerPayment(
             @RequestParam("anchorInstallmentId") Long anchorInstallmentId,
-            @RequestParam("installmentsCount") Integer installmentsCount,
+            @RequestParam("reportedAmount") BigDecimal reportedAmount,
             @RequestParam("reportedPaymentDate") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate reportedPaymentDate,
             @RequestParam("paymentCurrency") Currency paymentCurrency,
             @RequestParam("paymentMethod") PaymentMethod paymentMethod,
@@ -73,7 +74,7 @@ class PaymentRestController {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(paymentService.registerPayment(
                         anchorInstallmentId,
-                        installmentsCount,
+                        reportedAmount,
                         reportedPaymentDate,
                         paymentCurrency,
                         paymentMethod,
@@ -84,19 +85,26 @@ class PaymentRestController {
 
     @PreAuthorize("hasRole('ADMIN')")
     @PatchMapping(value = "/{id}/review", produces = "application/json", consumes = "application/json")
-    ResponseEntity<PaymentReceiptDTO> reviewPayment(@PathVariable Long id, @jakarta.validation.Valid @RequestBody ReviewPaymentDTO dto) {
-        return ResponseEntity.ok(paymentService.reviewPayment(id, dto));
+    ResponseEntity<PaymentSubmissionDTO> reviewPayment(
+            @PathVariable Long id,
+            @jakarta.validation.Valid @RequestBody ReviewPaymentDTO dto,
+            @AuthenticationPrincipal(expression = "username") String email
+    ) {
+        return ResponseEntity.ok(paymentService.reviewPayment(id, dto, email));
     }
 
     @PreAuthorize("hasRole('ADMIN')")
     @PostMapping(value = "/{id}/void", produces = "application/json")
-    ResponseEntity<PaymentReceiptDTO> voidPayment(@PathVariable Long id) {
-        return ResponseEntity.ok(paymentService.voidPayment(id));
+    ResponseEntity<PaymentSubmissionDTO> voidPayment(
+            @PathVariable Long id,
+            @AuthenticationPrincipal(expression = "username") String email
+    ) {
+        return ResponseEntity.ok(paymentService.voidPayment(id, email));
     }
 
     @PreAuthorize("hasRole('ADMIN')")
     @GetMapping(value = "/installment/{installmentId}", produces = "application/json")
-    ResponseEntity<List<PaymentReceiptDTO>> getReceiptsForInstallment(@PathVariable Long installmentId) {
+    ResponseEntity<List<PaymentInstallmentHistoryDTO>> getReceiptsForInstallment(@PathVariable Long installmentId) {
         return ResponseEntity.ok(paymentService.getReceiptsForInstallment(installmentId));
     }
 
@@ -108,7 +116,7 @@ class PaymentRestController {
 
     @PreAuthorize("hasRole('USER')")
     @GetMapping(value = "/my", produces = "application/json")
-    ResponseEntity<List<PaymentReceiptDTO>> getMyReceipts(
+    ResponseEntity<List<PaymentSubmissionDTO>> getMyReceipts(
             @AuthenticationPrincipal(expression = "username") String email
     ) {
         return ResponseEntity.ok(paymentService.getReceiptsForCurrentUser(email));

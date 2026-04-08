@@ -1,5 +1,6 @@
 package com.agencia.pagos.dtos.response;
 
+import com.agencia.pagos.entities.PaymentHistoryStatus;
 import com.agencia.pagos.entities.Currency;
 import com.agencia.pagos.entities.PaymentMethod;
 
@@ -8,7 +9,8 @@ import java.time.LocalDate;
 import java.util.List;
 
 public record PendingPaymentReviewDTO(
-        Long batchId,
+        Long submissionId,
+        PaymentHistoryStatus status,
         BigDecimal reportedAmount,
         Currency paymentCurrency,
         BigDecimal exchangeRate,
@@ -28,6 +30,6 @@ public record PendingPaymentReviewDTO(
         String userEmail,
         String studentName,
         String studentDni,
-        List<PendingPaymentReviewLineDTO> receipts
+        List<PaymentBatchInstallmentDTO> allocations
 ) {
 }

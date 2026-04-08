@@ -126,46 +126,51 @@ export function AdminUserDetailPage({ userId }: AdminUserDetailPageProps) {
                 <section className={styles.sectionCard}>
                   <div className={styles.sectionHeader}>
                     <h2 className={styles.sectionTitle}>Pagos y comprobantes</h2>
-                    <span className={styles.sectionCount}>{data.receipts.length}</span>
+                    <span className={styles.sectionCount}>{data.payments.length}</span>
                   </div>
-                  {data.receipts.length === 0 ? (
+                  {data.payments.length === 0 ? (
                     <p className={styles.emptyText}>Este usuario todavía no registró comprobantes.</p>
                   ) : (
                     <div className={styles.receiptList}>
-                      {data.receipts.map((receipt) => (
-                        <article key={receipt.id} className={styles.receiptCard}>
+                      {data.payments.map((payment) => (
+                        <article key={payment.submissionId} className={styles.receiptCard}>
                           <div className={styles.installmentHeader}>
                             <div>
-                              <h3 className={styles.cardTitle}>Comprobante #{receipt.id}</h3>
+                              <h3 className={styles.cardTitle}>Pago #{payment.submissionId}</h3>
                               <p className={styles.cardMeta}>
-                                Cuota {receipt.installmentNumber} · {formatDate(receipt.reportedPaymentDate)}
+                                {formatDate(payment.reportedPaymentDate)} · {formatInstallments(payment.installments)}
                               </p>
                             </div>
-                            <span className={styles.receiptStatus}>{receipt.status}</span>
+                            <span className={styles.receiptStatus}>{formatPaymentStatus(payment.status)}</span>
                           </div>
                           <div className={styles.receiptGrid}>
                             <div>
                               <span className={styles.identityLabel}>Monto informado</span>
-                              <strong>{formatMoney(receipt.paymentCurrency, receipt.reportedAmount)}</strong>
+                              <strong>{formatMoney(payment.paymentCurrency, payment.reportedAmount)}</strong>
                             </div>
                             <div>
-                              <span className={styles.identityLabel}>Equivalente viaje</span>
-                              <strong>{formatMoney(data.installments.find((item) => item.installmentId === receipt.installmentId)?.tripCurrency ?? receipt.paymentCurrency, receipt.amountInTripCurrency)}</strong>
+                              <span className={styles.identityLabel}>Aprobado</span>
+                              <strong>{formatMoney(payment.paymentCurrency, payment.approvedAmount)}</strong>
                             </div>
                             <div>
                               <span className={styles.identityLabel}>Método</span>
-                              <strong>{receipt.paymentMethod}</strong>
+                              <strong>{payment.paymentMethod}</strong>
                             </div>
                             <div>
                               <span className={styles.identityLabel}>Cuenta acreditada</span>
-                              <strong>{receipt.bankAccountDisplayName ?? "Sin cuenta"}</strong>
+                              <strong>{payment.bankAccountDisplayName ?? "Sin cuenta"}</strong>
                             </div>
                           </div>
-                          {receipt.adminObservation ? (
-                            <p className={styles.observation}>Observación: {receipt.adminObservation}</p>
+                          {payment.installments.length > 0 ? (
+                            <p className={styles.observation}>
+                              Imputación: {formatInstallments(payment.installments)}
+                            </p>
                           ) : null}
-                          {receipt.fileKey ? (
-                            <a href={receipt.fileKey} target="_blank" rel="noreferrer" className={styles.attachmentLink}>
+                          {payment.adminObservation ? (
+                            <p className={styles.observation}>Observación: {payment.adminObservation}</p>
+                          ) : null}
+                          {payment.fileKey ? (
+                            <a href={payment.fileKey} target="_blank" rel="noreferrer" className={styles.attachmentLink}>
                               Ver comprobante adjunto
                             </a>
                           ) : null}
@@ -199,6 +204,31 @@ function formatDate(date: string) {
 
 function formatMoney(currency: "ARS" | "USD", amount: number) {
   return currency === "USD" ? usdFormatter.format(amount) : arsFormatter.format(amount);
+}
+
+function formatInstallments(installments: Array<{ installmentNumber: number }>) {
+  if (installments.length === 0) {
+    return "Sin imputación visible";
+  }
+
+  return installments.map((installment) => `#${installment.installmentNumber}`).join(", ");
+}
+
+function formatPaymentStatus(status: string) {
+  switch (status) {
+    case "PENDING":
+      return "Pendiente";
+    case "APPROVED":
+      return "Aprobado";
+    case "REJECTED":
+      return "Rechazado";
+    case "PARTIALLY_APPROVED":
+      return "Aprobado parcial";
+    case "VOIDED":
+      return "Anulado";
+    default:
+      return status;
+  }
 }
 
 function getStatusClassName(tone: "green" | "yellow" | "red") {
