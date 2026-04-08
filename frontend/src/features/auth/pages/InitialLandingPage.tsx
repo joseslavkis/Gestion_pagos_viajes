@@ -185,9 +185,9 @@ export function InitialLandingPage() {
           </div>
 
           <div className={styles.copyColumn}>
-            <h1 className={styles.title}>Gestiona los viajes escolares con total transparencia</h1>
+            <h1 className={styles.title}>Gestiona los viajes con total transparencia</h1>
             <p className={styles.description}>
-              Organiza pagos, cuotas y seguimiento en un solo lugar, con claridad para familias y escuelas.
+              Organiza pagos, cuotas y seguimiento en un solo lugar, con claridad para familias y colegios.
             </p>
 
             <div className={styles.ctas}>
@@ -210,7 +210,7 @@ export function InitialLandingPage() {
               <p className={styles.kicker}>Soporte humano</p>
               <h2 className={styles.contactTitle}>Conversemos sobre tus viajes</h2>
               <p className={styles.contactDescription}>
-                Nuestro equipo acompana a escuelas y familias para implementar un circuito de cobros simple,
+                Nuestro equipo acompana a colegios y familias para implementar un circuito de cobros simple,
                 transparente y confiable.
               </p>
 

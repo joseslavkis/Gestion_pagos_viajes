@@ -216,7 +216,7 @@ export function UserDashboardPage() {
   const [selectedAnchorInstallmentId, setSelectedAnchorInstallmentId] = useState<number | null>(null);
   const [selectedInstallmentsCount, setSelectedInstallmentsCount] = useState(1);
   const [reportedPaymentDate, setReportedPaymentDate] = useState(getTodayDate);
-  const [paymentCurrency, setPaymentCurrency] = useState<"ARS" | "USD">("ARS");
+  const [paymentCurrency, setPaymentCurrency] = useState<"ARS" | "USD">("USD");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("BANK_TRANSFER");
   const [selectedBankAccountId, setSelectedBankAccountId] = useState<number | null>(null);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
@@ -449,7 +449,7 @@ export function UserDashboardPage() {
       setSelectedAnchorInstallmentId(null);
       setSelectedInstallmentsCount(1);
       setReportedPaymentDate(getTodayDate());
-      setPaymentCurrency("ARS");
+      setPaymentCurrency("USD");
       setPaymentMethod("BANK_TRANSFER");
       setSelectedBankAccountId(null);
       setReceiptFile(null);
