@@ -23,7 +23,7 @@ function toSpanishTypeName(typeName: string): string {
   }
 }
 
-const zodEsErrorMap: ZodErrorMap = (issue, _ctx) => {
+const zodEsErrorMap: ZodErrorMap = (issue) => {
   switch (issue.code) {
     case ZodIssueCode.invalid_type: {
       if (issue.received === "undefined") {

@@ -48,6 +48,20 @@ const bankAccount = {
   displayOrder: 1,
 };
 
+const usdBankAccount = {
+  id: 2,
+  bankName: "ICBC",
+  accountLabel: "Cuenta en dólares",
+  accountHolder: "Proyecto VA SRL",
+  accountNumber: "123-USD",
+  taxId: "20-123",
+  cbu: "456-USD",
+  alias: "ICBC.USD",
+  currency: "USD",
+  active: true,
+  displayOrder: 2,
+};
+
 describe("UserDashboardPage", () => {
   it("muestra estados y permite enviar un comprobante por cuotas exactas", async () => {
     let previewPayload: Record<string, unknown> | null = null;
@@ -111,7 +125,7 @@ describe("UserDashboardPage", () => {
           }),
         ]),
       ),
-      http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount])),
+      http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount, usdBankAccount])),
       http.post(PREVIEW_URL, async ({ request }) => {
         const body = (await request.json()) as Record<string, unknown>;
         previewPayload = body;
@@ -121,7 +135,7 @@ describe("UserDashboardPage", () => {
           anchorInstallmentId: body.anchorInstallmentId,
           installmentsCount,
           tripCurrency: "ARS",
-          paymentCurrency: "ARS",
+          paymentCurrency: "USD",
           totalReportedAmount: installmentsCount * 200,
           exchangeRate: null,
           totalAmountInTripCurrency: installmentsCount * 200,
@@ -148,14 +162,14 @@ describe("UserDashboardPage", () => {
           {
             batchId: 999,
             reportedAmount: 400,
-            paymentCurrency: "ARS",
+            paymentCurrency: "USD",
             exchangeRate: null,
             amountInTripCurrency: 400,
             reportedPaymentDate: "2026-03-31",
             paymentMethod: "BANK_TRANSFER",
-            bankAccountId: 1,
-            bankAccountDisplayName: "ICBC - Cuenta en pesos",
-            bankAccountAlias: "ICBC.PESOS",
+            bankAccountId: 2,
+            bankAccountDisplayName: "ICBC - Cuenta en dólares",
+            bankAccountAlias: "ICBC.USD",
             installments: [
               {
                 receiptId: 501,
@@ -215,7 +229,7 @@ describe("UserDashboardPage", () => {
       expect(previewPayload).toMatchObject({
         anchorInstallmentId: 201,
         installmentsCount: 2,
-        paymentCurrency: "ARS",
+        paymentCurrency: "USD",
       }),
     );
 
@@ -238,7 +252,7 @@ describe("UserDashboardPage", () => {
       expect(paymentPayload).toMatchObject({
         anchorInstallmentId: "201",
         installmentsCount: "2",
-        bankAccountId: "1",
+        bankAccountId: "2",
       }),
     );
   });
