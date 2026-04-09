@@ -24,6 +24,8 @@ services:
       db:
         condition: service_healthy
     restart: "on-failure:3"
+    volumes:
+      - "receipts-data:/home/app/data/receipts"
     environment:
       SPRING_DATASOURCE_USERNAME: "${DB_USERNAME}"
       SPRING_DATASOURCE_PASSWORD: "${DB_PASSWORD}"
@@ -69,3 +71,6 @@ services:
     restart: "on-failure:3"
     ports:
       - "127.0.0.1:${ADMINER_EXTERNAL_PORT}:8080"
+
+volumes:
+  receipts-data:

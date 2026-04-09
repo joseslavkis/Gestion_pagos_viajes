@@ -12,9 +12,11 @@ import com.agencia.pagos.entities.Trip;
 import com.agencia.pagos.entities.user.User;
 import com.agencia.pagos.repositories.BankAccountRepository;
 import com.agencia.pagos.repositories.InstallmentRepository;
+import com.agencia.pagos.repositories.PaymentSubmissionRepository;
 import com.agencia.pagos.repositories.StudentRepository;
 import com.agencia.pagos.repositories.TripRepository;
 import com.agencia.pagos.repositories.UserRepository;
+import com.agencia.pagos.services.storage.PaymentAttachmentStorageService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -28,7 +30,11 @@ import org.springframework.mock.web.MockMultipartFile;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -51,6 +57,9 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
     @MockBean
     private com.agencia.pagos.services.ExchangeRateService exchangeRateService;
 
+    @MockBean
+    private PaymentAttachmentStorageService paymentAttachmentStorageService;
+
     @Autowired
     private TripRepository tripRepository;
 
@@ -65,6 +74,9 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
 
     @Autowired
     private StudentRepository studentRepository;
+
+    @Autowired
+    private PaymentSubmissionRepository paymentSubmissionRepository;
 
     @Test
     void previewPayment_montoLibreDevuelveImputacionSecuencial() throws Exception {
@@ -191,6 +203,10 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
         createInstallment(fixture.trip(), fixture.user(), fixture.student(), 2, "100.00", InstallmentStatus.YELLOW);
         createInstallment(fixture.trip(), fixture.user(), fixture.student(), 3, "100.00", InstallmentStatus.YELLOW);
         BankAccount bankAccount = createBankAccount(Currency.ARS);
+        given(paymentAttachmentStorageService.storeReceipt(any(), anyLong(), anyLong(), any()))
+                .willReturn("receipts/trip-1/user-2/test.jpg");
+        given(paymentAttachmentStorageService.resolveFileReference("receipts/trip-1/user-2/test.jpg"))
+                .willReturn("https://backend.example/api/v1/payment-attachments/receipt-token");
 
         MockMultipartFile file = new MockMultipartFile(
                 "file",
@@ -199,7 +215,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                 "contenido".getBytes()
         );
 
-        mockMvc.perform(multipart("/api/v1/payments")
+        String responseBody = mockMvc.perform(multipart("/api/v1/payments")
                         .file(file)
                         .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
                         .param("anchorInstallmentId", String.valueOf(first.getId()))
@@ -217,8 +233,19 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                 .andExpect(jsonPath("$.status").value("PENDING"))
                 .andExpect(jsonPath("$.reportedAmount").value(250))
                 .andExpect(jsonPath("$.amountInTripCurrency").value(250))
+                .andExpect(jsonPath("$.fileKey").value("https://backend.example/api/v1/payment-attachments/receipt-token"))
                 .andExpect(jsonPath("$.installments.length()").value(3))
-                .andExpect(jsonPath("$.installments[2].amountInTripCurrency").value(50));
+                .andExpect(jsonPath("$.installments[2].amountInTripCurrency").value(50))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        Long submissionId = objectMapper.readTree(responseBody).path("submissionId").asLong();
+        assertNotNull(submissionId);
+        assertEquals(
+                "receipts/trip-1/user-2/test.jpg",
+                paymentSubmissionRepository.findById(submissionId).orElseThrow().getFileKey()
+        );
     }
 
     @Test

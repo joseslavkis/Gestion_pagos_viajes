@@ -34,6 +34,7 @@ import com.agencia.pagos.repositories.PaymentOutcomeRepository;
 import com.agencia.pagos.repositories.PaymentReceiptRepository;
 import com.agencia.pagos.repositories.PaymentSubmissionRepository;
 import com.agencia.pagos.repositories.UserRepository;
+import com.agencia.pagos.services.storage.PaymentAttachmentStorageService;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.AccessDeniedException;
@@ -41,12 +42,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -82,6 +81,7 @@ public class PaymentService {
     private final ExchangeRateService exchangeRateService;
     private final PaymentAllocationPlanner paymentAllocationPlanner;
     private final PaymentInstallmentOverlayService paymentInstallmentOverlayService;
+    private final PaymentAttachmentStorageService paymentAttachmentStorageService;
 
     @Autowired
     public PaymentService(
@@ -97,7 +97,8 @@ public class PaymentService {
             InstallmentUiStatusResolver installmentUiStatusResolver,
             ExchangeRateService exchangeRateService,
             PaymentAllocationPlanner paymentAllocationPlanner,
-            PaymentInstallmentOverlayService paymentInstallmentOverlayService
+            PaymentInstallmentOverlayService paymentInstallmentOverlayService,
+            PaymentAttachmentStorageService paymentAttachmentStorageService
     ) {
         this.paymentReceiptRepository = paymentReceiptRepository;
         this.paymentBatchRepository = paymentBatchRepository;
@@ -112,6 +113,7 @@ public class PaymentService {
         this.exchangeRateService = exchangeRateService;
         this.paymentAllocationPlanner = paymentAllocationPlanner;
         this.paymentInstallmentOverlayService = paymentInstallmentOverlayService;
+        this.paymentAttachmentStorageService = paymentAttachmentStorageService;
     }
 
     @Transactional(readOnly = true)
@@ -170,7 +172,14 @@ public class PaymentService {
         submission.setReportedPaymentDate(reportedPaymentDate);
         submission.setPaymentMethod(paymentMethod);
         submission.setStatus(PaymentSubmissionStatus.PENDING);
-        submission.setFileKey(extractFileKey(file));
+        submission.setFileKey(paymentAttachmentStorageService.storeReceipt(
+                file,
+                selection.anchorInstallment().getTrip().getId(),
+                selection.anchorInstallment().getUser().getId(),
+                selection.anchorInstallment().getStudent() != null
+                        ? selection.anchorInstallment().getStudent().getId()
+                        : null
+        ));
 
         PaymentSubmission saved = paymentSubmissionRepository.save(submission);
         return toSubmissionDTO(saved, toInstallmentDTOs(plan.allocations(), null));
@@ -561,35 +570,6 @@ public class PaymentService {
         return exchangeRateService.getOfficialRateForDate(reportedPaymentDate);
     }
 
-    private String extractFileKey(MultipartFile file) {
-        if (file == null || file.isEmpty()) {
-            return "";
-        }
-
-        String mimeType = file.getContentType();
-        List<String> allowedTypes = List.of(
-                "image/jpeg",
-                "image/png",
-                "image/webp",
-                "application/pdf"
-        );
-        if (mimeType == null || !allowedTypes.contains(mimeType)) {
-            throw new IllegalArgumentException("Solo se aceptan imágenes JPG, PNG, WEBP o archivos PDF");
-        }
-
-        long maxBytes = 5L * 1024L * 1024L;
-        if (file.getSize() > maxBytes) {
-            throw new IllegalArgumentException("El archivo no puede superar los 5MB");
-        }
-
-        try {
-            String base64 = Base64.getEncoder().encodeToString(file.getBytes());
-            return "data:" + mimeType + ";base64," + base64;
-        } catch (IOException exception) {
-            throw new IllegalStateException("No se pudo procesar el archivo adjunto", exception);
-        }
-    }
-
     private PaymentBatchPreviewDTO toPreviewDTO(
             Installment anchorInstallment,
             LocalDate reportedPaymentDate,
@@ -647,7 +627,7 @@ public class PaymentService {
                 approvedAmountInTripCurrency,
                 submission.getReportedPaymentDate(),
                 submission.getPaymentMethod(),
-                submission.getFileKey(),
+                resolveFileReference(submission.getFileKey()),
                 adminObservation,
                 submission.getBankAccount() != null ? submission.getBankAccount().getId() : null,
                 submission.getBankAccount() != null ? formatBankAccountDisplay(submission.getBankAccount()) : null,
@@ -721,7 +701,7 @@ public class PaymentService {
                 submission.getAmountInTripCurrency(),
                 submission.getReportedPaymentDate(),
                 submission.getPaymentMethod(),
-                submission.getFileKey(),
+                resolveFileReference(submission.getFileKey()),
                 submission.getBankAccount() != null ? submission.getBankAccount().getId() : null,
                 submission.getBankAccount() != null ? formatBankAccountDisplay(submission.getBankAccount()) : null,
                 submission.getBankAccount() != null ? submission.getBankAccount().getAlias() : null,
@@ -751,7 +731,7 @@ public class PaymentService {
                 receipt.getReportedPaymentDate(),
                 receipt.getPaymentMethod(),
                 toHistoryStatus(receipt.getStatus()),
-                resolveFileKey(receipt),
+                resolveFileReference(resolveFileKey(receipt)),
                 receipt.getAdminObservation(),
                 resolveBankAccountId(receipt),
                 resolveBankAccountDisplayName(receipt),
@@ -773,7 +753,7 @@ public class PaymentService {
                 submission.getReportedPaymentDate(),
                 submission.getPaymentMethod(),
                 allocation.getOutcome().getStatus() == PaymentOutcomeStatus.VOIDED ? PaymentHistoryStatus.VOIDED : PaymentHistoryStatus.APPROVED,
-                submission.getFileKey(),
+                resolveFileReference(submission.getFileKey()),
                 allocation.getOutcome().getAdminObservation(),
                 submission.getBankAccount() != null ? submission.getBankAccount().getId() : null,
                 submission.getBankAccount() != null ? formatBankAccountDisplay(submission.getBankAccount()) : null,
@@ -850,7 +830,7 @@ public class PaymentService {
                 approvedAmountInTripCurrency,
                 batch != null ? batch.getReportedPaymentDate() : firstReceipt.getReportedPaymentDate(),
                 batch != null ? batch.getPaymentMethod() : firstReceipt.getPaymentMethod(),
-                batch != null ? batch.getFileKey() : firstReceipt.getFileKey(),
+                resolveFileReference(batch != null ? batch.getFileKey() : firstReceipt.getFileKey()),
                 sortedReceipts.stream()
                         .map(PaymentReceipt::getAdminObservation)
                         .filter(value -> value != null && !value.isBlank())
@@ -965,6 +945,10 @@ public class PaymentService {
             return receipt.getBatch().getFileKey();
         }
         return receipt.getFileKey();
+    }
+
+    private String resolveFileReference(String storedValue) {
+        return paymentAttachmentStorageService.resolveFileReference(storedValue);
     }
 
     private Long resolveBankAccountId(PaymentReceipt receipt) {
