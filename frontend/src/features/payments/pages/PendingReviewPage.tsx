@@ -6,6 +6,7 @@ import {
   usePendingReviewPayments,
   useReviewPayment,
 } from "@/features/payments/services/payments-service";
+import { isImageAttachment } from "@/features/payments/lib/attachment-preview";
 import type {
   PaymentBatchInstallmentDTO,
   PendingPaymentReviewDTO,
@@ -203,7 +204,7 @@ export function PendingReviewPage() {
 
                     {item.fileKey ? (
                       <div className={styles.attachmentBox}>
-                        {item.fileKey.startsWith("data:image") ? (
+                        {isImageAttachment(item.fileKey) ? (
                           <img src={item.fileKey} alt="Comprobante" className={styles.attachmentImage} />
                         ) : (
                           <a href={item.fileKey} target="_blank" rel="noreferrer" className={styles.linkButton}>

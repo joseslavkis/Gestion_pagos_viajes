@@ -19,6 +19,7 @@ import com.agencia.pagos.repositories.PaymentSubmissionRepository;
 import com.agencia.pagos.repositories.StudentRepository;
 import com.agencia.pagos.repositories.TripRepository;
 import com.agencia.pagos.repositories.UserRepository;
+import com.agencia.pagos.services.storage.PaymentAttachmentStorageService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -33,6 +34,7 @@ import java.time.LocalDate;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -49,6 +51,9 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
 
     @MockBean
     private JavaMailSender javaMailSender;
+
+    @MockBean
+    private PaymentAttachmentStorageService paymentAttachmentStorageService;
 
     @Autowired
     private TripRepository tripRepository;
@@ -76,8 +81,16 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
         createInstallment(fixture.trip(), fixture.user(), fixture.student(), 2, "100.00", InstallmentStatus.YELLOW);
         createInstallment(fixture.trip(), fixture.user(), fixture.student(), 3, "100.00", InstallmentStatus.YELLOW);
         BankAccount bankAccount = createBankAccount(Currency.ARS);
+        given(paymentAttachmentStorageService.resolveFileReference("receipts/trip-10/user-20/pending.jpg"))
+                .willReturn("https://backend.example/api/v1/payment-attachments/admin-review-token");
 
-        paymentSubmissionRepository.save(buildPendingSubmission(first, bankAccount, "250.00", "250.00"));
+        paymentSubmissionRepository.save(buildPendingSubmission(
+                first,
+                bankAccount,
+                "250.00",
+                "250.00",
+                "receipts/trip-10/user-20/pending.jpg"
+        ));
 
         mockMvc.perform(get("/api/v1/payments/pending-review")
                         .header("Authorization", "Bearer " + adminTokens.accessToken()))
@@ -87,6 +100,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 .andExpect(jsonPath("$[0].tripId").value(fixture.trip().getId()))
                 .andExpect(jsonPath("$[0].userEmail").value(fixture.user().getEmail()))
                 .andExpect(jsonPath("$[0].reportedAmount").value(250))
+                .andExpect(jsonPath("$[0].fileKey").value("https://backend.example/api/v1/payment-attachments/admin-review-token"))
                 .andExpect(jsonPath("$[0].allocations.length()").value(3))
                 .andExpect(jsonPath("$[0].allocations[2].amountInTripCurrency").value(50));
     }
@@ -192,7 +206,8 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
             Installment anchorInstallment,
             BankAccount bankAccount,
             String reportedAmount,
-            String amountInTripCurrency
+            String amountInTripCurrency,
+            String fileKey
     ) {
         PaymentSubmission submission = new PaymentSubmission();
         submission.setTrip(anchorInstallment.getTrip());
@@ -207,7 +222,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
         submission.setReportedPaymentDate(LocalDate.now());
         submission.setPaymentMethod(PaymentMethod.BANK_TRANSFER);
         submission.setStatus(PaymentSubmissionStatus.PENDING);
-        submission.setFileKey("data:image/jpeg;base64,ZHVtbXk=");
+        submission.setFileKey(fileKey);
         return submission;
     }
 }

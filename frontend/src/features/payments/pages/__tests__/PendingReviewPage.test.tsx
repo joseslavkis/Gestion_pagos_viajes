@@ -178,4 +178,24 @@ describe("PendingReviewPage", () => {
     });
     expect(await screen.findByText("No hay comprobantes pendientes de revisión.")).toBeInTheDocument();
   });
+
+  it("muestra preview de imagen cuando el comprobante viene como URL remota", async () => {
+    server.use(
+      http.get("http://localhost:30002/api/v1/payments/pending-review", () =>
+        HttpResponse.json([
+          {
+            ...makePendingSubmission(),
+            fileKey: "https://backend.example/api/v1/payment-attachments/receipt.jpg?token=abc",
+          },
+        ]),
+      ),
+    );
+
+    renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
+
+    expect(await screen.findByAltText("Comprobante")).toHaveAttribute(
+      "src",
+      "https://backend.example/api/v1/payment-attachments/receipt.jpg?token=abc",
+    );
+  });
 });

@@ -14,7 +14,10 @@ FROM eclipse-temurin:21-jre-alpine AS deploy
 WORKDIR /home/app
 
 # Usuario no-root por seguridad
-RUN addgroup -S spring && adduser -S spring -G spring
+RUN addgroup -S spring \
+    && adduser -S spring -G spring \
+    && mkdir -p /home/app/data/receipts \
+    && chown -R spring:spring /home/app
 USER spring
 
 COPY --from=build /home/app/target/*.jar app.jar

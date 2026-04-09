@@ -159,6 +159,27 @@ Desde administración se puede descargar la plantilla del viaje en formato `.xls
 * Solo usuarios autorizados (administradores de la agencia) pueden acceder.
 * El acceso a archivos se controla desde la app con autenticación.
 
+## Storage de comprobantes en VPS
+El backend soporta guardar comprobantes en el filesystem del servidor en lugar de serializarlos inline en la base.
+
+### Cómo funciona
+* La base guarda una referencia relativa, por ejemplo `receipts/trip-12/user-4/uuid.jpg`.
+* El archivo físico se escribe en el directorio configurado por `RECEIPTS_FILESYSTEM_BASE_PATH`.
+* Cuando el frontend pide historial o pendientes, el backend devuelve una URL temporal del tipo `/api/v1/payment-attachments/{token}/{filename}`.
+* Esa URL es pública solo en apariencia: el token va firmado y vence según `RECEIPTS_URL_EXPIRATION_MINUTES`.
+
+### Variables necesarias
+* `RECEIPTS_STORAGE_PROVIDER=filesystem`
+* `RECEIPTS_FILESYSTEM_BASE_PATH=/home/app/data/receipts`
+* `BACKEND_PUBLIC_URL=https://tu-backend`
+* `RECEIPTS_URL_EXPIRATION_MINUTES=15`
+* `RECEIPTS_PATH_PREFIX=receipts`
+
+### Docker / VPS
+* `docker-compose.yml` monta un volumen persistente en `/home/app/data/receipts`.
+* El contenedor del backend crea ese directorio antes de arrancar y corre con un usuario no root.
+* Para un despliegue tipo Hostinger, se puede copiar `.env.hostinger.example` a `.env` y ajustar URLs/credenciales.
+
 ## Reglas operativas importantes
 * No se puede marcar un pago como aceptado sin comprobante asociado.
 * Si se rechaza un comprobante, se registra motivo/observación y la cuota se muestra en rojo.

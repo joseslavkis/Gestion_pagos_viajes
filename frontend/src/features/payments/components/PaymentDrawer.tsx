@@ -4,6 +4,7 @@ import {
   useInstallmentReceipts,
   useVoidPayment,
 } from "@/features/payments/services/payments-service";
+import { isImageAttachment } from "@/features/payments/lib/attachment-preview";
 import type {
   PaymentHistoryStatus,
   PaymentInstallmentHistoryDTO,
@@ -240,7 +241,7 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
 
                 {entry.fileKey ? (
                   <div style={{ marginTop: 8 }}>
-                    {entry.fileKey.startsWith("data:image") ? (
+                    {isImageAttachment(entry.fileKey) ? (
                       <img
                         src={entry.fileKey}
                         alt="Comprobante"

@@ -31,6 +31,7 @@ public class SecurityConfig {
         "/api/v1/auth/**",
         "/api/v1/contact/send",
         "/api/v1/schools",
+        "/api/v1/payment-attachments/**",
     };
 
     public static final String[] ADMIN_ENDPOINTS = {
