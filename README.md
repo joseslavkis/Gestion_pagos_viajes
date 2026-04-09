@@ -174,11 +174,22 @@ El backend soporta guardar comprobantes en el filesystem del servidor en lugar d
 * `BACKEND_PUBLIC_URL=https://tu-backend`
 * `RECEIPTS_URL_EXPIRATION_MINUTES=15`
 * `RECEIPTS_PATH_PREFIX=receipts`
+* `RECEIPTS_CLEANUP_ENABLED=true`
+* `RECEIPTS_RETENTION_DAYS=365`
+* `RECEIPTS_CLEANUP_BATCH_SIZE=100`
+* `RECEIPTS_CLEANUP_CRON=0 0 3 * * *`
+* `RECEIPTS_CLEANUP_ZONE=America/Argentina/Buenos_Aires`
 
 ### Docker / VPS
 * `docker-compose.yml` monta un volumen persistente en `/home/app/data/receipts`.
 * El contenedor del backend crea ese directorio antes de arrancar y corre con un usuario no root.
 * Para un despliegue tipo Hostinger, se puede copiar `.env.hostinger.example` a `.env` y ajustar URLs/credenciales.
+
+### Limpieza automática
+* El backend ejecuta una limpieza diaria de comprobantes vencidos basada en `createdAt`.
+* Solo borra archivos y referencias de comprobantes con más días que `RECEIPTS_RETENTION_DAYS`.
+* El borrado corre en batches para no pegarle de golpe al VPS.
+* Si el archivo no se puede borrar, la referencia en base no se limpia para evitar inconsistencias silenciosas.
 
 ## Reglas operativas importantes
 * No se puede marcar un pago como aceptado sin comprobante asociado.

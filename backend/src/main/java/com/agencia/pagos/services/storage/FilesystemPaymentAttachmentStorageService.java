@@ -1,6 +1,8 @@
 package com.agencia.pagos.services.storage;
 
 import com.agencia.pagos.config.storage.PaymentAttachmentStorageProperties;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.MediaType;
 import org.springframework.http.MediaTypeFactory;
@@ -14,10 +16,13 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 @Service
 @ConditionalOnProperty(prefix = "app.storage.receipts", name = "provider", havingValue = "filesystem")
 public class FilesystemPaymentAttachmentStorageService implements PaymentAttachmentStorageService {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(FilesystemPaymentAttachmentStorageService.class);
 
     public record AttachmentDownload(Path path, MediaType mediaType, String filename) {
     }
@@ -80,6 +85,26 @@ public class FilesystemPaymentAttachmentStorageService implements PaymentAttachm
                 .flatMap(this::loadReceiptByStoredValue);
     }
 
+    @Override
+    public boolean deleteReceipt(String storedValue) {
+        if (!StringUtils.hasText(storedValue)) {
+            return true;
+        }
+        if (PaymentAttachmentStorageSupport.isInlineDataUrl(storedValue) || isRemoteUrl(storedValue)) {
+            return true;
+        }
+
+        try {
+            Path absolutePath = resolveAbsolutePath(storedValue);
+            Files.deleteIfExists(absolutePath);
+            pruneEmptyDirectories(absolutePath.getParent());
+            return true;
+        } catch (IOException | IllegalArgumentException exception) {
+            LOGGER.warn("No se pudo borrar el comprobante almacenado '{}' del filesystem", storedValue, exception);
+            return false;
+        }
+    }
+
     private Optional<AttachmentDownload> loadReceiptByStoredValue(String storedValue) {
         try {
             Path absolutePath = resolveAbsolutePath(storedValue);
@@ -138,6 +163,28 @@ public class FilesystemPaymentAttachmentStorageService implements PaymentAttachm
             throw new IllegalArgumentException("Referencia de archivo inválida");
         }
         return resolvedPath;
+    }
+
+    private void pruneEmptyDirectories(Path startPath) throws IOException {
+        Path current = startPath;
+        while (current != null && !current.equals(basePath) && current.startsWith(basePath)) {
+            if (!isDirectoryEmpty(current)) {
+                return;
+            }
+
+            Files.deleteIfExists(current);
+            current = current.getParent();
+        }
+    }
+
+    private boolean isDirectoryEmpty(Path directory) throws IOException {
+        if (directory == null || !Files.isDirectory(directory)) {
+            return false;
+        }
+
+        try (Stream<Path> children = Files.list(directory)) {
+            return children.findAny().isEmpty();
+        }
     }
 
     private String normalizeStoredValue(String storedValue) {

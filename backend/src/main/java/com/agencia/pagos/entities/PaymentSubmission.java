@@ -215,6 +215,10 @@ public class PaymentSubmission {
         return createdAt;
     }
 
+    public void setCreatedAt(LocalDateTime createdAt) {
+        this.createdAt = createdAt;
+    }
+
     public Set<PaymentOutcome> getOutcomes() {
         return outcomes;
     }
