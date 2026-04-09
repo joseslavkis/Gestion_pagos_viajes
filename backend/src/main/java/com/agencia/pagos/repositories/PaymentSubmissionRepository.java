@@ -2,10 +2,12 @@ package com.agencia.pagos.repositories;
 
 import com.agencia.pagos.entities.PaymentSubmission;
 import com.agencia.pagos.entities.PaymentSubmissionStatus;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -94,5 +96,18 @@ public interface PaymentSubmissionRepository extends JpaRepository<PaymentSubmis
             @Param("tripId") Long tripId,
             @Param("userId") Long userId,
             @Param("studentId") Long studentId
+    );
+
+    @Query("""
+        SELECT p
+        FROM PaymentSubmission p
+        WHERE p.createdAt < :cutoff
+          AND p.fileKey IS NOT NULL
+          AND p.fileKey <> ''
+        ORDER BY p.createdAt ASC, p.id ASC
+        """)
+    List<PaymentSubmission> findExpiredWithStoredFileKey(
+            @Param("cutoff") LocalDateTime cutoff,
+            Pageable pageable
     );
 }
