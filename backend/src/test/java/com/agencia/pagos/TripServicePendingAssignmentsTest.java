@@ -182,6 +182,45 @@ class TripServicePendingAssignmentsTest {
     }
 
     @Test
+    void materializePendingAssignmentsForStudent_preservesExactFirstDueDate() {
+        LocalDate firstDueDate = LocalDate.of(2026, 5, 8);
+        Trip trip = buildTrip(6L, firstDueDate, false);
+        trip.setDueDay(10);
+
+        User parent = new User("Ana", "secret", "ana-due-date@test.com", "Perez", Role.USER);
+        parent.setPhone("381123123");
+        setUserId(parent, 13L);
+
+        Student student = Student.builder()
+                .parent(parent)
+                .name("Mora Perez")
+                .dni("44555666")
+                .build();
+        student.setId(14L);
+
+        PendingTripStudent pending = new PendingTripStudent();
+        pending.setTrip(trip);
+        pending.setStudentDni(student.getDni());
+
+        when(pendingTripStudentRepository.findByStudentDniWithTripForUpdate(student.getDni())).thenReturn(List.of(pending));
+        when(tripRepository.findByIdForUpdate(6L)).thenReturn(Optional.of(trip));
+        when(installmentRepository.findAssignedStudentIdsByTripId(6L)).thenReturn(List.of());
+
+        tripService.materializePendingAssignmentsForStudent(student);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Iterable<Installment>> installmentCaptor = ArgumentCaptor.forClass((Class) Iterable.class);
+
+        verify(installmentRepository).saveAll(installmentCaptor.capture());
+
+        List<Installment> savedInstallments = toList(installmentCaptor.getValue());
+        assertEquals(3, savedInstallments.size());
+        assertEquals(LocalDate.of(2026, 5, 8), savedInstallments.get(0).getDueDate());
+        assertEquals(LocalDate.of(2026, 6, 10), savedInstallments.get(1).getDueDate());
+        assertEquals(LocalDate.of(2026, 7, 10), savedInstallments.get(2).getDueDate());
+    }
+
+    @Test
     void assignUsersInBulk_rejectsDniAlreadyLoadedAsPendingOrAssigned() {
         Trip trip = buildTrip(2L, LocalDate.now().plusMonths(1), false);
         User parent = new User("Ana", "secret", "ana@test.com", "Perez", Role.USER);

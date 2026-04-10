@@ -163,6 +163,7 @@ export const SpreadsheetRowDTOSchema = z.object({
   lastname: z.string(),
   phone: z.string().nullable(),
   email: z.string(),
+  studentLastname: z.string().nullable(),
   studentName: z.string().nullable(),
   studentDni: z.string().nullable(),
   userCompleted: z.boolean(),
@@ -186,7 +187,7 @@ export const SpreadsheetParamsSchema = z.object({
   page: z.number().min(0).default(0),
   size: z.number().min(1).max(100).default(20),
   search: z.string().optional(),
-  sortBy: z.enum(["lastname", "name", "email"]).default("lastname"),
+  sortBy: z.enum(["student", "parent", "email"]).default("student"),
   order: z.enum(["asc", "desc"]).default("asc"),
   status: z.enum(["GREEN", "YELLOW", "RED", "RETROACTIVE", ""]).optional(),
 });

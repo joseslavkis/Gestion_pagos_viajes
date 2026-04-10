@@ -14,6 +14,7 @@ import styles from "./SignupPage.module.css";
 
 const emptyStudent = (): StudentCreateDTO => ({
   name: "",
+  lastname: "",
   dni: "",
 });
 
@@ -243,11 +244,19 @@ export function SignupPage() {
                   </div>
 
                   <label style={fieldStyle}>
-                    <span>Nombre completo</span>
+                    <span>Nombre</span>
                     <input
                       style={inputStyle}
                       value={student.name}
                       onChange={(event) => handleStudentChange(index, "name", event.target.value)}
+                    />
+                  </label>
+                  <label style={fieldStyle}>
+                    <span>Apellido</span>
+                    <input
+                      style={inputStyle}
+                      value={student.lastname}
+                      onChange={(event) => handleStudentChange(index, "lastname", event.target.value)}
                     />
                   </label>
                   <label style={fieldStyle}>

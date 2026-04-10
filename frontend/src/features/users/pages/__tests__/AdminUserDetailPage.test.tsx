@@ -21,7 +21,8 @@ describe("AdminUserDetailPage", () => {
           students: [
             {
               id: 88,
-              name: "Tomas Benitez",
+              name: "Tomas",
+              lastname: "Benitez",
               dni: "44555666",
             },
           ],
@@ -93,7 +94,8 @@ describe("AdminUserDetailPage", () => {
     renderWithProviders(<AdminUserDetailPage userId={12} />, "ROLE_ADMIN");
 
     expect(await screen.findByText("Benitez, Clara")).toBeInTheDocument();
-    expect(screen.getAllByText("Tomas Benitez")).toHaveLength(2);
+    expect(screen.getByText("Benitez, Tomas")).toBeInTheDocument();
+    expect(screen.getAllByText("Tomas Benitez")).toHaveLength(1);
     expect(screen.getByText("Viaje a Mendoza")).toBeInTheDocument();
     expect(screen.getAllByText(/Pago verificado/)).toHaveLength(2);
     expect(screen.getByText("Pago #501")).toBeInTheDocument();

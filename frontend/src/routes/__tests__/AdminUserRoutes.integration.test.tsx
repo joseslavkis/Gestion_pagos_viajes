@@ -23,7 +23,8 @@ function buildAdminUserDetailResponse(userId: number) {
     students: [
       {
         id: 88,
-        name: "Tomas Benitez",
+        name: "Tomas",
+        lastname: "Benitez",
         dni: "44555666",
       },
     ],

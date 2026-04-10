@@ -29,7 +29,7 @@ import java.util.Map;
 @Component
 public class TripExcelExporter {
 
-    private static final int FIXED_COLUMNS = 7;
+    private static final int FIXED_COLUMNS = 8;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd/MM/yyyy");
 
     public byte[] export(SpreadsheetDTO data, String currency) {
@@ -53,12 +53,13 @@ public class TripExcelExporter {
             var row1 = sheet.createRow(1);
 
             String[] fixedHeaders = {
-                    "Apellido",
-                    "Nombre",
+                    "Apellido alumno",
+                    "Nombre alumno",
+                    "DNI alumno",
+                    "Apellido responsable",
+                    "Nombre responsable",
                     "Email",
                     "Teléfono",
-                    "Alumno",
-                    "DNI Alumno",
                     "Completado"
             };
 
@@ -111,13 +112,14 @@ public class TripExcelExporter {
 
                 var row = sheet.createRow(rowIndex);
 
-                writeTextCell(row, 0, rowData.lastname(), baseStyle);
-                writeTextCell(row, 1, rowData.name(), baseStyle);
-                writeTextCell(row, 2, rowData.email(), baseStyle);
-                writeTextCell(row, 3, rowData.phone(), baseStyle);
-                writeTextCell(row, 4, rowData.studentName(), baseStyle);
-                writeTextCell(row, 5, rowData.studentDni(), baseStyle);
-                writeTextCell(row, 6, Boolean.TRUE.equals(rowData.userCompleted()) ? "Sí" : "No",
+                writeTextCell(row, 0, rowData.studentLastname(), baseStyle);
+                writeTextCell(row, 1, rowData.studentName(), baseStyle);
+                writeTextCell(row, 2, rowData.studentDni(), baseStyle);
+                writeTextCell(row, 3, rowData.lastname(), baseStyle);
+                writeTextCell(row, 4, rowData.name(), baseStyle);
+                writeTextCell(row, 5, rowData.email(), baseStyle);
+                writeTextCell(row, 6, rowData.phone(), baseStyle);
+                writeTextCell(row, 7, Boolean.TRUE.equals(rowData.userCompleted()) ? "Sí" : "No",
                         Boolean.TRUE.equals(rowData.userCompleted()) ? completedStyle : baseStyle);
 
                 for (int installmentNumber = 1; installmentNumber <= installmentsCount; installmentNumber++) {
@@ -246,12 +248,12 @@ public class TripExcelExporter {
     private static Map<InstallmentUiStatusCode, CellStyle> createStatusStyles(XSSFWorkbook workbook) {
         Map<InstallmentUiStatusCode, CellStyle> styles = new HashMap<>();
         styles.put(InstallmentUiStatusCode.PAID, createStatusStyle(workbook, "#d4edda", "#155724"));
-        styles.put(InstallmentUiStatusCode.UP_TO_DATE, createStatusStyle(workbook, "#d4edda", "#155724"));
+        styles.put(InstallmentUiStatusCode.UP_TO_DATE, createStatusStyle(workbook, "#e2e8f0", "#334155"));
         styles.put(InstallmentUiStatusCode.UNDER_REVIEW, createStatusStyle(workbook, "#fff3cd", "#856404"));
         styles.put(InstallmentUiStatusCode.DUE_SOON, createStatusStyle(workbook, "#fff3cd", "#856404"));
         styles.put(InstallmentUiStatusCode.OVERDUE, createStatusStyle(workbook, "#f8d7da", "#721c24"));
         styles.put(InstallmentUiStatusCode.RECEIPT_REJECTED, createStatusStyle(workbook, "#f8d7da", "#721c24"));
-        styles.put(InstallmentUiStatusCode.RETROACTIVE_DEBT, createStatusStyle(workbook, "#e2e8f0", "#334155"));
+        styles.put(InstallmentUiStatusCode.RETROACTIVE_DEBT, createStatusStyle(workbook, "#f8d7da", "#721c24"));
         return styles;
     }
 

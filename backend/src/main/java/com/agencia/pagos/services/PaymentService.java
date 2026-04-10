@@ -434,7 +434,7 @@ public class PaymentService {
                             installment.getTrip().getId(),
                             installment.getTrip().getName(),
                             student != null ? student.getId() : null,
-                            student != null ? student.getName() : null,
+                            StudentNameFormatter.displayName(student),
                             student != null ? student.getDni() : null,
                             installment.getId(),
                             installment.getInstallmentNumber(),
@@ -636,7 +636,7 @@ public class PaymentService {
                 submission.getTrip().getName(),
                 submission.getTrip().getCurrency(),
                 submission.getStudent() != null ? submission.getStudent().getId() : null,
-                submission.getStudent() != null ? submission.getStudent().getName() : null,
+                StudentNameFormatter.displayName(submission.getStudent()),
                 submission.getStudent() != null ? submission.getStudent().getDni() : null,
                 installments
         );
@@ -712,7 +712,7 @@ public class PaymentService {
                 submission.getUser().getName(),
                 submission.getUser().getLastname(),
                 submission.getUser().getEmail(),
-                submission.getStudent() != null ? submission.getStudent().getName() : null,
+                StudentNameFormatter.displayName(submission.getStudent()),
                 submission.getStudent() != null ? submission.getStudent().getDni() : null,
                 resolveSubmissionInstallments(submission, PaymentHistoryStatus.PENDING)
         );
@@ -849,7 +849,7 @@ public class PaymentService {
                 installment.getTrip().getName(),
                 installment.getTrip().getCurrency(),
                 student != null ? student.getId() : null,
-                student != null ? student.getName() : null,
+                StudentNameFormatter.displayName(student),
                 student != null ? student.getDni() : null,
                 sortedReceipts.stream().map(this::toLegacyInstallmentDTO).toList()
         );

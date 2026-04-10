@@ -539,9 +539,7 @@ public class TripService {
         }
 
         for (int i = 1; i <= trip.getInstallmentsCount(); i++) {
-            LocalDate rawDueDate = trip.getFirstDueDate().plusMonths(i - 1);
-            int validDay = Math.min(trip.getDueDay(), rawDueDate.lengthOfMonth());
-            LocalDate currentDueDate = rawDueDate.withDayOfMonth(validDay);
+            LocalDate currentDueDate = resolveInstallmentDueDate(trip, i);
             BigDecimal installmentCapital = amounts.get(i - 1);
 
             Installment installment = new Installment();
@@ -570,6 +568,16 @@ public class TripService {
 
         alreadyAssignedStudentIds.add(student.getId());
         return true;
+    }
+
+    private LocalDate resolveInstallmentDueDate(Trip trip, int installmentNumber) {
+        if (installmentNumber == 1) {
+            return trip.getFirstDueDate();
+        }
+
+        LocalDate baseDate = trip.getFirstDueDate().plusMonths(installmentNumber - 1L);
+        int validDay = Math.min(trip.getDueDay(), baseDate.lengthOfMonth());
+        return baseDate.withDayOfMonth(validDay);
     }
 
     private String buildBulkAssignMessage(int assignedCount, int pendingCount) {
@@ -602,7 +610,7 @@ public class TripService {
         return new TripStudentAdminDTO(
                 student.getDni(),
                 student.getId(),
-                student.getName(),
+                StudentNameFormatter.displayName(student),
                 parent != null ? parent.getId() : null,
                 parentFullName == null || parentFullName.isBlank() ? null : parentFullName,
                 parent != null ? parent.getEmail() : null,
@@ -694,13 +702,16 @@ public class TripService {
     }
 
     private static String normalizeSortBy(String sortBy) {
-        if ("name".equalsIgnoreCase(sortBy)) {
-            return "name";
+        if ("parent".equalsIgnoreCase(sortBy)) {
+            return "parent";
+        }
+        if ("student".equalsIgnoreCase(sortBy)) {
+            return "student";
         }
         if ("email".equalsIgnoreCase(sortBy)) {
             return "email";
         }
-        return "lastname";
+        return "student";
     }
 
     private static String normalizeOrder(String order) {
@@ -728,7 +739,11 @@ public class TripService {
                 row.lastname() == null ? "" : row.lastname(),
                 row.email() == null ? "" : row.email(),
                 row.phone() == null ? "" : row.phone(),
+                row.studentLastname() == null ? "" : row.studentLastname(),
                 row.studentName() == null ? "" : row.studentName(),
+                StudentNameFormatter.displayName(row.studentName(), row.studentLastname()) == null
+                        ? ""
+                        : StudentNameFormatter.displayName(row.studentName(), row.studentLastname()),
                 row.studentDni() == null ? "" : row.studentDni()
         ).toLowerCase();
 
@@ -739,18 +754,21 @@ public class TripService {
         Comparator<String> textComparator = Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER);
         Comparator<SpreadsheetRowDTO> comparator;
 
-        if ("name".equals(sortBy)) {
-            comparator = Comparator.comparing(SpreadsheetRowDTO::name, textComparator)
-                    .thenComparing(SpreadsheetRowDTO::lastname, textComparator);
+        if ("parent".equals(sortBy)) {
+            comparator = Comparator.comparing(SpreadsheetRowDTO::lastname, textComparator)
+                    .thenComparing(SpreadsheetRowDTO::name, textComparator);
         } else if ("email".equals(sortBy)) {
             comparator = Comparator.comparing(SpreadsheetRowDTO::email, textComparator)
                     .thenComparing(SpreadsheetRowDTO::lastname, textComparator);
         } else {
-            comparator = Comparator.comparing(SpreadsheetRowDTO::lastname, textComparator)
-                    .thenComparing(SpreadsheetRowDTO::name, textComparator);
+            comparator = Comparator.comparing(TripService::studentSortLastname, textComparator)
+                    .thenComparing(TripService::studentSortName, textComparator);
         }
 
         comparator = comparator
+                .thenComparing(SpreadsheetRowDTO::lastname, textComparator)
+                .thenComparing(SpreadsheetRowDTO::name, textComparator)
+                .thenComparing(SpreadsheetRowDTO::studentLastname, textComparator)
                 .thenComparing(SpreadsheetRowDTO::studentName, textComparator)
                 .thenComparing(SpreadsheetRowDTO::studentDni, textComparator)
                 .thenComparing(SpreadsheetRowDTO::userId, Comparator.nullsLast(Comparator.naturalOrder()))
@@ -760,7 +778,7 @@ public class TripService {
     }
 
     private SpreadsheetDTO getSpreadsheetUnpaged(Long tripId) {
-        return buildSpreadsheet(tripId, 0, Integer.MAX_VALUE, null, "lastname", "asc", null, false);
+        return buildSpreadsheet(tripId, 0, Integer.MAX_VALUE, null, "student", "asc", null, false);
     }
 
     private SpreadsheetDTO buildSpreadsheet(
@@ -835,6 +853,7 @@ public class TripService {
                             user.getLastname(),
                             user.getPhone(),
                             user.getEmail(),
+                            student != null ? student.getLastname() : null,
                             student != null ? student.getName() : null,
                             student != null ? student.getDni() : null,
                             userCompleted,
@@ -870,5 +889,27 @@ public class TripService {
                 totalElements,
                 pagedRows
         );
+    }
+
+    private static String studentSortLastname(SpreadsheetRowDTO row) {
+        if (row == null) {
+            return null;
+        }
+        if (row.studentLastname() == null || row.studentLastname().isBlank()
+                || row.studentName() == null || row.studentName().isBlank()) {
+            return row.lastname();
+        }
+        return row.studentLastname();
+    }
+
+    private static String studentSortName(SpreadsheetRowDTO row) {
+        if (row == null) {
+            return null;
+        }
+        if (row.studentLastname() == null || row.studentLastname().isBlank()
+                || row.studentName() == null || row.studentName().isBlank()) {
+            return row.name();
+        }
+        return row.studentName();
     }
 }

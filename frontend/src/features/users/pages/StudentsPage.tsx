@@ -24,8 +24,17 @@ const studentActionsStyle: CSSProperties = {
 
 const emptyStudent = (): StudentCreateDTO => ({
   name: "",
+  lastname: "",
   dni: "",
 });
+
+function formatStudentLabel(student: { name: string; lastname: string | null }) {
+  return student.lastname ? `${student.lastname}, ${student.name}` : student.name;
+}
+
+function formatStudentFullName(student: { name: string; lastname: string | null }) {
+  return student.lastname ? `${student.name} ${student.lastname}` : student.name;
+}
 
 export function StudentsPage() {
   const addStudent = useAddStudent();
@@ -53,7 +62,7 @@ export function StudentsPage() {
     try {
       const createdStudent = await addStudent.mutateAsync(parsed.data);
       setNewStudent(emptyStudent());
-      setStudentSuccessMessage(`El alumno ${createdStudent.name} se agrego con exito.`);
+      setStudentSuccessMessage(`El alumno ${formatStudentFullName(createdStudent)} se agrego con exito.`);
     } catch (currentError) {
       setStudentFormError(
         currentError instanceof Error ? currentError.message : "No se pudo agregar el alumno.",
@@ -98,7 +107,7 @@ export function StudentsPage() {
               {studentItems.map((student) => (
                 <div key={student.id} style={studentCardStyle}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                    <strong>{student.name}</strong>
+                    <strong>{formatStudentLabel(student)}</strong>
                     {deletingStudentId === student.id ? (
                       <div style={studentActionsStyle}>
                         <button
@@ -132,7 +141,7 @@ export function StudentsPage() {
                   <div>DNI: <strong>{student.dni}</strong></div>
                   {deletingStudentId === student.id ? (
                     <p className={styles.helperWarning}>
-                      ¿Eliminar a {student.name}? Esta acción no se puede deshacer si no tiene cuotas.
+                      ¿Eliminar a {formatStudentFullName(student)}? Esta acción no se puede deshacer si no tiene cuotas.
                     </p>
                   ) : null}
                 </div>
@@ -141,11 +150,19 @@ export function StudentsPage() {
 
             <form className={styles.form} onSubmit={handleAddStudent}>
               <label className={styles.formField}>
-                <span className={styles.label}>Nombre completo</span>
+                <span className={styles.label}>Nombre</span>
                 <input
                   className={styles.input}
                   value={newStudent.name}
                   onChange={(event) => setNewStudent((current) => ({ ...current, name: event.target.value }))}
+                />
+              </label>
+              <label className={styles.formField}>
+                <span className={styles.label}>Apellido</span>
+                <input
+                  className={styles.input}
+                  value={newStudent.lastname}
+                  onChange={(event) => setNewStudent((current) => ({ ...current, lastname: event.target.value }))}
                 />
               </label>
               <label className={styles.formField}>

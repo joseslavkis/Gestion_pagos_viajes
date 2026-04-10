@@ -4,6 +4,11 @@ import { useLocation } from "wouter";
 import { CommonLayout } from "@/components/CommonLayout/CommonLayout";
 import { RequestState } from "@/components/ui/RequestState/RequestState";
 import { PaymentDrawer } from "@/features/payments/components/PaymentDrawer";
+import {
+  getSpreadsheetParticipantParentLabel,
+  getSpreadsheetParticipantPrimaryLabel,
+  getSpreadsheetStatusVariant,
+} from "@/features/trips/lib/spreadsheet-ui";
 import { downloadSpreadsheetExcel, useSpreadsheet, useTrip } from "@/features/trips/services/trips-service";
 import type {
   SpreadsheetParams,
@@ -38,7 +43,7 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
     page: 0,
     size: 20,
     search: undefined,
-    sortBy: "lastname",
+    sortBy: "student",
     order: "asc",
     status: "",
   });
@@ -149,9 +154,11 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
 
   const handleOrderChange = (value: string) => {
     const orderMap: Record<string, Pick<SpreadsheetParams, "sortBy" | "order">> = {
-      "lastname-asc": { sortBy: "lastname", order: "asc" },
-      "lastname-desc": { sortBy: "lastname", order: "desc" },
-      "name-asc": { sortBy: "name", order: "asc" },
+      "student-asc": { sortBy: "student", order: "asc" },
+      "student-desc": { sortBy: "student", order: "desc" },
+      "parent-asc": { sortBy: "parent", order: "asc" },
+      "parent-desc": { sortBy: "parent", order: "desc" },
+      "email-asc": { sortBy: "email", order: "asc" },
     };
 
     const resolved = orderMap[value];
@@ -301,7 +308,7 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                 <input
                   type="search"
                   className={styles.searchInput}
-                  placeholder="Buscar por nombre, apellido o email..."
+                  placeholder="Buscar por alumno, responsable o email..."
                   value={rawSearch}
                   onChange={(event) => setRawSearch(event.target.value)}
                 />
@@ -330,17 +337,23 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
               <select
                 className={styles.select}
                 value={
-                  params.sortBy === "name"
-                    ? "name-asc"
-                    : params.sortBy === "lastname" && params.order === "desc"
-                      ? "lastname-desc"
-                      : "lastname-asc"
+                  params.sortBy === "student" && params.order === "desc"
+                    ? "student-desc"
+                    : params.sortBy === "parent" && params.order === "asc"
+                      ? "parent-asc"
+                      : params.sortBy === "parent" && params.order === "desc"
+                        ? "parent-desc"
+                        : params.sortBy === "email"
+                          ? "email-asc"
+                          : "student-asc"
                 }
                 onChange={(event) => handleOrderChange(event.target.value)}
               >
-                <option value="lastname-asc">Apellido A→Z</option>
-                <option value="lastname-desc">Apellido Z→A</option>
-                <option value="name-asc">Nombre A→Z</option>
+                <option value="student-asc">Alumno A→Z</option>
+                <option value="student-desc">Alumno Z→A</option>
+                <option value="parent-asc">Responsable A→Z</option>
+                <option value="parent-desc">Responsable Z→A</option>
+                <option value="email-asc">Email A→Z</option>
               </select>
             </div>
           </header>
@@ -396,17 +409,17 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                               }`}
                             >
                               <span className={styles.userMain}>
-                                {row.lastname}, {row.name}
+                                {getSpreadsheetParticipantPrimaryLabel(row)}
                                 {row.userCompleted ? (
                                   <span className={styles.completedBadge}>✓ Completado</span>
                                 ) : null}
                               </span>
+                              {getSpreadsheetParticipantParentLabel(row) ? (
+                                <span className={styles.userSecondary}>{getSpreadsheetParticipantParentLabel(row)}</span>
+                              ) : null}
                               <span className={styles.userSecondary}>{row.email}</span>
                               {row.phone ? (
                                 <span className={styles.userSecondary}>Tel: {row.phone}</span>
-                              ) : null}
-                              {row.studentName ? (
-                                <span className={styles.userSecondary}>Alumno: {row.studentName}</span>
                               ) : null}
                               {row.studentDni ? (
                                 <span className={styles.userSecondary}>DNI alumno: {row.studentDni}</span>
@@ -424,7 +437,7 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                                 );
                               }
 
-                              const statusClass = getStatusClass(installment.uiStatusTone);
+                              const statusClass = getStatusClass(getSpreadsheetStatusVariant(installment));
                               const icon = installment.uiStatusLabel;
 
                               return (
@@ -534,11 +547,13 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
 }
 
 function getStatusClass(
-  tone: SpreadsheetRowInstallmentDTO["uiStatusTone"],
+  tone: ReturnType<typeof getSpreadsheetStatusVariant>,
 ): { pill: string; dot: string } {
   switch (tone) {
     case "green":
       return { pill: styles.statusGreen, dot: styles.statusGreenDot };
+    case "neutral":
+      return { pill: styles.statusNeutral, dot: styles.statusNeutralDot };
     case "yellow":
       return { pill: styles.statusYellow, dot: styles.statusYellowDot };
     case "red":

@@ -39,13 +39,14 @@ function renderLoggedOutRoutes(path = "/signup") {
 async function completeSignupForm() {
   const user = userEvent.setup();
 
-  await user.type(screen.getByLabelText("Nombre"), "Clara");
-  await user.type(screen.getByLabelText("Apellido"), "Benitez");
+  await user.type(screen.getAllByLabelText("Nombre")[0], "Clara");
+  await user.type(screen.getAllByLabelText("Apellido")[0], "Benitez");
   await user.type(screen.getByLabelText("Email"), "clara@test.com");
   await user.type(screen.getByLabelText("Contraseña"), "Password123!");
   await user.type(screen.getByLabelText("DNI del padre / tutor"), "33444555");
   await user.type(screen.getByLabelText("Teléfono"), "1133344455");
-  await user.type(screen.getByLabelText("Nombre completo"), "Tomas Benitez");
+  await user.type(screen.getAllByLabelText("Nombre")[1], "Tomas");
+  await user.type(screen.getAllByLabelText("Apellido")[1], "Benitez");
   await user.type(screen.getByLabelText("DNI"), "44555666");
 
   return user;
@@ -73,7 +74,8 @@ describe("Auth routes integration", () => {
         HttpResponse.json([
           {
             id: 77,
-            name: "Tomas Benitez",
+            name: "Tomas",
+            lastname: "Benitez",
             dni: "44555666",
           },
         ]),
@@ -96,7 +98,8 @@ describe("Auth routes integration", () => {
         phone: "1133344455",
         students: [
           {
-            name: "Tomas Benitez",
+            name: "Tomas",
+            lastname: "Benitez",
             dni: "44555666",
           },
         ],

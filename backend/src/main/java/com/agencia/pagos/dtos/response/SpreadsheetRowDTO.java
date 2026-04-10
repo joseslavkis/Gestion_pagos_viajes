@@ -9,6 +9,7 @@ public record SpreadsheetRowDTO(
         String lastname,
         String phone,
         String email,
+        String studentLastname,
         String studentName,
         String studentDni,
         Boolean userCompleted,
