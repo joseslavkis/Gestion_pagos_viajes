@@ -378,7 +378,7 @@ describe("trips-service hooks", () => {
       page: 2,
       size: 50,
       search: "garcia",
-      sortBy: "lastname",
+      sortBy: "student",
       order: "asc",
       status: "RED",
     };
@@ -438,7 +438,7 @@ describe("trips-service hooks", () => {
         page: 0,
         size: 20,
         search: undefined,
-        sortBy: "lastname",
+        sortBy: "student",
         order: "asc",
         status: "",
       };
@@ -468,7 +468,8 @@ describe("trips-service hooks", () => {
             lastname: "García",
             phone: null,
             email: "juan@example.com",
-            studentName: null,
+            studentLastname: "Perez",
+            studentName: "Luca",
             studentDni: null,
             userCompleted: false,
             installments: [
@@ -503,6 +504,7 @@ describe("trips-service hooks", () => {
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
       expect(result.current.data?.tripName).toBe("Viaje 1");
       expect(result.current.data?.rows[0].lastname).toBe("García");
+      expect((result.current.data?.rows[0] as unknown as { studentLastname?: string }).studentLastname).toBe("Perez");
       expect(result.current.data?.rows[0].installments[0].status).toBe("GREEN");
     });
 

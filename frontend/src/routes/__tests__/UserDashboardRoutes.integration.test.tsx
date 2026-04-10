@@ -11,6 +11,7 @@ describe("User dashboard routes integration", () => {
     let studentItems: Array<{
       id: number;
       name: string;
+      lastname: string;
       dni: string;
     }> = [];
     let installmentsItems: Array<Record<string, unknown>> = [];
@@ -22,6 +23,7 @@ describe("User dashboard routes integration", () => {
       http.post("http://localhost:30002/api/v1/users/students", async ({ request }) => {
         const body = await request.json() as {
           name: string;
+          lastname: string;
           dni: string;
         };
 
@@ -37,7 +39,7 @@ describe("User dashboard routes integration", () => {
             tripName: "Bariloche",
             tripCurrency: "ARS",
             studentId: 900,
-            studentName: body.name,
+            studentName: `${body.name} ${body.lastname}`,
             studentDni: body.dni,
             installmentId: 101,
             installmentNumber: 1,
@@ -65,8 +67,11 @@ describe("User dashboard routes integration", () => {
     window.history.replaceState({}, "", "/mis-hijos");
     renderWithProviders(<AppRoutes />, "ROLE_USER");
 
-    fireEvent.change(await screen.findByLabelText("Nombre completo"), {
-      target: { value: "Lucia Perez" },
+    fireEvent.change((await screen.findAllByLabelText("Nombre"))[0], {
+      target: { value: "Lucia" },
+    });
+    fireEvent.change(screen.getByLabelText("Apellido"), {
+      target: { value: "Perez" },
     });
     fireEvent.change(screen.getByLabelText("DNI"), {
       target: { value: "40111222" },
@@ -75,7 +80,7 @@ describe("User dashboard routes integration", () => {
     fireEvent.click(screen.getByRole("button", { name: "Agregar hijo" }));
 
     expect(await screen.findByText("El alumno Lucia Perez se agrego con exito.")).toBeInTheDocument();
-    expect(await screen.findByText("Lucia Perez")).toBeInTheDocument();
+    expect(await screen.findByText("Perez, Lucia")).toBeInTheDocument();
   });
 
   it("muestra el error del backend si intenta reclamar un DNI no habilitado", async () => {
@@ -92,8 +97,11 @@ describe("User dashboard routes integration", () => {
     window.history.replaceState({}, "", "/mis-hijos");
     renderWithProviders(<AppRoutes />, "ROLE_USER");
 
-    fireEvent.change(await screen.findByLabelText("Nombre completo"), {
-      target: { value: "Lucia Perez" },
+    fireEvent.change((await screen.findAllByLabelText("Nombre"))[0], {
+      target: { value: "Lucia" },
+    });
+    fireEvent.change(screen.getByLabelText("Apellido"), {
+      target: { value: "Perez" },
     });
     fireEvent.change(screen.getByLabelText("DNI"), {
       target: { value: "40111222" },

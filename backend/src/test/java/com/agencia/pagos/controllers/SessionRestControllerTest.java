@@ -98,7 +98,7 @@ class SessionRestControllerTest extends ControllerIntegrationTestSupport {
                 uniqueEmail("pass-corta"), "Abc1",
                 "Test", "User", uniqueDni(),
                 "123456789",
-                List.of(new StudentCreateDTO("Alumno", uniqueDni()))
+                List.of(new StudentCreateDTO("Alumno", "Test", uniqueDni()))
         );
 
         mockMvc.perform(post("/api/v1/auth/signup")
@@ -113,7 +113,7 @@ class SessionRestControllerTest extends ControllerIntegrationTestSupport {
                 "email-invalido", "Password123!",
                 "Test", "User", uniqueDni(),
                 "123456789",
-                List.of(new StudentCreateDTO("Alumno", uniqueDni()))
+                List.of(new StudentCreateDTO("Alumno", "Test", uniqueDni()))
         );
 
         mockMvc.perform(post("/api/v1/auth/signup")

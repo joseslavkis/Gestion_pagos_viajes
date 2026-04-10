@@ -184,7 +184,7 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
         UserCreateDTO parentDto = buildValidUser("add-student-parent");
         TokenDTO parentTokens = signUp(parentDto);
 
-        StudentCreateDTO newStudentDto = new StudentCreateDTO("Luca Perez", uniqueDni());
+        StudentCreateDTO newStudentDto = new StudentCreateDTO("Luca", "Perez", uniqueDni());
         var firstTrip = seedPendingTrip("add-student-pending-1", List.of(newStudentDto.dni()));
         var secondTrip = seedPendingTrip("add-student-pending-2", List.of(newStudentDto.dni()));
 
@@ -193,7 +193,8 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(newStudentDto)))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.name").value("Luca Perez"))
+                .andExpect(jsonPath("$.name").value("Luca"))
+                .andExpect(jsonPath("$.lastname").value("Perez"))
                 .andExpect(jsonPath("$.dni").value(newStudentDto.dni()));
 
         User parent = userRepository.findByEmail(parentDto.email()).orElseThrow();
@@ -216,14 +217,15 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
                 seedPendingTrip("add-student-normalized-pending", List.of(canonicalDni));
 
                 String formattedDni = canonicalDni.substring(0, 2) + "." + canonicalDni.substring(2, 5) + "-" + canonicalDni.substring(5);
-                StudentCreateDTO newStudentDto = new StudentCreateDTO("Luca Perez", formattedDni);
+                StudentCreateDTO newStudentDto = new StudentCreateDTO("Luca", "Perez", formattedDni);
 
                 mockMvc.perform(post("/api/v1/users/students")
                                 .header("Authorization", "Bearer " + parentTokens.accessToken())
                                 .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(newStudentDto)))
                                 .andExpect(status().isCreated())
-                                .andExpect(jsonPath("$.name").value("Luca Perez"))
+                                .andExpect(jsonPath("$.name").value("Luca"))
+                                .andExpect(jsonPath("$.lastname").value("Perez"))
                                 .andExpect(jsonPath("$.dni").value(canonicalDni));
 
                 User parent = userRepository.findByEmail(parentDto.email()).orElseThrow();
@@ -238,7 +240,7 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
     @Test
     void addStudent_conDniNoPrecargado_devuelve409ConMensajeDelBackend() throws Exception {
         TokenDTO parentTokens = signUp(buildValidUser("add-student-no-pending"));
-        StudentCreateDTO newStudentDto = new StudentCreateDTO("Luca Perez", uniqueDni());
+        StudentCreateDTO newStudentDto = new StudentCreateDTO("Luca", "Perez", uniqueDni());
 
         mockMvc.perform(post("/api/v1/users/students")
                 .header("Authorization", "Bearer " + parentTokens.accessToken())
@@ -256,7 +258,7 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
         TokenDTO secondParentTokens = signUp(buildValidUser("add-student-already-claimed-b"));
 
         String claimedDni = firstParentDto.students().get(0).dni();
-        StudentCreateDTO duplicateStudentDto = new StudentCreateDTO("Alumno Duplicado", claimedDni);
+        StudentCreateDTO duplicateStudentDto = new StudentCreateDTO("Alumno", "Duplicado", claimedDni);
 
         mockMvc.perform(post("/api/v1/users/students")
                 .header("Authorization", "Bearer " + secondParentTokens.accessToken())
@@ -587,6 +589,7 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
                 "1133344455",
                 List.of(new StudentCreateDTO(
                         "Alumno " + name,
+                        lastname,
                         uniqueDni()
                 ))
         );

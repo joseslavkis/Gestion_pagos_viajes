@@ -13,6 +13,11 @@ import type {
   SpreadsheetRowDTO,
   SpreadsheetRowInstallmentDTO,
 } from "@/features/trips/types/trips-dtos";
+import {
+  getSpreadsheetParticipantParentLabel,
+  getSpreadsheetParticipantPrimaryLabel,
+  getSpreadsheetStatusVariant,
+} from "@/features/trips/lib/spreadsheet-ui";
 import { createGsapMatchMedia, getMotionProfile, gsap, useGSAP } from "@/lib/gsap";
 
 import styles from "@/features/trips/pages/SpreadsheetPage.module.css";
@@ -188,9 +193,14 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
             <div className={styles.drawerLabel}>Info de la cuota</div>
             <div>
               <div className={styles.strong}>
-                {row.lastname}, {row.name}
+                {getSpreadsheetParticipantPrimaryLabel(row)}
               </div>
+              {getSpreadsheetParticipantParentLabel(row) ? (
+                <div>{getSpreadsheetParticipantParentLabel(row)}</div>
+              ) : null}
               <div>{row.email}</div>
+              {row.phone ? <div>Tel: {row.phone}</div> : null}
+              {row.studentDni ? <div>DNI alumno: {row.studentDni}</div> : null}
               <div>
                 Nro cuota: <span className={styles.strong}>{installment.installmentNumber}</span>
               </div>
@@ -201,7 +211,7 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
                 Vencimiento: <span className={styles.strong}>{formatDate(installment.dueDate)}</span>
               </div>
               <div>
-                Estado: <StatusBadge tone={installment.uiStatusTone} label={installment.uiStatusLabel} />
+                Estado: <StatusBadge installment={installment} label={installment.uiStatusLabel} />
               </div>
             </div>
           </section>
@@ -284,12 +294,12 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
 }
 
 type StatusBadgeProps = {
-  tone: SpreadsheetRowInstallmentDTO["uiStatusTone"];
+  installment: Pick<SpreadsheetRowInstallmentDTO, "uiStatusCode">;
   label: SpreadsheetRowInstallmentDTO["uiStatusLabel"];
 };
 
-function StatusBadge({ tone, label }: StatusBadgeProps) {
-  const classes = getStatusClass(tone);
+function StatusBadge({ installment, label }: StatusBadgeProps) {
+  const classes = getStatusClass(getSpreadsheetStatusVariant(installment));
 
   return (
     <span className={`${styles.statusPill} ${classes.pill}`}>
@@ -300,11 +310,13 @@ function StatusBadge({ tone, label }: StatusBadgeProps) {
 }
 
 function getStatusClass(
-  tone: SpreadsheetRowInstallmentDTO["uiStatusTone"],
+  tone: ReturnType<typeof getSpreadsheetStatusVariant>,
 ): { pill: string; dot: string } {
   switch (tone) {
     case "green":
       return { pill: styles.statusGreen, dot: styles.statusGreenDot };
+    case "neutral":
+      return { pill: styles.statusNeutral, dot: styles.statusNeutralDot };
     case "yellow":
       return { pill: styles.statusYellow, dot: styles.statusYellowDot };
     case "red":

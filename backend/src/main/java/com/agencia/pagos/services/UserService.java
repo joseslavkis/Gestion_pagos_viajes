@@ -239,7 +239,10 @@ public class UserService implements UserDetailsService {
         }
 
         List<StudentDTO> students = user.getStudents().stream()
-                .sorted(Comparator.comparing(Student::getName, String.CASE_INSENSITIVE_ORDER))
+                .sorted(
+                        Comparator.comparing(Student::getLastname, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER))
+                                .thenComparing(Student::getName, String.CASE_INSENSITIVE_ORDER)
+                )
                 .map(this::toStudentDTO)
                 .toList();
 
@@ -354,7 +357,10 @@ public class UserService implements UserDetailsService {
     public List<StudentDTO> getStudentsForCurrentUser(String email) {
         User user = getUserByEmail(email);
         return studentRepository.findByParentId(user.getId()).stream()
-                .sorted(Comparator.comparing(Student::getName, String.CASE_INSENSITIVE_ORDER))
+                .sorted(
+                        Comparator.comparing(Student::getLastname, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER))
+                                .thenComparing(Student::getName, String.CASE_INSENSITIVE_ORDER)
+                )
                 .map(this::toStudentDTO)
                 .toList();
     }
@@ -423,6 +429,7 @@ public class UserService implements UserDetailsService {
         Student student = Student.builder()
                 .parent(user)
                 .name(dto.name())
+                .lastname(dto.lastname())
                 .dni(dni)
                 .build();
 
@@ -435,6 +442,7 @@ public class UserService implements UserDetailsService {
         return new StudentDTO(
                 student.getId(),
                 student.getName(),
+                student.getLastname(),
                 student.getDni()
         );
     }
@@ -470,7 +478,7 @@ public class UserService implements UserDetailsService {
                 installment.getTrip().getName(),
                 installment.getTrip().getCurrency(),
                 student != null ? student.getId() : null,
-                student != null ? student.getName() : null,
+                StudentNameFormatter.displayName(student),
                 student != null ? student.getDni() : null,
                 installment.getId(),
                 installment.getInstallmentNumber(),

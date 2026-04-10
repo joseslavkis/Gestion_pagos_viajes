@@ -68,7 +68,9 @@ export function AdminUserDetailPage({ userId }: AdminUserDetailPageProps) {
                     <div className={styles.studentGrid}>
                       {data.students.map((student) => (
                         <article key={student.id} className={styles.studentCard}>
-                          <h3 className={styles.cardTitle}>{student.name}</h3>
+                          <h3 className={styles.cardTitle}>
+                            {student.lastname ? `${student.lastname}, ${student.name}` : student.name}
+                          </h3>
                           <p className={styles.cardMeta}>DNI: {student.dni}</p>
                         </article>
                       ))}

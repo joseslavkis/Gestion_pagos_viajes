@@ -21,14 +21,14 @@ describe("StudentsPage", () => {
     server.use(
       http.get(STUDENTS_URL, () =>
         HttpResponse.json([
-          { id: 501, name: "Martina Slavkis", dni: "45678901" },
+          { id: 501, name: "Martina", lastname: "Slavkis", dni: "45678901" },
         ]),
       ),
     );
 
     renderWithProviders(<StudentsPage />);
 
-    expect(await screen.findByText("Martina Slavkis")).toBeInTheDocument();
+    expect(await screen.findByText("Slavkis, Martina")).toBeInTheDocument();
     expect(screen.getByText(/45678901/)).toBeInTheDocument();
   });
 
@@ -36,15 +36,18 @@ describe("StudentsPage", () => {
     server.use(
       http.get(STUDENTS_URL, () => HttpResponse.json([])),
       http.post(STUDENTS_URL, async ({ request }) => {
-        const body = await request.json() as { name: string; dni: string };
+        const body = await request.json() as { name: string; lastname: string; dni: string };
         return HttpResponse.json({ id: 999, ...body }, { status: 201 });
       }),
     );
 
     renderWithProviders(<StudentsPage />);
 
-    fireEvent.change(await screen.findByLabelText("Nombre completo"), {
-      target: { value: "Lucia Perez" },
+    fireEvent.change(await screen.findByLabelText("Nombre"), {
+      target: { value: "Lucia" },
+    });
+    fireEvent.change(screen.getByLabelText("Apellido"), {
+      target: { value: "Perez" },
     });
     fireEvent.change(screen.getByLabelText("DNI"), {
       target: { value: "40111222" },
@@ -61,7 +64,7 @@ describe("StudentsPage", () => {
     server.use(
       http.get(STUDENTS_URL, () => HttpResponse.json([])),
       http.post(STUDENTS_URL, async ({ request }) => {
-        const body = await request.json() as { name: string; dni: string };
+        const body = await request.json() as { name: string; lastname: string; dni: string };
         receivedDni = body.dni;
         return HttpResponse.json({ id: 999, ...body }, { status: 201 });
       }),
@@ -69,8 +72,11 @@ describe("StudentsPage", () => {
 
     renderWithProviders(<StudentsPage />);
 
-    fireEvent.change(await screen.findByLabelText("Nombre completo"), {
-      target: { value: "Lucia Perez" },
+    fireEvent.change(await screen.findByLabelText("Nombre"), {
+      target: { value: "Lucia" },
+    });
+    fireEvent.change(screen.getByLabelText("Apellido"), {
+      target: { value: "Perez" },
     });
     fireEvent.change(screen.getByLabelText("DNI"), {
       target: { value: "40.111.222" },

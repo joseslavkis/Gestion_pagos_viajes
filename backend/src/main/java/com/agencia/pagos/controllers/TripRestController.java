@@ -119,7 +119,7 @@ class TripRestController {
             @RequestParam(defaultValue = "0") Integer page,
             @RequestParam(defaultValue = "20") Integer size,
             @RequestParam(required = false) String search,
-            @RequestParam(defaultValue = "lastname") String sortBy,
+            @RequestParam(defaultValue = "student") String sortBy,
             @RequestParam(defaultValue = "asc") String order,
             @RequestParam(required = false) InstallmentStatus status
     ) {

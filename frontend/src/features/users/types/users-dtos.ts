@@ -29,6 +29,7 @@ export type UserProfileDTO = z.infer<typeof UserProfileDTOSchema>;
 export const StudentDTOSchema = z.object({
   id: z.number(),
   name: z.string(),
+  lastname: z.string().nullable(),
   dni: z.string(),
 });
 
