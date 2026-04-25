@@ -55,17 +55,21 @@ describe("StudentsPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Agregar hijo" }));
 
-    expect(await screen.findByText("El alumno Lucia Perez se agrego con exito.")).toBeInTheDocument();
+    expect(await screen.findByText("El alumno LUCIA PEREZ se agrego con exito.")).toBeInTheDocument();
   });
 
   it("normaliza DNI con puntos antes de enviarlo", async () => {
     let receivedDni = "";
+    let receivedName = "";
+    let receivedLastname = "";
 
     server.use(
       http.get(STUDENTS_URL, () => HttpResponse.json([])),
       http.post(STUDENTS_URL, async ({ request }) => {
         const body = await request.json() as { name: string; lastname: string; dni: string };
         receivedDni = body.dni;
+        receivedName = body.name;
+        receivedLastname = body.lastname;
         return HttpResponse.json({ id: 999, ...body }, { status: 201 });
       }),
     );
@@ -84,7 +88,9 @@ describe("StudentsPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Agregar hijo" }));
 
-    expect(await screen.findByText("El alumno Lucia Perez se agrego con exito.")).toBeInTheDocument();
+    expect(await screen.findByText("El alumno LUCIA PEREZ se agrego con exito.")).toBeInTheDocument();
     expect(receivedDni).toBe("40111222");
+    expect(receivedName).toBe("LUCIA");
+    expect(receivedLastname).toBe("PEREZ");
   });
 });

@@ -184,7 +184,7 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
         UserCreateDTO parentDto = buildValidUser("add-student-parent");
         TokenDTO parentTokens = signUp(parentDto);
 
-        StudentCreateDTO newStudentDto = new StudentCreateDTO("Luca", "Perez", uniqueDni());
+        StudentCreateDTO newStudentDto = new StudentCreateDTO("LuCa", "péRez", uniqueDni());
         var firstTrip = seedPendingTrip("add-student-pending-1", List.of(newStudentDto.dni()));
         var secondTrip = seedPendingTrip("add-student-pending-2", List.of(newStudentDto.dni()));
 
@@ -193,8 +193,8 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(newStudentDto)))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.name").value("Luca"))
-                .andExpect(jsonPath("$.lastname").value("Perez"))
+                .andExpect(jsonPath("$.name").value("LUCA"))
+                .andExpect(jsonPath("$.lastname").value("PÉREZ"))
                 .andExpect(jsonPath("$.dni").value(newStudentDto.dni()));
 
         User parent = userRepository.findByEmail(parentDto.email()).orElseThrow();
@@ -217,15 +217,15 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
                 seedPendingTrip("add-student-normalized-pending", List.of(canonicalDni));
 
                 String formattedDni = canonicalDni.substring(0, 2) + "." + canonicalDni.substring(2, 5) + "-" + canonicalDni.substring(5);
-                StudentCreateDTO newStudentDto = new StudentCreateDTO("Luca", "Perez", formattedDni);
+                StudentCreateDTO newStudentDto = new StudentCreateDTO("LuCa", "péRez", formattedDni);
 
                 mockMvc.perform(post("/api/v1/users/students")
                                 .header("Authorization", "Bearer " + parentTokens.accessToken())
                                 .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(newStudentDto)))
                                 .andExpect(status().isCreated())
-                                .andExpect(jsonPath("$.name").value("Luca"))
-                                .andExpect(jsonPath("$.lastname").value("Perez"))
+                                .andExpect(jsonPath("$.name").value("LUCA"))
+                                .andExpect(jsonPath("$.lastname").value("PÉREZ"))
                                 .andExpect(jsonPath("$.dni").value(canonicalDni));
 
                 User parent = userRepository.findByEmail(parentDto.email()).orElseThrow();
@@ -529,7 +529,7 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(userId))
                 .andExpect(jsonPath("$.email").value(userDto.email()))
-                .andExpect(jsonPath("$.students[0].name").value("Alumno Clara"))
+                .andExpect(jsonPath("$.students[0].name").value("ALUMNO CLARA"))
                 .andExpect(jsonPath("$.installments[0].tripName").value("Viaje a Mendoza"))
                 .andExpect(jsonPath("$.payments[0].adminObservation").value("Pago verificado"));
     }

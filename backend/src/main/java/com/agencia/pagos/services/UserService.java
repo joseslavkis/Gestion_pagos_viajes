@@ -46,6 +46,7 @@ import java.util.HashSet;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -428,14 +429,27 @@ public class UserService implements UserDetailsService {
 
         Student student = Student.builder()
                 .parent(user)
-                .name(dto.name())
-                .lastname(dto.lastname())
+                .name(normalizeStudentName(dto.name()))
+                .lastname(normalizeStudentName(dto.lastname()))
                 .dni(dni)
                 .build();
 
         Student savedStudent = studentRepository.save(student);
         tripService.materializePendingAssignmentsForStudent(savedStudent);
         return savedStudent;
+    }
+
+    private String normalizeStudentName(String value) {
+        if (value == null) {
+            return null;
+        }
+
+        String trimmed = value.trim();
+        if (trimmed.isEmpty()) {
+            return trimmed;
+        }
+
+        return trimmed.toUpperCase(Locale.ROOT);
     }
 
     private StudentDTO toStudentDTO(Student student) {

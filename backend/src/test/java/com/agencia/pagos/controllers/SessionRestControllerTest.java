@@ -93,6 +93,29 @@ class SessionRestControllerTest extends ControllerIntegrationTestSupport {
     }
 
     @Test
+    void signUp_guardaNombreYApellidoDelAlumnoEnMayusculas() throws Exception {
+        UserCreateDTO dto = new UserCreateDTO(
+                uniqueEmail("signup-student-uppercase"),
+                "Password123!",
+                "Test",
+                "User",
+                uniqueDni(),
+                "123456789",
+                List.of(new StudentCreateDTO("LuCa", "péRez", uniqueDni()))
+        );
+        seedPendingTrip("signup-student-uppercase", List.of(dto.students().get(0).dni()));
+
+        mockMvc.perform(post("/api/v1/auth/signup")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isCreated());
+
+        Student student = studentRepository.findByDni(dto.students().get(0).dni()).orElseThrow();
+        Assertions.assertEquals("LUCA", student.getName());
+        Assertions.assertEquals("PÉREZ", student.getLastname());
+    }
+
+    @Test
     void signUp_conPasswordCorta_devuelve400() throws Exception {
         UserCreateDTO dto = new UserCreateDTO(
                 uniqueEmail("pass-corta"), "Abc1",

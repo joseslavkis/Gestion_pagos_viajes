@@ -46,4 +46,18 @@ describe("SignupPage", () => {
 
     expect(result.success).toBe(false);
   });
+
+  it("normaliza nombre y apellido del alumno a mayusculas", () => {
+    const result = StudentCreateSchema.safeParse({
+      name: "LuCa",
+      lastname: "péRez",
+      dni: "40111222",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.name).toBe("LUCA");
+      expect(result.data.lastname).toBe("PÉREZ");
+    }
+  });
 });

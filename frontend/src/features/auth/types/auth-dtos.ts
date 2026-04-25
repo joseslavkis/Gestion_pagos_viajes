@@ -28,9 +28,17 @@ export const ResetPasswordSchema = z.object({
 
 export type ResetPasswordRequest = z.infer<typeof ResetPasswordSchema>;
 
+function normalizeUppercaseText(value: string) {
+  return value.trim().toUpperCase();
+}
+
 export const StudentCreateSchema = z.object({
-  name: z.string().trim().min(2, "El nombre debe tener al menos 2 caracteres"),
-  lastname: z.string().trim().min(2, "El apellido debe tener al menos 2 caracteres"),
+  name: z.string().transform(normalizeUppercaseText).pipe(
+    z.string().min(2, "El nombre debe tener al menos 2 caracteres"),
+  ),
+  lastname: z.string().transform(normalizeUppercaseText).pipe(
+    z.string().min(2, "El apellido debe tener al menos 2 caracteres"),
+  ),
   dni: z
     .string()
     .transform(normalizeStudentDniInput)
