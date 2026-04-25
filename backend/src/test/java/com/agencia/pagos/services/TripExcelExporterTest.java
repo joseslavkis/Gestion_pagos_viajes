@@ -91,10 +91,75 @@ class TripExcelExporterTest {
             assertEquals("Ana", sheet.getRow(2).getCell(4).getStringCellValue());
             assertEquals("ana@test.com", sheet.getRow(2).getCell(5).getStringCellValue());
 
-            assertEquals("Al día", sheet.getRow(2).getCell(10).getStringCellValue());
-            assertEquals("Pagada", sheet.getRow(2).getCell(13).getStringCellValue());
-            assertEquals("E2E8F0", hex(sheet.getRow(2).getCell(10).getCellStyle()));
-            assertEquals("D4EDDA", hex(sheet.getRow(2).getCell(13).getCellStyle()));
+            assertEquals("Abonado", sheet.getRow(1).getCell(10).getStringCellValue());
+            assertEquals("Restante", sheet.getRow(1).getCell(11).getStringCellValue());
+
+            assertEquals(1000.0, sheet.getRow(2).getCell(9).getNumericCellValue());
+            assertEquals(0.0, sheet.getRow(2).getCell(10).getNumericCellValue());
+            assertEquals(1000.0, sheet.getRow(2).getCell(11).getNumericCellValue());
+            assertEquals("Al día", sheet.getRow(2).getCell(12).getStringCellValue());
+
+            assertEquals(1000.0, sheet.getRow(2).getCell(14).getNumericCellValue());
+            assertEquals(1000.0, sheet.getRow(2).getCell(15).getNumericCellValue());
+            assertEquals(0.0, sheet.getRow(2).getCell(16).getNumericCellValue());
+            assertEquals("Pagada", sheet.getRow(2).getCell(17).getStringCellValue());
+            assertEquals("E2E8F0", hex(sheet.getRow(2).getCell(12).getCellStyle()));
+            assertEquals("D4EDDA", hex(sheet.getRow(2).getCell(17).getCellStyle()));
+        }
+    }
+
+    @Test
+    void export_includesPaidAndRemainingColumnsForPartialInstallment() throws IOException {
+        SpreadsheetDTO spreadsheet = new SpreadsheetDTO(
+                "Mendoza",
+                1,
+                0,
+                1L,
+                List.of(new SpreadsheetRowDTO(
+                        21L,
+                        31L,
+                        "Julia",
+                        "Tutor",
+                        "381555555",
+                        "julia@test.com",
+                        "Gomez",
+                        "Sofi",
+                        "40999888",
+                        false,
+                        List.of(
+                                new SpreadsheetRowInstallmentDTO(
+                                        3L,
+                                        1,
+                                        LocalDate.of(2026, 7, 10),
+                                        new BigDecimal("1000.00"),
+                                        BigDecimal.ZERO.setScale(2),
+                                        BigDecimal.ZERO.setScale(2),
+                                        new BigDecimal("1000.00"),
+                                        new BigDecimal("500.00"),
+                                        InstallmentStatus.YELLOW,
+                                        InstallmentUiStatusCode.UNDER_REVIEW,
+                                        "En revisión",
+                                        "yellow"
+                                )
+                        )
+                ))
+        );
+
+        byte[] excelBytes = exporter.export(spreadsheet, "ARS");
+
+        try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(excelBytes))) {
+            var sheet = workbook.getSheetAt(0);
+
+            assertEquals("Vencimiento", sheet.getRow(1).getCell(8).getStringCellValue());
+            assertEquals("Total", sheet.getRow(1).getCell(9).getStringCellValue());
+            assertEquals("Abonado", sheet.getRow(1).getCell(10).getStringCellValue());
+            assertEquals("Restante", sheet.getRow(1).getCell(11).getStringCellValue());
+            assertEquals("Estado", sheet.getRow(1).getCell(12).getStringCellValue());
+
+            assertEquals(1000.0, sheet.getRow(2).getCell(9).getNumericCellValue());
+            assertEquals(500.0, sheet.getRow(2).getCell(10).getNumericCellValue());
+            assertEquals(500.0, sheet.getRow(2).getCell(11).getNumericCellValue());
+            assertEquals("En revisión", sheet.getRow(2).getCell(12).getStringCellValue());
         }
     }
 

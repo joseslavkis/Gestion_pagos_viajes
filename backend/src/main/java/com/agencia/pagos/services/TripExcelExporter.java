@@ -30,6 +30,7 @@ import java.util.Map;
 public class TripExcelExporter {
 
     private static final int FIXED_COLUMNS = 8;
+    private static final int INSTALLMENT_COLUMNS = 5;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd/MM/yyyy");
 
     public byte[] export(SpreadsheetDTO data, String currency) {
@@ -76,17 +77,17 @@ public class TripExcelExporter {
             int installmentsCount = data.installmentsCount() == null ? 0 : data.installmentsCount();
             int dynamicStart = FIXED_COLUMNS;
             for (int installmentNumber = 1; installmentNumber <= installmentsCount; installmentNumber++) {
-                int startCol = dynamicStart + (installmentNumber - 1) * 3;
-                int endCol = startCol + 2;
+                int startCol = dynamicStart + (installmentNumber - 1) * INSTALLMENT_COLUMNS;
+                int endCol = startCol + INSTALLMENT_COLUMNS - 1;
 
                 Cell groupCell = row0.createCell(startCol);
                 groupCell.setCellStyle(groupHeaderStyle);
                 groupCell.setCellValue("Cuota " + installmentNumber);
 
-                Cell mergedMiddleCell = row0.createCell(startCol + 1);
-                mergedMiddleCell.setCellStyle(groupHeaderStyle);
-                Cell mergedLastCell = row0.createCell(startCol + 2);
-                mergedLastCell.setCellStyle(groupHeaderStyle);
+                for (int offset = 1; offset < INSTALLMENT_COLUMNS; offset++) {
+                    Cell mergedCell = row0.createCell(startCol + offset);
+                    mergedCell.setCellStyle(groupHeaderStyle);
+                }
 
                 sheet.addMergedRegion(new CellRangeAddress(0, 0, startCol, endCol));
 
@@ -98,7 +99,15 @@ public class TripExcelExporter {
                 totalHeader.setCellStyle(columnHeaderStyle);
                 totalHeader.setCellValue("Total");
 
-                Cell statusHeader = row1.createCell(startCol + 2);
+                Cell paidHeader = row1.createCell(startCol + 2);
+                paidHeader.setCellStyle(columnHeaderStyle);
+                paidHeader.setCellValue("Abonado");
+
+                Cell remainingHeader = row1.createCell(startCol + 3);
+                remainingHeader.setCellStyle(columnHeaderStyle);
+                remainingHeader.setCellValue("Restante");
+
+                Cell statusHeader = row1.createCell(startCol + 4);
                 statusHeader.setCellStyle(columnHeaderStyle);
                 statusHeader.setCellValue("Estado");
             }
@@ -123,27 +132,33 @@ public class TripExcelExporter {
                         Boolean.TRUE.equals(rowData.userCompleted()) ? completedStyle : baseStyle);
 
                 for (int installmentNumber = 1; installmentNumber <= installmentsCount; installmentNumber++) {
-                    int baseCol = dynamicStart + (installmentNumber - 1) * 3;
+                    int baseCol = dynamicStart + (installmentNumber - 1) * INSTALLMENT_COLUMNS;
                     SpreadsheetRowInstallmentDTO installment = findInstallment(rowData, installmentNumber);
 
                     if (installment == null) {
                         writeTextCell(row, baseCol, "", baseStyle);
                         writeNumberCell(row, baseCol + 1, null, amountStyle);
-                        writeTextCell(row, baseCol + 2, "", baseStyle);
+                        writeNumberCell(row, baseCol + 2, null, amountStyle);
+                        writeNumberCell(row, baseCol + 3, null, amountStyle);
+                        writeTextCell(row, baseCol + 4, "", baseStyle);
                         continue;
                     }
 
                     String dueDate = installment.dueDate() == null ? "" : installment.dueDate().format(DATE_FORMATTER);
+                    BigDecimal paidAmount = installment.paidAmount();
+                    BigDecimal remainingAmount = calculateRemaining(installment.totalDue(), paidAmount);
                     writeTextCell(row, baseCol, dueDate, baseStyle);
                     writeNumberCell(row, baseCol + 1, installment.totalDue(), amountStyle);
-                    writeTextCell(row, baseCol + 2, installment.uiStatusLabel(),
+                    writeNumberCell(row, baseCol + 2, paidAmount, amountStyle);
+                    writeNumberCell(row, baseCol + 3, remainingAmount, amountStyle);
+                    writeTextCell(row, baseCol + 4, installment.uiStatusLabel(),
                             statusStyles.getOrDefault(installment.uiStatusCode(), baseStyle));
                 }
 
                 rowIndex++;
             }
 
-            int totalColumns = FIXED_COLUMNS + installmentsCount * 3;
+            int totalColumns = FIXED_COLUMNS + installmentsCount * INSTALLMENT_COLUMNS;
             for (int col = 0; col < totalColumns; col++) {
                 if (col < FIXED_COLUMNS) {
                     sheet.autoSizeColumn(col);
@@ -152,7 +167,9 @@ public class TripExcelExporter {
                         sheet.setColumnWidth(col, minWidth);
                     }
                 } else {
-                    sheet.setColumnWidth(col, 12 * 256);
+                    int installmentOffset = (col - FIXED_COLUMNS) % INSTALLMENT_COLUMNS;
+                    int width = installmentOffset == 0 ? 14 : installmentOffset == 4 ? 16 : 12;
+                    sheet.setColumnWidth(col, width * 256);
                 }
             }
 
@@ -173,6 +190,13 @@ public class TripExcelExporter {
                 .filter(i -> i.installmentNumber() != null && i.installmentNumber() == installmentNumber)
                 .findFirst()
                 .orElse(null);
+    }
+
+    private static BigDecimal calculateRemaining(BigDecimal totalDue, BigDecimal paidAmount) {
+        if (totalDue == null) {
+            return null;
+        }
+        return totalDue.subtract(paidAmount == null ? BigDecimal.ZERO : paidAmount);
     }
 
     private static void writeTextCell(org.apache.poi.ss.usermodel.Row row, int col, String value, CellStyle style) {
