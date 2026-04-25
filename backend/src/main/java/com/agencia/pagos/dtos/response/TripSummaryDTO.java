@@ -8,6 +8,7 @@ public record TripSummaryDTO(
         Long id,
         String name,
         BigDecimal totalAmount,
+        BigDecimal firstInstallmentAmount,
         Currency currency,
         Integer installmentsCount,
         Integer assignedUsersCount,

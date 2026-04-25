@@ -2,6 +2,7 @@ import { z } from "zod";
 import { StatusResponseDTOSchema } from "@/lib/backend-dtos";
 import type { StatusResponseDTO } from "@/lib/backend-dtos";
 import { isCanonicalStudentDni, normalizeStudentDniInput } from "@/lib/dni";
+import { calculateInstallmentAmountPlan } from "@/features/trips/lib/installment-amounts";
 
 const MoneySchema = z.union([z.string(), z.number()])
   .transform((val) => {
@@ -42,6 +43,7 @@ export const TripDetailDTOSchema = z.object({
   id: z.number(),
   name: z.string(),
   totalAmount: MoneySchema,
+  firstInstallmentAmount: MoneySchema.default(0),
   currency: CurrencySchema,
   installmentsCount: z.number(),
   dueDay: z.number(),
@@ -59,6 +61,7 @@ export const TripSummaryDTOSchema = z.object({
   id: z.number(),
   name: z.string(),
   totalAmount: MoneySchema,
+  firstInstallmentAmount: MoneySchema.default(0),
   currency: CurrencySchema,
   installmentsCount: z.number(),
   assignedUsersCount: z.number(),
@@ -95,17 +98,34 @@ export { StatusResponseDTOSchema };
 export type { StatusResponseDTO };
 
 // Requests
-export const TripCreateDTOSchema = z.object({
-  name: z.string().min(2).max(100),
-  totalAmount: z.number().positive().max(Number.MAX_SAFE_INTEGER),
-  currency: CurrencySchema.default("ARS"),
-  installmentsCount: z.number().min(1).max(60),
-  dueDay: z.number().min(1).max(31),
-  yellowWarningDays: z.number().min(0).max(30),
-  fixedFineAmount: z.number().min(0).max(Number.MAX_SAFE_INTEGER),
-  retroactiveActive: z.boolean(),
-  firstDueDate: FutureOrPresentDateSchema,
-});
+export const TripCreateDTOSchema = z
+  .object({
+    name: z.string().min(2).max(100),
+    totalAmount: z.number().positive().max(Number.MAX_SAFE_INTEGER),
+    firstInstallmentAmount: z.number().positive().max(Number.MAX_SAFE_INTEGER),
+    currency: CurrencySchema.default("ARS"),
+    installmentsCount: z.number().int().min(1).max(60),
+    dueDay: z.number().int().min(1).max(31),
+    yellowWarningDays: z.number().int().min(0).max(30),
+    fixedFineAmount: z.number().min(0).max(Number.MAX_SAFE_INTEGER),
+    retroactiveActive: z.boolean(),
+    firstDueDate: FutureOrPresentDateSchema,
+  })
+  .superRefine((value, ctx) => {
+    try {
+      calculateInstallmentAmountPlan(
+        value.totalAmount,
+        value.firstInstallmentAmount,
+        value.installmentsCount,
+      );
+    } catch (error) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["firstInstallmentAmount"],
+        message: error instanceof Error ? error.message : "Primera cuota inválida.",
+      });
+    }
+  });
 
 export type TripCreateDTO = z.input<typeof TripCreateDTOSchema>;
 

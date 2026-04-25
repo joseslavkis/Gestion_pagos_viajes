@@ -7,6 +7,59 @@ import { server } from "@/test/msw-server";
 import { renderWithProviders } from "@/test/test-utils";
 
 describe("TripsAdminPage", () => {
+
+  it("crea un viaje enviando primera cuota y muestra disclaimer de cuotas restantes", async () => {
+    let createPayload: Record<string, unknown> | null = null;
+
+    server.use(
+      http.get("http://localhost:30002/api/v1/trips", () => HttpResponse.json([])),
+      http.post("http://localhost:30002/api/v1/trips", async ({ request }) => {
+        createPayload = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json(
+          {
+            id: 99,
+            name: "Bariloche 2027",
+            totalAmount: 1000,
+            firstInstallmentAmount: 300,
+            currency: "ARS",
+            installmentsCount: 4,
+            dueDay: 10,
+            yellowWarningDays: 5,
+            fixedFineAmount: 0,
+            retroactiveActive: false,
+            firstDueDate: "2027-01-10",
+            assignedUsersCount: 0,
+            assignedParticipantsCount: 0,
+          },
+          { status: 201 },
+        );
+      }),
+    );
+
+    renderWithProviders(<TripsAdminPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /crear primer viaje/i }));
+    fireEvent.change(screen.getByLabelText("Nombre del viaje"), { target: { value: "Bariloche 2027" } });
+    fireEvent.change(screen.getByLabelText("Monto total"), { target: { value: "1000" } });
+    fireEvent.change(screen.getByLabelText("Primera cuota"), { target: { value: "300" } });
+    fireEvent.change(screen.getByLabelText("Cantidad de cuotas"), { target: { value: "4" } });
+    fireEvent.change(screen.getByLabelText("Día de vencimiento"), { target: { value: "10" } });
+    fireEvent.change(screen.getByLabelText("Días de aviso amarillo"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Recargo fijo por mora"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("Primera fecha de vencimiento"), { target: { value: "2027-01-10" } });
+
+    expect(await screen.findByText(/Las demás cuotas serán de/i)).toHaveTextContent("$ 234,00");
+
+    fireEvent.click(screen.getByRole("button", { name: "Crear viaje" }));
+
+    await waitFor(() => expect(createPayload).not.toBeNull());
+    expect(createPayload).toMatchObject({
+      name: "Bariloche 2027",
+      totalAmount: 1000,
+      firstInstallmentAmount: 300,
+      installmentsCount: 4,
+    });
+  });
   it("muestra el error del backend con el DNI rechazado si ya estaba cargado en el viaje", async () => {
     server.use(
       http.get("http://localhost:30002/api/v1/trips", () =>

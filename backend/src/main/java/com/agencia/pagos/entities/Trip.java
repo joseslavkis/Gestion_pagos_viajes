@@ -35,6 +35,9 @@ public class Trip {
 	@Column(nullable = false, precision = 10, scale = 2)
 	private BigDecimal totalAmount;
 
+	@Column(name = "first_installment_amount", nullable = false, precision = 10, scale = 2)
+	private BigDecimal firstInstallmentAmount;
+
 	@Column(nullable = false)
 	private Integer installmentsCount;
 
@@ -93,6 +96,14 @@ public class Trip {
 
 	public void setTotalAmount(BigDecimal totalAmount) {
 		this.totalAmount = totalAmount;
+	}
+
+	public BigDecimal getFirstInstallmentAmount() {
+		return firstInstallmentAmount;
+	}
+
+	public void setFirstInstallmentAmount(BigDecimal firstInstallmentAmount) {
+		this.firstInstallmentAmount = firstInstallmentAmount;
 	}
 
 	public Integer getInstallmentsCount() {

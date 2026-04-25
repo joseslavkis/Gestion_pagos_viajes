@@ -175,6 +175,7 @@ abstract class ControllerIntegrationTestSupport {
         trip.setName("Trip setup " + prefix + "-" + System.nanoTime());
         trip.setCurrency(Currency.ARS);
         trip.setTotalAmount(new BigDecimal("120000.00"));
+        trip.setFirstInstallmentAmount(new BigDecimal("40000.00"));
         trip.setInstallmentsCount(3);
         trip.setDueDay(10);
         trip.setYellowWarningDays(5);

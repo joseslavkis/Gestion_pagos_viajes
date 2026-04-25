@@ -335,6 +335,7 @@ class TripServicePendingAssignmentsTest {
         trip.setName("Bariloche");
         trip.setCurrency(Currency.ARS);
         trip.setTotalAmount(new BigDecimal("300000.00"));
+        trip.setFirstInstallmentAmount(new BigDecimal("100000.00"));
         trip.setInstallmentsCount(3);
         trip.setDueDay(1);
         trip.setYellowWarningDays(5);

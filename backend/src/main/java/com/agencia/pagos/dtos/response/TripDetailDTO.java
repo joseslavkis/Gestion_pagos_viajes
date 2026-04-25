@@ -9,6 +9,7 @@ public record TripDetailDTO(
         Long id,
         String name,
         BigDecimal totalAmount,
+        BigDecimal firstInstallmentAmount,
         Integer installmentsCount,
         Integer dueDay,
         Integer yellowWarningDays,

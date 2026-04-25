@@ -8,6 +8,7 @@ import java.time.LocalDate;
 public record TripCreateDTO(
         @NotNull @Size(min = 2, max = 100) String name,
         @NotNull @Positive BigDecimal totalAmount,
+        @NotNull @Positive BigDecimal firstInstallmentAmount,
         @NotNull @Min(1) @Max(60) Integer installmentsCount,
         @NotNull @Min(1) @Max(31) Integer dueDay,
         @NotNull @Min(0) @Max(30) Integer yellowWarningDays,
@@ -26,6 +27,13 @@ public record TripCreateDTO(
                         Boolean retroactiveActive,
                         LocalDate firstDueDate
         ) {
-                this(name, totalAmount, installmentsCount, dueDay, yellowWarningDays, fixedFineAmount, retroactiveActive, Currency.ARS, firstDueDate);
+                this(name, totalAmount, defaultFirstInstallmentAmount(totalAmount, installmentsCount), installmentsCount, dueDay, yellowWarningDays, fixedFineAmount, retroactiveActive, Currency.ARS, firstDueDate);
+        }
+
+        private static BigDecimal defaultFirstInstallmentAmount(BigDecimal totalAmount, Integer installmentsCount) {
+                if (totalAmount == null || installmentsCount == null || installmentsCount <= 0) {
+                        return totalAmount;
+                }
+                return totalAmount.divide(BigDecimal.valueOf(installmentsCount), 2, java.math.RoundingMode.CEILING);
         }
 }

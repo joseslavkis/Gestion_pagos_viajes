@@ -34,11 +34,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -71,6 +69,7 @@ public class TripService {
     private final InstallmentStatusResolver installmentStatusResolver;
     private final InstallmentUiStatusResolver installmentUiStatusResolver;
     private final PaymentInstallmentOverlayService paymentInstallmentOverlayService;
+    private final TripInstallmentAmountCalculator tripInstallmentAmountCalculator;
     private final TripExcelExporter tripExcelExporter;
 
     @Autowired
@@ -88,6 +87,7 @@ public class TripService {
             InstallmentStatusResolver installmentStatusResolver,
             InstallmentUiStatusResolver installmentUiStatusResolver,
             PaymentInstallmentOverlayService paymentInstallmentOverlayService,
+            TripInstallmentAmountCalculator tripInstallmentAmountCalculator,
             TripExcelExporter tripExcelExporter
     ) {
         this.tripRepository = tripRepository;
@@ -103,6 +103,7 @@ public class TripService {
         this.installmentStatusResolver = installmentStatusResolver;
         this.installmentUiStatusResolver = installmentUiStatusResolver;
         this.paymentInstallmentOverlayService = paymentInstallmentOverlayService;
+        this.tripInstallmentAmountCalculator = tripInstallmentAmountCalculator;
         this.tripExcelExporter = tripExcelExporter;
     }
 
@@ -132,6 +133,7 @@ public class TripService {
                 installmentStatusResolver,
                 installmentUiStatusResolver,
                 null,
+                new TripInstallmentAmountCalculator(),
                 tripExcelExporter
         );
     }
@@ -156,6 +158,7 @@ public class TripService {
                 new InstallmentStatusResolver(),
                 new InstallmentUiStatusResolver(),
                 null,
+                new TripInstallmentAmountCalculator(),
                 new TripExcelExporter()
         );
     }
@@ -163,7 +166,14 @@ public class TripService {
     public TripDetailDTO createTrip(TripCreateDTO dto) {
         Trip trip = new Trip();
         trip.setName(dto.name());
+        BigDecimal firstInstallmentAmount = tripInstallmentAmountCalculator.normalizeFirstInstallmentAmount(
+                dto.totalAmount(),
+                dto.firstInstallmentAmount(),
+                dto.installmentsCount()
+        );
+
         trip.setTotalAmount(dto.totalAmount());
+        trip.setFirstInstallmentAmount(firstInstallmentAmount);
         trip.setInstallmentsCount(dto.installmentsCount());
         trip.setDueDay(dto.dueDay());
         trip.setYellowWarningDays(dto.yellowWarningDays());
@@ -307,7 +317,11 @@ public class TripService {
             throw new IllegalStateException(buildBulkAssignRejectedMessage(rejectedDnis));
         }
 
-        List<BigDecimal> amounts = splitAmount(trip.getTotalAmount(), trip.getInstallmentsCount());
+        List<BigDecimal> amounts = tripInstallmentAmountCalculator.calculate(
+                trip.getTotalAmount(),
+                trip.getFirstInstallmentAmount(),
+                trip.getInstallmentsCount()
+        );
         LocalDate now = LocalDate.now(BUSINESS_ZONE);
         List<Installment> installmentsToSave = new ArrayList<>();
         List<PendingTripStudent> pendingToSave = new ArrayList<>();
@@ -477,7 +491,11 @@ public class TripService {
                     tripId -> tripRepository.findByIdForUpdate(tripId)
                             .orElseThrow(() -> new EntityNotFoundException("Trip not found"))
             );
-            List<BigDecimal> amounts = splitAmount(trip.getTotalAmount(), trip.getInstallmentsCount());
+            List<BigDecimal> amounts = tripInstallmentAmountCalculator.calculate(
+                    trip.getTotalAmount(),
+                    trip.getFirstInstallmentAmount(),
+                    trip.getInstallmentsCount()
+            );
             Set<Long> alreadyAssignedParentIds = trip.getAssignedUsers().stream()
                     .map(User::getId)
                     .collect(Collectors.toSet());
@@ -503,21 +521,6 @@ public class TripService {
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
-
-    /**
-     * [C-1] Splits a total amount into {@code count} installments so that no
-     * cent is lost. All installments receive the truncated base value; the
-     * last one absorbs the remaining cents.
-     */
-    /* package-private for testing */
-    List<BigDecimal> splitAmount(BigDecimal total, int count) {
-        BigDecimal base = total.divide(BigDecimal.valueOf(count), 2, RoundingMode.DOWN);
-        BigDecimal distributed = base.multiply(BigDecimal.valueOf(count));
-        BigDecimal remainder = total.subtract(distributed);
-        List<BigDecimal> amounts = new ArrayList<>(Collections.nCopies(count, base));
-        amounts.set(count - 1, base.add(remainder));
-        return amounts;
-    }
 
     private boolean assignStudentToTrip(
             Trip trip,
@@ -627,6 +630,7 @@ public class TripService {
                 trip.getId(),
                 trip.getName(),
                 trip.getTotalAmount(),
+                trip.getFirstInstallmentAmount(),
                 trip.getCurrency(),
                 trip.getInstallmentsCount(),
                 trip.getAssignedUsers().size(),
@@ -640,6 +644,7 @@ public class TripService {
                 trip.getId(),
                 trip.getName(),
                 trip.getTotalAmount(),
+                trip.getFirstInstallmentAmount(),
                 trip.getInstallmentsCount(),
                 trip.getDueDay(),
                 trip.getYellowWarningDays(),

@@ -20,6 +20,7 @@ import {
   useUnassignTripStudent,
 } from "@/features/trips/services/trips-service";
 import { isCanonicalStudentDni, normalizeStudentDniInput } from "@/lib/dni";
+import { calculateInstallmentAmountPlan } from "@/features/trips/lib/installment-amounts";
 import { createGsapMatchMedia, getMotionProfile, gsap, useGSAP } from "@/lib/gsap";
 
 import styles from "./TripsAdminPage.module.css";
@@ -545,6 +546,7 @@ function TripModalCreate({ onClose }: TripModalCreateProps) {
   const createDefaults: TripCreateDTO = {
     name: "",
     totalAmount: 0,
+    firstInstallmentAmount: 0,
     currency: "ARS",
     installmentsCount: 1,
     dueDay: 1,
@@ -560,7 +562,8 @@ function TripModalCreate({ onClose }: TripModalCreateProps) {
       onChange: TripCreateDTOSchema,
     },
     onSubmit: async ({ value }) => {
-      await mutateAsync(value);
+      const payload = TripCreateDTOSchema.parse(value);
+      await mutateAsync(payload);
       onClose();
     },
   });
@@ -649,6 +652,18 @@ function TripModalCreate({ onClose }: TripModalCreateProps) {
 
               <div className={styles.inlineFields}>
                 <formData.AppField
+                  name="firstInstallmentAmount"
+                  children={(field) => (
+                    <field.NumberField
+                      label="Primera cuota"
+                      placeholder="Ej: 300000"
+                      autoComplete="off"
+                      min={0}
+                      step={0.01}
+                    />
+                  )}
+                />
+                <formData.AppField
                   name="installmentsCount"
                   children={(field) => (
                     <field.NumberField
@@ -688,6 +703,16 @@ function TripModalCreate({ onClose }: TripModalCreateProps) {
                   )}
                 />
               </div>
+
+              <formData.Subscribe
+                selector={(state) => ({
+                  currency: state.values.currency,
+                  firstInstallmentAmount: state.values.firstInstallmentAmount,
+                  installmentsCount: state.values.installmentsCount,
+                  totalAmount: state.values.totalAmount,
+                })}
+                children={(values) => <InstallmentAmountDisclaimer values={values} />}
+              />
 
               <formData.AppField
                 name="fixedFineAmount"
@@ -742,6 +767,38 @@ function TripModalCreate({ onClose }: TripModalCreateProps) {
       </RequestState>
     </ModalShell>
   );
+}
+
+type InstallmentAmountDisclaimerValues = Pick<
+  TripCreateDTO,
+  "currency" | "firstInstallmentAmount" | "installmentsCount" | "totalAmount"
+>;
+
+function InstallmentAmountDisclaimer({ values }: { values: InstallmentAmountDisclaimerValues }) {
+  try {
+    const plan = calculateInstallmentAmountPlan(
+      values.totalAmount,
+      values.firstInstallmentAmount,
+      values.installmentsCount,
+    );
+    const formatter = values.currency === "USD" ? usdFormatter : currencyFormatter;
+
+    if (plan.installmentsCount === 1) {
+      return (
+        <p className={styles.installmentDisclaimer}>
+          Este viaje tendrá una única cuota de {formatter.format(plan.firstInstallmentAmount)}.
+        </p>
+      );
+    }
+
+    return (
+      <p className={styles.installmentDisclaimer}>
+        Las demás cuotas serán de {formatter.format(plan.remainingInstallmentAmount ?? 0)} cada una.
+      </p>
+    );
+  } catch {
+    return null;
+  }
 }
 
 type AssignUsersModalProps = {

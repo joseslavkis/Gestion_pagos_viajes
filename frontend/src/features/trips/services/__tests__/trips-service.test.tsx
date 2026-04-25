@@ -113,6 +113,7 @@ describe("trips-service hooks", () => {
     const baseTrip: TripCreateDTO = {
       name: "Viaje test",
       totalAmount: 1000,
+      firstInstallmentAmount: 100,
       installmentsCount: 10,
       dueDay: 5,
       yellowWarningDays: 3,

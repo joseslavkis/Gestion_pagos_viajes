@@ -357,6 +357,7 @@ class InstallmentReminderSchedulerTest {
         trip.setRetroactiveActive(false);
         trip.setFirstDueDate(LocalDate.now(BUSINESS_ZONE));
         trip.setTotalAmount(new BigDecimal("400.00"));
+        trip.setFirstInstallmentAmount(new BigDecimal("100.00"));
         return trip;
     }
 

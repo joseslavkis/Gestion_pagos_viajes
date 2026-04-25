@@ -472,6 +472,7 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
         Trip trip = new Trip();
         trip.setName("Viaje a Mendoza");
         trip.setTotalAmount(BigDecimal.valueOf(120000));
+        trip.setFirstInstallmentAmount(BigDecimal.valueOf(40000));
         trip.setInstallmentsCount(3);
         trip.setDueDay(10);
         trip.setYellowWarningDays(5);

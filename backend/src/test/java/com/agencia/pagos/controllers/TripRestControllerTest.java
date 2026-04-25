@@ -29,6 +29,7 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.test.web.servlet.MvcResult;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -106,6 +107,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
         Trip trip = new Trip();
         trip.setName(name);
         trip.setTotalAmount(totalAmount);
+        trip.setFirstInstallmentAmount(totalAmount.divide(BigDecimal.valueOf(installmentsCount), 2, java.math.RoundingMode.CEILING));
         trip.setInstallmentsCount(installmentsCount);
         trip.setDueDay(dueDay);
         trip.setYellowWarningDays(5);
@@ -126,7 +128,32 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 .content(objectMapper.writeValueAsString(dto)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").exists())
-                .andExpect(jsonPath("$.name").value("Viaje a Bariloche"));
+                .andExpect(jsonPath("$.name").value("Viaje a Bariloche"))
+                .andExpect(jsonPath("$.firstInstallmentAmount").value(83333.34));
+    }
+
+    @Test
+    void createTrip_primeraCuotaMayorAlTotal_devuelve400() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-invalid-first"));
+        TripCreateDTO dto = new TripCreateDTO(
+                "Viaje invalido",
+                new BigDecimal("100.00"),
+                new BigDecimal("100.01"),
+                1,
+                10,
+                5,
+                BigDecimal.ZERO,
+                false,
+                com.agencia.pagos.entities.Currency.ARS,
+                LocalDate.now().plusMonths(1)
+        );
+
+        mockMvc.perform(post("/api/v1/trips")
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(containsString("La primera cuota no puede superar el monto total del viaje")));
     }
 
     @Test
@@ -166,6 +193,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
         Trip trip = new Trip();
         trip.setName("Viaje a Carlos Paz");
         trip.setTotalAmount(BigDecimal.valueOf(500000));
+        trip.setFirstInstallmentAmount(BigDecimal.valueOf(83333.34));
         trip.setInstallmentsCount(6);
         trip.setDueDay(15);
         trip.setYellowWarningDays(3);
@@ -197,6 +225,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
         Trip trip = new Trip();
         trip.setName("Original Name");
         trip.setTotalAmount(BigDecimal.valueOf(100));
+        trip.setFirstInstallmentAmount(BigDecimal.valueOf(100));
         trip.setInstallmentsCount(1);
         trip.setDueDay(1);
         trip.setYellowWarningDays(1);
@@ -223,6 +252,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
         Trip trip = new Trip();
         trip.setName("To Delete");
         trip.setTotalAmount(BigDecimal.valueOf(100));
+        trip.setFirstInstallmentAmount(BigDecimal.valueOf(100));
         trip.setInstallmentsCount(1);
         trip.setDueDay(1);
         trip.setYellowWarningDays(1);
@@ -250,6 +280,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
         Trip trip = new Trip();
         trip.setName("Viaje Retroactivo");
         trip.setTotalAmount(BigDecimal.valueOf(120000));
+        trip.setFirstInstallmentAmount(BigDecimal.valueOf(10000));
         trip.setInstallmentsCount(12); // Base capital = 10000
         trip.setDueDay(10);
         trip.setYellowWarningDays(5);
@@ -315,6 +346,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
         Trip trip = new Trip();
         trip.setName("Viaje No Retroactivo");
         trip.setTotalAmount(BigDecimal.valueOf(120000));
+        trip.setFirstInstallmentAmount(BigDecimal.valueOf(10000));
         trip.setInstallmentsCount(12); // Base capital = 10000
         trip.setDueDay(10);
         trip.setYellowWarningDays(5);
@@ -635,7 +667,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             }
 
             @Test
-            void assignUsersInBulk_totalNoDivisible_ultimaCuotaAbsorbeResto() throws Exception {
+            void assignUsersInBulk_totalNoDivisible_noCompensaRestoEnLaUltimaCuota() throws Exception {
             TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-bulk-remainder"));
             UserCreateDTO userDto = buildValidUser("user-bulk-remainder");
             signUp(userDto);
@@ -663,15 +695,55 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 .toList();
 
             assertEquals(3, userInstallments.size());
-            assertEquals(new BigDecimal("33.33"), userInstallments.get(0).getCapitalAmount());
-            assertEquals(new BigDecimal("33.33"), userInstallments.get(1).getCapitalAmount());
-            assertEquals(new BigDecimal("33.34"), userInstallments.get(2).getCapitalAmount());
-
-            BigDecimal total = userInstallments.stream()
-                .map(Installment::getCapitalAmount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-            assertEquals(0, total.compareTo(new BigDecimal("100.00")));
+            assertEquals(new BigDecimal("33.34"), userInstallments.get(0).getCapitalAmount());
+            assertEquals(new BigDecimal("34.00"), userInstallments.get(1).getCapitalAmount());
+            assertEquals(new BigDecimal("34.00"), userInstallments.get(2).getCapitalAmount());
             }
+
+    @Test
+    void assignUsersInBulk_viajeConPrimeraCuotaCustom_generaRestantesIgualesSinCompensarUltima() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-custom-first-installment"));
+        UserCreateDTO userDto = buildValidUser("user-custom-first-installment");
+        signUp(userDto);
+
+        TripCreateDTO tripDto = new TripCreateDTO(
+                "Trip Custom First",
+                new BigDecimal("1000.00"),
+                new BigDecimal("300.00"),
+                4,
+                10,
+                5,
+                BigDecimal.ZERO,
+                false,
+                com.agencia.pagos.entities.Currency.ARS,
+                LocalDate.now().plusMonths(2)
+        );
+
+        MvcResult createResult = mockMvc.perform(post("/api/v1/trips")
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(tripDto)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.firstInstallmentAmount").value(300.00))
+                .andReturn();
+
+        long tripId = objectMapper.readTree(createResult.getResponse().getContentAsString()).get("id").asLong();
+
+        mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", tripId)
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UserAssignBulkDTO(List.of(userDto.students().get(0).dni())))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assignedCount").value(1));
+
+        mockMvc.perform(get("/api/v1/trips/{id}/spreadsheet", tripId)
+                        .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rows[0].installments[0].capitalAmount").value(300.00))
+                .andExpect(jsonPath("$.rows[0].installments[1].capitalAmount").value(234.00))
+                .andExpect(jsonPath("$.rows[0].installments[2].capitalAmount").value(234.00))
+                .andExpect(jsonPath("$.rows[0].installments[3].capitalAmount").value(234.00));
+    }
 
             @Test
             void assignUsersInBulk_dueDay31_ajustaFechaAlUltimoDiaDelMes() throws Exception {

@@ -154,6 +154,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
         trip.setName("Trip payment " + prefix);
         trip.setCurrency(currency);
         trip.setTotalAmount(BigDecimal.valueOf(120000));
+        trip.setFirstInstallmentAmount(BigDecimal.valueOf(10000));
         trip.setInstallmentsCount(12);
         trip.setDueDay(10);
         trip.setYellowWarningDays(5);
