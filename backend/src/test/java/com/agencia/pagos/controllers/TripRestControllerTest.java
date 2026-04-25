@@ -20,6 +20,7 @@ import com.agencia.pagos.repositories.PaymentReceiptRepository;
 import com.agencia.pagos.repositories.StudentRepository;
 import com.agencia.pagos.repositories.TripRepository;
 import com.agencia.pagos.repositories.UserRepository;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,6 +32,7 @@ import org.springframework.http.MediaType;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.io.ByteArrayInputStream;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Comparator;
@@ -1089,6 +1091,62 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 .andExpect(jsonPath("$.rows", hasSize(greaterThan(0))))
                 .andExpect(jsonPath("$.rows[0].installments[?(@.status == 'RED')]", hasSize(greaterThan(0))));
             }
+
+    @Test
+    void spreadsheetYExport_muestranResponsableEnMayusculas() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-spreadsheet-uppercase"));
+
+        UserCreateDTO userDto = new UserCreateDTO(
+                uniqueEmail("user-spreadsheet-uppercase"),
+                "Password123!",
+                "juaN",
+                "péRez",
+                uniqueDni(),
+                "123456789",
+                List.of(new com.agencia.pagos.dtos.request.StudentCreateDTO(
+                        "Alumno",
+                        "Perez",
+                        uniqueDni()
+                ))
+        );
+        signUp(userDto);
+
+        Trip trip = buildTripForBulk(
+                "Trip Spreadsheet Uppercase",
+                BigDecimal.valueOf(4500),
+                2,
+                10,
+                BigDecimal.valueOf(100),
+                false,
+                LocalDate.now().plusMonths(1)
+        );
+
+        mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UserAssignBulkDTO(List.of(userDto.students().get(0).dni())))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assignedCount").value(1));
+
+        mockMvc.perform(get("/api/v1/trips/{id}/spreadsheet", trip.getId())
+                        .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rows[0].name").value("JUAN"))
+                .andExpect(jsonPath("$.rows[0].lastname").value("PÉREZ"));
+
+        byte[] responseBody = mockMvc.perform(get("/api/v1/trips/{id}/spreadsheet/export", trip.getId())
+                        .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsByteArray();
+
+        try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(responseBody))) {
+            var sheet = workbook.getSheetAt(0);
+            assertEquals("PÉREZ", sheet.getRow(2).getCell(3).getStringCellValue());
+            assertEquals("JUAN", sheet.getRow(2).getCell(4).getStringCellValue());
+        }
+    }
 
     @Test
     void exportSpreadsheet_siendoAdmin_devuelve200ConContentDisposition() throws Exception {

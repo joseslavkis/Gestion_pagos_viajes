@@ -57,7 +57,7 @@ class TripServiceSpreadsheetTest {
         Installment earlyInstallment = buildInstallment(
                 102L,
                 trip,
-                buildParent(2L, "Jose", "Benitez", "jose@test.com"),
+                buildParent(2L, "joSe", "beniTez", "jose@test.com"),
                 buildStudent(12L, "Luca", "Acosta", "40222333"),
                 1
         );
@@ -70,6 +70,8 @@ class TripServiceSpreadsheetTest {
         assertEquals(2, result.rows().size());
         assertEquals("Luca", result.rows().get(0).studentName());
         assertEquals("Acosta", result.rows().get(0).studentLastname());
+        assertEquals("JOSE", result.rows().get(0).name());
+        assertEquals("BENITEZ", result.rows().get(0).lastname());
         assertEquals("Bruno", result.rows().get(1).studentName());
     }
 

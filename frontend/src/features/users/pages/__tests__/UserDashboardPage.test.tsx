@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { UserDashboardPage } from "@/features/users/pages/UserDashboardPage";
 import { server } from "@/test/msw-server";
@@ -133,7 +133,7 @@ describe("UserDashboardPage", () => {
         return HttpResponse.json({
           anchorInstallmentId: body.anchorInstallmentId,
           tripCurrency: "ARS",
-          paymentCurrency: "USD",
+          paymentCurrency: body.paymentCurrency,
           reportedAmount: Number(body.reportedAmount),
           maxAllowedAmount: 400,
           exchangeRate: null,
@@ -179,7 +179,7 @@ describe("UserDashboardPage", () => {
             reportedAmount: 350,
             approvedAmount: 0,
             rejectedAmount: 0,
-            paymentCurrency: "USD",
+            paymentCurrency: "ARS",
             exchangeRate: null,
             amountInTripCurrency: 350,
             approvedAmountInTripCurrency: 0,
@@ -187,9 +187,9 @@ describe("UserDashboardPage", () => {
             paymentMethod: "BANK_TRANSFER",
             fileKey: "",
             adminObservation: null,
-            bankAccountId: 2,
-            bankAccountDisplayName: "ICBC - Cuenta en dólares",
-            bankAccountAlias: "ICBC.USD",
+            bankAccountId: 1,
+            bankAccountDisplayName: "ICBC - Cuenta en pesos",
+            bankAccountAlias: "ICBC.PESOS",
             tripId: 88,
             tripName: "Bariloche 2026",
             tripCurrency: "ARS",
@@ -250,7 +250,7 @@ describe("UserDashboardPage", () => {
       expect(previewPayload).toMatchObject({
         anchorInstallmentId: 201,
         reportedAmount: 350,
-        paymentCurrency: "USD",
+        paymentCurrency: "ARS",
       }),
     );
 
@@ -273,9 +273,134 @@ describe("UserDashboardPage", () => {
       expect(paymentPayload).toMatchObject({
         anchorInstallmentId: "201",
         reportedAmount: "350",
-        bankAccountId: "2",
+        bankAccountId: "1",
       }),
     );
+  });
+
+  it("actualiza automaticamente el monto a reportar al cambiar de pesos a dolares", async () => {
+    server.use(
+      http.get(INSTALLMENTS_URL, () =>
+        HttpResponse.json([
+          makeInstallment({
+            installmentId: 201,
+            installmentNumber: 1,
+            dueDate: "2026-06-25",
+            totalDue: 200,
+            paidAmount: 0,
+          }),
+        ]),
+      ),
+      http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount, usdBankAccount])),
+      http.post(PREVIEW_URL, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        const paymentCurrency = body.paymentCurrency;
+        const reportedAmount = Number(body.reportedAmount);
+
+        if (paymentCurrency === "USD") {
+          return HttpResponse.json({
+            anchorInstallmentId: body.anchorInstallmentId,
+            tripCurrency: "ARS",
+            paymentCurrency: "USD",
+            reportedAmount,
+            maxAllowedAmount: 0.4,
+            exchangeRate: 1000,
+            totalPendingAmountInTripCurrency: 200,
+            amountInTripCurrency: reportedAmount * 1000,
+            reportedPaymentDate: body.reportedPaymentDate,
+            installments: [
+              {
+                receiptId: null,
+                installmentId: 201,
+                installmentNumber: 1,
+                dueDate: "2026-06-25",
+                totalDue: 200,
+                paidAmount: 0,
+                remainingAmount: 200,
+                reportedAmount,
+                amountInTripCurrency: reportedAmount * 1000,
+                status: null,
+              },
+            ],
+          });
+        }
+
+        return HttpResponse.json({
+          anchorInstallmentId: body.anchorInstallmentId,
+          tripCurrency: "ARS",
+          paymentCurrency: "ARS",
+          reportedAmount,
+          maxAllowedAmount: 200,
+          exchangeRate: null,
+          totalPendingAmountInTripCurrency: 200,
+          amountInTripCurrency: reportedAmount,
+          reportedPaymentDate: body.reportedPaymentDate,
+          installments: [
+            {
+              receiptId: null,
+              installmentId: 201,
+              installmentNumber: 1,
+              dueDate: "2026-06-25",
+              totalDue: 200,
+              paidAmount: 0,
+              remainingAmount: 200,
+              reportedAmount,
+              amountInTripCurrency: reportedAmount,
+              status: null,
+            },
+          ],
+        });
+      }),
+    );
+
+    renderWithProviders(<UserDashboardPage />);
+
+    const amountInput = await screen.findByLabelText("Monto a reportar");
+    const currencySelect = screen.getByLabelText("Moneda en que pagaste");
+
+    await waitFor(() => expect(amountInput).toHaveValue(200));
+    expect(currencySelect).toHaveValue("ARS");
+
+    fireEvent.change(currencySelect, { target: { value: "USD" } });
+
+    await waitFor(() => {
+      expect(currencySelect).toHaveValue("USD");
+      expect(amountInput).toHaveValue(0.2);
+    });
+  });
+
+  it("usa la fecha actual en horario argentino para la fecha de pago", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-24T02:30:00.000Z"));
+
+    try {
+      server.use(
+        http.get(INSTALLMENTS_URL, () => HttpResponse.json([makeInstallment()])),
+        http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount])),
+        http.post(PREVIEW_URL, async ({ request }) => {
+          const body = (await request.json()) as Record<string, unknown>;
+
+          return HttpResponse.json({
+            anchorInstallmentId: body.anchorInstallmentId,
+            tripCurrency: "ARS",
+            paymentCurrency: "ARS",
+            reportedAmount: Number(body.reportedAmount),
+            maxAllowedAmount: 200,
+            exchangeRate: null,
+            totalPendingAmountInTripCurrency: 200,
+            amountInTripCurrency: Number(body.reportedAmount),
+            reportedPaymentDate: body.reportedPaymentDate,
+            installments: [],
+          });
+        }),
+      );
+
+      const view = renderWithProviders(<UserDashboardPage />);
+      expect(screen.getByLabelText("Fecha de pago")).toHaveValue("2026-04-23");
+      view.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("bloquea el envio cuando el grupo tiene comprobantes pendientes de revision", async () => {

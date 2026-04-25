@@ -42,6 +42,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
@@ -609,7 +610,7 @@ public class TripService {
     private TripStudentAdminDTO toTripStudentAdminDTO(Student student, User parent, String status, int installmentsCount) {
         String parentFullName = parent == null
                 ? null
-                : (parent.getName() + " " + parent.getLastname()).trim();
+                : formatResponsibleFullName(parent);
         return new TripStudentAdminDTO(
                 student.getDni(),
                 student.getId(),
@@ -854,8 +855,8 @@ public class TripService {
                     return new SpreadsheetRowDTO(
                             user.getId(),
                             student != null ? student.getId() : null,
-                            user.getName(),
-                            user.getLastname(),
+                            normalizeResponsibleName(user.getName()),
+                            normalizeResponsibleName(user.getLastname()),
                             user.getPhone(),
                             user.getEmail(),
                             student != null ? student.getLastname() : null,
@@ -916,5 +917,29 @@ public class TripService {
             return row.name();
         }
         return row.studentName();
+    }
+
+    private static String formatResponsibleFullName(User user) {
+        String fullname = List.of(
+                        normalizeResponsibleName(user.getName()),
+                        normalizeResponsibleName(user.getLastname())
+                ).stream()
+                .filter(part -> part != null && !part.isBlank())
+                .collect(Collectors.joining(" "))
+                .trim();
+        return fullname.isBlank() ? null : fullname;
+    }
+
+    private static String normalizeResponsibleName(String value) {
+        if (value == null) {
+            return null;
+        }
+
+        String trimmed = value.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+
+        return trimmed.toUpperCase(Locale.ROOT);
     }
 }

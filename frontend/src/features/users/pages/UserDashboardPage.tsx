@@ -13,12 +13,20 @@ import {
   useRegisterPayment,
 } from "@/features/payments/services/payments-service";
 import type {
+  Currency,
   PaymentMethod,
+  PaymentBatchPreviewDTO,
   UserInstallmentDTO,
 } from "@/features/payments/types/payments-dtos";
+import { PaymentBatchPreviewDTOSchema } from "@/features/payments/types/payments-dtos";
 import { type ReceiptSuccessData, ReceiptSuccessScreen } from "@/features/payments/components/ReceiptSuccessScreen";
+import { ApiError } from "@/lib/api-error";
+import { apiPost } from "@/lib/api-client";
+import { useToken } from "@/lib/session";
 
 import styles from "./UserDashboardPage.module.css";
+
+const ARGENTINA_TIME_ZONE = "America/Argentina/Buenos_Aires";
 
 const currencyFormatter = new Intl.NumberFormat("es-AR", {
   style: "currency",
@@ -31,11 +39,18 @@ const usdFormatter = new Intl.NumberFormat("es-AR", {
 });
 
 const dateFormatter = new Intl.DateTimeFormat("es-AR", {
+  timeZone: "UTC",
   day: "2-digit",
   month: "2-digit",
   year: "numeric",
 });
 
+const argentinaDateInputFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: ARGENTINA_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
 
 type InstallmentGroup = {
   groupKey: string;
@@ -48,11 +63,29 @@ type InstallmentGroup = {
 };
 
 function getTodayDate() {
-  return new Date().toISOString().slice(0, 10);
+  const parts = argentinaDateInputFormatter.formatToParts(new Date());
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+
+  if (!year || !month || !day) {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  return `${year}-${month}-${day}`;
 }
 
 function formatReportedDate(value: string) {
-  const parsedDate = new Date(`${value}T00:00:00`);
+  const [year, month, day] = value.split("-").map(Number);
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day)
+  ) {
+    return value;
+  }
+
+  const parsedDate = new Date(Date.UTC(year, month - 1, day));
   if (Number.isNaN(parsedDate.getTime())) {
     return value;
   }
@@ -157,6 +190,10 @@ function parseAmountInput(value: string): number {
   return Number.isFinite(parsed) ? roundMoney(parsed) : 0;
 }
 
+function formatAmountInput(value: number): string {
+  return String(roundMoney(value));
+}
+
 function getInstallmentRemainingAmount(installment: Pick<UserInstallmentDTO, "totalDue" | "paidAmount">): number {
   return Math.max(0, roundMoney(installment.totalDue - installment.paidAmount));
 }
@@ -210,8 +247,33 @@ function getGroupDisplayName(group: InstallmentGroup, index: number): string {
   return group.studentName ? `${group.tripName} - ${group.studentName}` : group.tripName || `Viaje ${index + 1}`;
 }
 
+function convertReportedAmountFromTripCurrency(
+  amountInTripCurrency: number,
+  tripCurrency: Currency,
+  paymentCurrency: Currency,
+  exchangeRate: number | null,
+): number | null {
+  if (paymentCurrency === tripCurrency) {
+    return roundMoney(amountInTripCurrency);
+  }
+
+  if (exchangeRate == null || exchangeRate <= 0) {
+    return null;
+  }
+
+  if (tripCurrency === "ARS" && paymentCurrency === "USD") {
+    return roundMoney(amountInTripCurrency / exchangeRate);
+  }
+
+  if (tripCurrency === "USD" && paymentCurrency === "ARS") {
+    return roundMoney(amountInTripCurrency * exchangeRate);
+  }
+
+  return null;
+}
 
 export function UserDashboardPage() {
+  const [tokenState] = useToken();
   const queryClient = useQueryClient();
   const registerPayment = useRegisterPayment();
   const { data: installments, isLoading, error } = useMyInstallments();
@@ -226,7 +288,7 @@ export function UserDashboardPage() {
   const [selectedAnchorInstallmentId, setSelectedAnchorInstallmentId] = useState<number | null>(null);
   const [reportedAmountInput, setReportedAmountInput] = useState("");
   const [reportedPaymentDate, setReportedPaymentDate] = useState(getTodayDate);
-  const [paymentCurrency, setPaymentCurrency] = useState<"ARS" | "USD">("USD");
+  const [paymentCurrency, setPaymentCurrency] = useState<Currency>("ARS");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("BANK_TRANSFER");
   const [selectedBankAccountId, setSelectedBankAccountId] = useState<number | null>(null);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
@@ -234,6 +296,7 @@ export function UserDashboardPage() {
   const [closeFolderSignal, setCloseFolderSignal] = useState(false);
   const [isDropzoneHovered, setIsDropzoneHovered] = useState(false);
   const [receiptSuccessData, setReceiptSuccessData] = useState<ReceiptSuccessData | null>(null);
+  const [isCurrencyAmountUpdating, setIsCurrencyAmountUpdating] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -369,8 +432,98 @@ export function UserDashboardPage() {
     }
 
     setSelectedAnchorInstallmentId(pendingInstallment.installmentId);
-    setReportedAmountInput(String(getInstallmentRemainingAmount(pendingInstallment)));
+    setPaymentCurrency(pendingInstallment.tripCurrency);
+    setReportedAmountInput(formatAmountInput(getInstallmentRemainingAmount(pendingInstallment)));
   }, [selectedGroupKey, groups]);
+
+  const fetchPaymentPreviewSnapshot = async (
+    payload: Parameters<typeof apiPost<PaymentBatchPreviewDTO>>[1] & {
+      anchorInstallmentId: number;
+      reportedAmount: number;
+      reportedPaymentDate: string;
+      paymentCurrency: Currency;
+    },
+  ) =>
+    queryClient.fetchQuery<PaymentBatchPreviewDTO, ApiError>({
+      queryKey: [
+        "payments",
+        "preview",
+        payload.anchorInstallmentId,
+        payload.reportedAmount,
+        payload.reportedPaymentDate,
+        payload.paymentCurrency,
+      ],
+      staleTime: 0,
+      queryFn: async () =>
+        apiPost(
+          "/api/v1/payments/preview",
+          payload,
+          (json) => PaymentBatchPreviewDTOSchema.parse(json),
+          {
+            headers:
+              tokenState.state === "LOGGED_IN"
+                ? {
+                    Authorization: `Bearer ${tokenState.accessToken}`,
+                  }
+                : undefined,
+          },
+        ),
+    });
+
+  const handlePaymentCurrencyChange = async (nextCurrency: Currency) => {
+    if (nextCurrency === paymentCurrency) {
+      return;
+    }
+
+    const tripCurrency = selectedInstallment?.tripCurrency ?? null;
+    const amountInTripCurrency =
+      tripCurrency == null
+        ? null
+        : paymentCurrency === tripCurrency
+          ? reportedAmountValue
+          : paymentPreview?.paymentCurrency === paymentCurrency
+            ? paymentPreview.amountInTripCurrency
+            : null;
+
+    let nextAmountInput = reportedAmountInput;
+
+    if (tripCurrency != null && amountInTripCurrency != null && amountInTripCurrency > 0) {
+      const existingExchangeRate =
+        paymentPreview?.paymentCurrency === paymentCurrency ? paymentPreview.exchangeRate : null;
+      let nextExchangeRate = existingExchangeRate;
+
+      if (nextCurrency !== tripCurrency && (nextExchangeRate == null || nextExchangeRate <= 0) && selectedAnchorInstallmentId != null) {
+        setIsCurrencyAmountUpdating(true);
+        try {
+          const conversionPreview = await fetchPaymentPreviewSnapshot({
+            anchorInstallmentId: selectedAnchorInstallmentId,
+            reportedAmount: 1,
+            reportedPaymentDate,
+            paymentCurrency: nextCurrency,
+          });
+          nextExchangeRate = conversionPreview.exchangeRate;
+        } catch {
+          nextExchangeRate = null;
+        } finally {
+          setIsCurrencyAmountUpdating(false);
+        }
+      }
+
+      const convertedAmount = convertReportedAmountFromTripCurrency(
+        amountInTripCurrency,
+        tripCurrency,
+        nextCurrency,
+        nextExchangeRate,
+      );
+
+      if (convertedAmount != null) {
+        nextAmountInput = formatAmountInput(convertedAmount);
+      }
+    }
+
+    setPaymentCurrency(nextCurrency);
+    setReportedAmountInput(nextAmountInput);
+  };
 
   const toggleGroup = (groupKey: string) => {
     setExpandedGroupKeys((current) => {
@@ -453,7 +606,7 @@ export function UserDashboardPage() {
       setSelectedAnchorInstallmentId(null);
       setReportedAmountInput("");
       setReportedPaymentDate(getTodayDate());
-      setPaymentCurrency("USD");
+      setPaymentCurrency(selectedInstallment?.tripCurrency ?? "ARS");
       setPaymentMethod("BANK_TRANSFER");
       setSelectedBankAccountId(null);
       setReceiptFile(null);
@@ -782,14 +935,20 @@ export function UserDashboardPage() {
                 <span className={styles.label}>Moneda en que pagaste</span>
                 <select
                   value={paymentCurrency}
-                  onChange={(event) => setPaymentCurrency(event.target.value as "ARS" | "USD")}
+                  onChange={(event) => {
+                    void handlePaymentCurrencyChange(event.target.value as Currency);
+                  }}
                   className={styles.select}
-                  disabled={!selectedTripHasPending || selectedGroupHasPendingReview}
+                  disabled={!selectedTripHasPending || selectedGroupHasPendingReview || isCurrencyAmountUpdating}
                 >
                   <option value="ARS">Pesos (ARS)</option>
                   <option value="USD">Dólares (USD)</option>
                 </select>
               </label>
+
+              {isCurrencyAmountUpdating ? (
+                <p className={styles.helperText}>Actualizando el monto según la moneda seleccionada...</p>
+              ) : null}
 
               {selectedInstallment && paymentCurrency !== selectedInstallment.tripCurrency ? (
                 <p className={styles.helperWarning}>
