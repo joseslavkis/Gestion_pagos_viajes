@@ -98,8 +98,8 @@ describe("Auth routes integration", () => {
         phone: "1133344455",
         students: [
           {
-            name: "Tomas",
-            lastname: "Benitez",
+            name: "TOMAS",
+            lastname: "BENITEZ",
             dni: "44555666",
           },
         ],

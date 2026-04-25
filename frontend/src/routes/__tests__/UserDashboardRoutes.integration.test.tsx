@@ -79,8 +79,8 @@ describe("User dashboard routes integration", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Agregar hijo" }));
 
-    expect(await screen.findByText("El alumno Lucia Perez se agrego con exito.")).toBeInTheDocument();
-    expect(await screen.findByText("Perez, Lucia")).toBeInTheDocument();
+    expect(await screen.findByText("El alumno LUCIA PEREZ se agrego con exito.")).toBeInTheDocument();
+    expect(await screen.findByText("PEREZ, LUCIA")).toBeInTheDocument();
   });
 
   it("muestra el error del backend si intenta reclamar un DNI no habilitado", async () => {
