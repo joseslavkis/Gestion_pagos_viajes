@@ -272,6 +272,50 @@ function convertReportedAmountFromTripCurrency(
   return null;
 }
 
+function uniquePositiveMoneyAmounts(amounts: number[]): number[] {
+  const seen = new Set<string>();
+  const result: number[] = [];
+
+  for (const amount of amounts) {
+    const roundedAmount = roundMoney(amount);
+    if (!Number.isFinite(roundedAmount) || roundedAmount <= 0) {
+      continue;
+    }
+
+    const key = roundedAmount.toFixed(2);
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    result.push(roundedAmount);
+  }
+
+  return result;
+}
+
+function getExchangeRateProbeAmounts(
+  amountInTripCurrency: number,
+  tripCurrency: Currency,
+  paymentCurrency: Currency,
+): number[] {
+  if (tripCurrency === paymentCurrency) {
+    return uniquePositiveMoneyAmounts([amountInTripCurrency]);
+  }
+
+  if (tripCurrency === "USD" && paymentCurrency === "ARS") {
+    return uniquePositiveMoneyAmounts(
+      [1000, 2000, 500, 5000, 100, 10, 1].map((multiplier) => amountInTripCurrency * multiplier),
+    );
+  }
+
+  if (tripCurrency === "ARS" && paymentCurrency === "USD") {
+    return uniquePositiveMoneyAmounts([0.01, 0.02, 0.05, 0.1, 0.5, 1]);
+  }
+
+  return uniquePositiveMoneyAmounts([1]);
+}
+
 export function UserDashboardPage() {
   const [tokenState] = useToken();
   const queryClient = useQueryClient();
@@ -495,13 +539,23 @@ export function UserDashboardPage() {
       if (nextCurrency !== tripCurrency && (nextExchangeRate == null || nextExchangeRate <= 0) && selectedAnchorInstallmentId != null) {
         setIsCurrencyAmountUpdating(true);
         try {
-          const conversionPreview = await fetchPaymentPreviewSnapshot({
-            anchorInstallmentId: selectedAnchorInstallmentId,
-            reportedAmount: 1,
-            reportedPaymentDate,
-            paymentCurrency: nextCurrency,
-          });
-          nextExchangeRate = conversionPreview.exchangeRate;
+          for (const probeAmount of getExchangeRateProbeAmounts(amountInTripCurrency, tripCurrency, nextCurrency)) {
+            try {
+              const conversionPreview = await fetchPaymentPreviewSnapshot({
+                anchorInstallmentId: selectedAnchorInstallmentId,
+                reportedAmount: probeAmount,
+                reportedPaymentDate,
+                paymentCurrency: nextCurrency,
+              });
+              if (conversionPreview.exchangeRate != null && conversionPreview.exchangeRate > 0) {
+                nextExchangeRate = conversionPreview.exchangeRate;
+                break;
+              }
+            } catch {
+              // Some probe amounts can be too small after backend rounding or exceed the pending balance.
+              // Try the next safe candidate before giving up on the automatic conversion.
+            }
+          }
         } catch {
           nextExchangeRate = null;
         } finally {

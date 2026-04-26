@@ -369,6 +369,116 @@ describe("UserDashboardPage", () => {
     });
   });
 
+  it("actualiza automaticamente una cuota en dolares al cambiar a pesos y volver a dolares", async () => {
+    const exchangeRate = 1400;
+
+    server.use(
+      http.get(INSTALLMENTS_URL, () =>
+        HttpResponse.json([
+          makeInstallment({
+            installmentId: 301,
+            installmentNumber: 1,
+            dueDate: "2026-06-25",
+            totalDue: 300,
+            paidAmount: 0,
+            tripCurrency: "USD",
+          }),
+        ]),
+      ),
+      http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount, usdBankAccount])),
+      http.post(PREVIEW_URL, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        const paymentCurrency = body.paymentCurrency;
+        const reportedAmount = Number(body.reportedAmount);
+
+        if (paymentCurrency === "ARS") {
+          const amountInTripCurrency = Math.round((reportedAmount / exchangeRate + Number.EPSILON) * 100) / 100;
+
+          if (amountInTripCurrency <= 0 || reportedAmount > 300 * exchangeRate) {
+            return HttpResponse.json(
+              { message: "El monto informado no puede imputarse" },
+              { status: 400 },
+            );
+          }
+
+          return HttpResponse.json({
+            anchorInstallmentId: body.anchorInstallmentId,
+            tripCurrency: "USD",
+            paymentCurrency: "ARS",
+            reportedAmount,
+            maxAllowedAmount: 300 * exchangeRate,
+            exchangeRate,
+            totalPendingAmountInTripCurrency: 300,
+            amountInTripCurrency,
+            reportedPaymentDate: body.reportedPaymentDate,
+            installments: [
+              {
+                receiptId: null,
+                installmentId: 301,
+                installmentNumber: 1,
+                dueDate: "2026-06-25",
+                totalDue: 300,
+                paidAmount: 0,
+                remainingAmount: 300,
+                reportedAmount,
+                amountInTripCurrency,
+                status: null,
+              },
+            ],
+          });
+        }
+
+        return HttpResponse.json({
+          anchorInstallmentId: body.anchorInstallmentId,
+          tripCurrency: "USD",
+          paymentCurrency: "USD",
+          reportedAmount,
+          maxAllowedAmount: 300,
+          exchangeRate: null,
+          totalPendingAmountInTripCurrency: 300,
+          amountInTripCurrency: reportedAmount,
+          reportedPaymentDate: body.reportedPaymentDate,
+          installments: [
+            {
+              receiptId: null,
+              installmentId: 301,
+              installmentNumber: 1,
+              dueDate: "2026-06-25",
+              totalDue: 300,
+              paidAmount: 0,
+              remainingAmount: 300,
+              reportedAmount,
+              amountInTripCurrency: reportedAmount,
+              status: null,
+            },
+          ],
+        });
+      }),
+    );
+
+    renderWithProviders(<UserDashboardPage />);
+
+    const amountInput = await screen.findByLabelText("Monto a reportar");
+    const currencySelect = screen.getByLabelText("Moneda en que pagaste");
+
+    await waitFor(() => expect(amountInput).toHaveValue(300));
+    expect(currencySelect).toHaveValue("USD");
+
+    fireEvent.change(currencySelect, { target: { value: "ARS" } });
+
+    await waitFor(() => {
+      expect(currencySelect).toHaveValue("ARS");
+      expect(amountInput).toHaveValue(420000);
+    });
+
+    fireEvent.change(currencySelect, { target: { value: "USD" } });
+
+    await waitFor(() => {
+      expect(currencySelect).toHaveValue("USD");
+      expect(amountInput).toHaveValue(300);
+    });
+  });
+
   it("usa la fecha actual en horario argentino para la fecha de pago", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-24T02:30:00.000Z"));
