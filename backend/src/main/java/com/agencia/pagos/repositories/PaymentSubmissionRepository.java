@@ -63,6 +63,22 @@ public interface PaymentSubmissionRepository extends JpaRepository<PaymentSubmis
     List<PaymentSubmission> findByStatusWithContext(@Param("status") PaymentSubmissionStatus status);
 
     @Query("""
+        SELECT DISTINCT p
+        FROM PaymentSubmission p
+        JOIN FETCH p.trip
+        JOIN FETCH p.user
+        LEFT JOIN FETCH p.student
+        JOIN FETCH p.anchorInstallment
+        LEFT JOIN FETCH p.bankAccount
+        LEFT JOIN FETCH p.outcomes o
+        LEFT JOIN FETCH o.allocations a
+        LEFT JOIN FETCH a.installment
+        WHERE p.trip.id = :tripId
+        ORDER BY p.reportedPaymentDate DESC, p.id DESC
+        """)
+    List<PaymentSubmission> findByTripIdWithContext(@Param("tripId") Long tripId);
+
+    @Query("""
         SELECT CASE WHEN COUNT(p) > 0 THEN true ELSE false END
         FROM PaymentSubmission p
         WHERE p.status = :status

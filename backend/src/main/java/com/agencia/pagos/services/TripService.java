@@ -3,6 +3,7 @@ package com.agencia.pagos.services;
 import com.agencia.pagos.dtos.request.TripCreateDTO;
 import com.agencia.pagos.dtos.request.TripUpdateDTO;
 import com.agencia.pagos.dtos.request.UserAssignBulkDTO;
+import com.agencia.pagos.dtos.internal.SpreadsheetReceiptRowDTO;
 import com.agencia.pagos.dtos.response.BulkAssignResultDTO;
 import com.agencia.pagos.dtos.response.SpreadsheetDTO;
 import com.agencia.pagos.dtos.response.SpreadsheetRowDTO;
@@ -14,7 +15,13 @@ import com.agencia.pagos.entities.Currency;
 import com.agencia.pagos.entities.Installment;
 import com.agencia.pagos.entities.InstallmentStatus;
 import com.agencia.pagos.entities.PendingTripStudent;
+import com.agencia.pagos.entities.PaymentAllocation;
+import com.agencia.pagos.entities.PaymentOutcome;
+import com.agencia.pagos.entities.PaymentOutcomeStatus;
 import com.agencia.pagos.entities.PaymentReceipt;
+import com.agencia.pagos.entities.PaymentSubmission;
+import com.agencia.pagos.entities.PaymentSubmissionStatus;
+import com.agencia.pagos.entities.ReceiptStatus;
 import com.agencia.pagos.entities.Student;
 import com.agencia.pagos.entities.Trip;
 import com.agencia.pagos.entities.user.User;
@@ -71,6 +78,7 @@ public class TripService {
     private final InstallmentUiStatusResolver installmentUiStatusResolver;
     private final PaymentInstallmentOverlayService paymentInstallmentOverlayService;
     private final TripInstallmentAmountCalculator tripInstallmentAmountCalculator;
+    private final PaymentAllocationPlanner paymentAllocationPlanner;
     private final TripExcelExporter tripExcelExporter;
 
     @Autowired
@@ -89,6 +97,7 @@ public class TripService {
             InstallmentUiStatusResolver installmentUiStatusResolver,
             PaymentInstallmentOverlayService paymentInstallmentOverlayService,
             TripInstallmentAmountCalculator tripInstallmentAmountCalculator,
+            PaymentAllocationPlanner paymentAllocationPlanner,
             TripExcelExporter tripExcelExporter
     ) {
         this.tripRepository = tripRepository;
@@ -105,6 +114,7 @@ public class TripService {
         this.installmentUiStatusResolver = installmentUiStatusResolver;
         this.paymentInstallmentOverlayService = paymentInstallmentOverlayService;
         this.tripInstallmentAmountCalculator = tripInstallmentAmountCalculator;
+        this.paymentAllocationPlanner = paymentAllocationPlanner;
         this.tripExcelExporter = tripExcelExporter;
     }
 
@@ -135,6 +145,7 @@ public class TripService {
                 installmentUiStatusResolver,
                 null,
                 new TripInstallmentAmountCalculator(),
+                null,
                 tripExcelExporter
         );
     }
@@ -160,6 +171,7 @@ public class TripService {
                 new InstallmentUiStatusResolver(),
                 null,
                 new TripInstallmentAmountCalculator(),
+                null,
                 new TripExcelExporter()
         );
     }
@@ -273,7 +285,188 @@ public class TripService {
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + tripId));
 
         SpreadsheetDTO data = getSpreadsheetUnpaged(tripId);
-        return tripExcelExporter.export(data, trip.getCurrency().name());
+        List<SpreadsheetReceiptRowDTO> receipts = buildReceiptRows(tripId, trip.getCurrency().name());
+        return tripExcelExporter.export(data, trip.getCurrency().name(), receipts);
+    }
+
+    private List<SpreadsheetReceiptRowDTO> buildReceiptRows(Long tripId, String tripCurrency) {
+        List<SpreadsheetReceiptRowDTO> rows = new ArrayList<>();
+
+        List<PaymentReceipt> paymentReceipts = paymentReceiptRepository == null
+                ? List.of()
+                : paymentReceiptRepository.findByTripIdWithContext(tripId);
+        for (PaymentReceipt receipt : paymentReceipts) {
+            Student student = receipt.getInstallment() == null ? null : receipt.getInstallment().getStudent();
+            rows.add(new SpreadsheetReceiptRowDTO(
+                    receipt.getInstallment() == null ? null : receipt.getInstallment().getInstallmentNumber(),
+                    receipt.getInstallment() == null ? null : receipt.getInstallment().getDueDate(),
+                    student == null ? null : student.getLastname(),
+                    student == null ? null : student.getName(),
+                    student == null ? null : student.getDni(),
+                    receipt.getReportedPaymentDate(),
+                    receipt.getPaymentMethod() == null ? null : receipt.getPaymentMethod().name(),
+                    receipt.getReportedAmount(),
+                    receipt.getPaymentCurrency() == null ? null : receipt.getPaymentCurrency().name(),
+                    receipt.getExchangeRate(),
+                    receipt.getAmountInTripCurrency(),
+                    mapReceiptStatus(receipt.getStatus()),
+                    receipt.getAdminObservation()
+            ));
+        }
+
+        List<PaymentSubmission> submissions = paymentSubmissionRepository == null
+                ? List.of()
+                : paymentSubmissionRepository.findByTripIdWithContext(tripId);
+        for (PaymentSubmission submission : submissions) {
+            appendSubmissionRows(rows, submission);
+        }
+
+        rows.sort(
+                Comparator.comparing(SpreadsheetReceiptRowDTO::installmentNumber, Comparator.nullsLast(Integer::compareTo))
+                        .thenComparing(row -> row.studentLastname() == null ? "" : row.studentLastname(), String.CASE_INSENSITIVE_ORDER)
+                        .thenComparing(row -> row.studentName() == null ? "" : row.studentName(), String.CASE_INSENSITIVE_ORDER)
+                        .thenComparing(SpreadsheetReceiptRowDTO::reportedPaymentDate, Comparator.nullsLast(LocalDate::compareTo))
+        );
+
+        return rows;
+    }
+
+    private void appendSubmissionRows(List<SpreadsheetReceiptRowDTO> rows, PaymentSubmission submission) {
+        List<SpreadsheetReceiptRowDTO> approvedAllocationRows = new ArrayList<>();
+        PaymentOutcome rejectedOutcome = null;
+
+        for (PaymentOutcome outcome : submission.getOutcomes() == null ? Set.<PaymentOutcome>of() : submission.getOutcomes()) {
+            if (outcome.getStatus() == PaymentOutcomeStatus.REJECTED && rejectedOutcome == null) {
+                rejectedOutcome = outcome;
+            }
+            if (outcome.getStatus() != PaymentOutcomeStatus.APPROVED || outcome.getAllocations() == null) {
+                continue;
+            }
+
+            for (PaymentAllocation allocation : outcome.getAllocations()) {
+                if (allocation.getInstallment() == null) {
+                    continue;
+                }
+                approvedAllocationRows.add(
+                        toSubmissionRow(
+                                submission,
+                                allocation.getInstallment(),
+                                allocation.getReportedAmount(),
+                                allocation.getAmountInTripCurrency(),
+                                "Aprobado",
+                                outcome.getAdminObservation()
+                        )
+                );
+            }
+        }
+
+        if (!approvedAllocationRows.isEmpty()) {
+            rows.addAll(approvedAllocationRows);
+            return;
+        }
+
+        String statusLabel = resolveSubmissionStatusLabel(submission, rejectedOutcome);
+        String adminObservation = rejectedOutcome == null ? null : rejectedOutcome.getAdminObservation();
+        rows.add(tryProjectSubmission(submission, statusLabel, adminObservation));
+    }
+
+    private SpreadsheetReceiptRowDTO tryProjectSubmission(
+            PaymentSubmission submission,
+            String statusLabel,
+            String adminObservation
+    ) {
+        if (paymentAllocationPlanner != null && submission.getAnchorInstallment() != null) {
+            try {
+                var plan = paymentAllocationPlanner.plan(
+                        List.of(submission.getAnchorInstallment()),
+                        submission.getReportedAmount(),
+                        submission.getPaymentCurrency(),
+                        submission.getExchangeRate()
+                );
+                if (!plan.allocations().isEmpty()) {
+                    var first = plan.allocations().get(0);
+                    return toSubmissionRow(
+                            submission,
+                            first.installment(),
+                            first.reportedAmount(),
+                            first.amountInTripCurrency(),
+                            statusLabel,
+                            adminObservation
+                    );
+                }
+            } catch (RuntimeException ignored) {
+                // fallback to anchor installment projection
+            }
+        }
+
+        return toSubmissionRow(
+                submission,
+                submission.getAnchorInstallment(),
+                submission.getReportedAmount(),
+                submission.getAmountInTripCurrency(),
+                statusLabel,
+                adminObservation
+        );
+    }
+
+    private SpreadsheetReceiptRowDTO toSubmissionRow(
+            PaymentSubmission submission,
+            Installment installment,
+            BigDecimal reportedAmount,
+            BigDecimal amountInTripCurrency,
+            String status,
+            String adminObservation
+    ) {
+        Student student = submission.getStudent() != null
+                ? submission.getStudent()
+                : installment == null ? null : installment.getStudent();
+
+        return new SpreadsheetReceiptRowDTO(
+                installment == null ? null : installment.getInstallmentNumber(),
+                installment == null ? null : installment.getDueDate(),
+                student == null ? null : student.getLastname(),
+                student == null ? null : student.getName(),
+                student == null ? null : student.getDni(),
+                submission.getReportedPaymentDate(),
+                submission.getPaymentMethod() == null ? null : submission.getPaymentMethod().name(),
+                reportedAmount,
+                submission.getPaymentCurrency() == null ? null : submission.getPaymentCurrency().name(),
+                submission.getExchangeRate(),
+                amountInTripCurrency,
+                status,
+                adminObservation
+        );
+    }
+
+    private String mapReceiptStatus(ReceiptStatus status) {
+        if (status == null) {
+            return "";
+        }
+        return switch (status) {
+            case PENDING -> "Pendiente";
+            case APPROVED -> "Aprobado";
+            case REJECTED -> "Rechazado";
+        };
+    }
+
+    private String resolveSubmissionStatusLabel(PaymentSubmission submission, PaymentOutcome rejectedOutcome) {
+        if (rejectedOutcome != null) {
+            return "Rechazado";
+        }
+
+        if (submission.getOutcomes() != null) {
+            for (PaymentOutcome outcome : submission.getOutcomes()) {
+                if (outcome.getStatus() == PaymentOutcomeStatus.VOIDED) {
+                    return "Anulado";
+                }
+            }
+        }
+
+        if (submission.getStatus() == PaymentSubmissionStatus.VOIDED) {
+            return "Anulado";
+        }
+
+        return "Pendiente";
     }
 
     // [C-2, A-1] Uses pessimistic lock + Argentina timezone

@@ -10,13 +10,22 @@ import com.agencia.pagos.entities.Installment;
 import com.agencia.pagos.entities.InstallmentReminderNotification;
 import com.agencia.pagos.entities.InstallmentReminderNotificationType;
 import com.agencia.pagos.entities.InstallmentStatus;
+import com.agencia.pagos.entities.PaymentAllocation;
+import com.agencia.pagos.entities.PaymentOutcome;
+import com.agencia.pagos.entities.PaymentOutcomeStatus;
 import com.agencia.pagos.entities.PaymentReceipt;
 import com.agencia.pagos.entities.PaymentMethod;
+import com.agencia.pagos.entities.PaymentSubmission;
+import com.agencia.pagos.entities.PaymentSubmissionStatus;
 import com.agencia.pagos.entities.Trip;
+import com.agencia.pagos.entities.Currency;
 import com.agencia.pagos.entities.user.User;
+import com.agencia.pagos.repositories.PaymentAllocationRepository;
+import com.agencia.pagos.repositories.PaymentOutcomeRepository;
 import com.agencia.pagos.repositories.InstallmentRepository;
 import com.agencia.pagos.repositories.InstallmentReminderNotificationRepository;
 import com.agencia.pagos.repositories.PaymentReceiptRepository;
+import com.agencia.pagos.repositories.PaymentSubmissionRepository;
 import com.agencia.pagos.repositories.StudentRepository;
 import com.agencia.pagos.repositories.TripRepository;
 import com.agencia.pagos.repositories.UserRepository;
@@ -35,7 +44,9 @@ import org.springframework.test.web.servlet.MvcResult;
 import java.io.ByteArrayInputStream;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -68,6 +79,15 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
     private PaymentReceiptRepository paymentReceiptRepository;
 
     @Autowired
+    private PaymentSubmissionRepository paymentSubmissionRepository;
+
+    @Autowired
+    private PaymentOutcomeRepository paymentOutcomeRepository;
+
+    @Autowired
+    private PaymentAllocationRepository paymentAllocationRepository;
+
+    @Autowired
     private InstallmentReminderNotificationRepository installmentReminderNotificationRepository;
 
     @Autowired
@@ -79,6 +99,9 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
     @AfterEach
     void cleanUpTrips() {
         installmentReminderNotificationRepository.deleteAll();
+        paymentAllocationRepository.deleteAll();
+        paymentOutcomeRepository.deleteAll();
+        paymentSubmissionRepository.deleteAll();
         paymentReceiptRepository.deleteAll();
         installmentRepository.deleteAll();
         tripRepository.deleteAll();
@@ -1190,6 +1213,151 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
         assertTrue(responseBody.length > 1);
         assertEquals((byte) 0x50, responseBody[0]);
         assertEquals((byte) 0x4B, responseBody[1]);
+
+        try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(responseBody))) {
+            assertEquals(2, workbook.getNumberOfSheets());
+            assertNotNull(workbook.getSheetAt(0));
+            assertNotNull(workbook.getSheet("Comprobantes"));
+        }
+    }
+
+    @Test
+    void exportSpreadsheet_withLegacyPaymentReceipt() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-export-legacy"));
+        UserCreateDTO userDto = buildValidUser("user-export-legacy");
+        signUp(userDto);
+        Trip trip = buildTripForBulk("Trip Export Legacy", BigDecimal.valueOf(5000), 2, 10, BigDecimal.valueOf(100), false, LocalDate.now().plusMonths(1));
+
+        mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UserAssignBulkDTO(List.of(userDto.students().get(0).dni())))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assignedCount").value(1));
+
+        Installment installment = installmentRepository.findAll().stream()
+                .min(Comparator.comparingInt(Installment::getInstallmentNumber))
+                .orElseThrow();
+
+        PaymentReceipt receipt = PaymentReceipt.builder()
+                .installment(installment)
+                .reportedAmount(new BigDecimal("1500.00"))
+                .paymentCurrency(Currency.ARS)
+                .exchangeRate(new BigDecimal("1.00"))
+                .amountInTripCurrency(new BigDecimal("1500.00"))
+                .reportedPaymentDate(LocalDate.of(2026, 5, 11))
+.paymentMethod(PaymentMethod.BANK_TRANSFER)
+            .status(com.agencia.pagos.entities.ReceiptStatus.APPROVED)
+                .fileKey("legacy-receipt.png")
+                .adminObservation("Comprobante legacy")
+                .build();
+        paymentReceiptRepository.save(receipt);
+
+        byte[] responseBody = exportSpreadsheet(trip.getId(), adminTokens.accessToken());
+        try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(responseBody))) {
+            var sheet = workbook.getSheet("Comprobantes");
+            assertNotNull(sheet);
+            assertEquals("Comprobante legacy", sheet.getRow(1).getCell(12).getStringCellValue());
+            assertEquals("Aprobado", sheet.getRow(1).getCell(11).getStringCellValue());
+        }
+    }
+
+    @Test
+    void exportSpreadsheet_withPaymentSubmissionApproved() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-export-submission"));
+        UserCreateDTO userDto = buildValidUser("user-export-submission");
+        signUp(userDto);
+        Trip trip = buildTripForBulk("Trip Export Submission", BigDecimal.valueOf(8000), 2, 10, BigDecimal.valueOf(100), false, LocalDate.now().plusMonths(1));
+
+        mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UserAssignBulkDTO(List.of(userDto.students().get(0).dni())))))
+                .andExpect(status().isOk());
+
+        Installment installment = installmentRepository.findAll().stream()
+                .min(Comparator.comparingInt(Installment::getInstallmentNumber))
+                .orElseThrow();
+        User user = userRepository.findAll().stream()
+                .filter(u -> userDto.email().equalsIgnoreCase(u.getEmail()))
+                .findFirst()
+                .orElseThrow();
+
+        PaymentSubmission submission = new PaymentSubmission();
+        submission.setTrip(trip);
+        submission.setUser(user);
+        submission.setStudent(installment.getStudent());
+        submission.setAnchorInstallment(installment);
+        submission.setReportedAmount(new BigDecimal("2000.00"));
+        submission.setPaymentCurrency(Currency.ARS);
+        submission.setExchangeRate(new BigDecimal("1.00"));
+        submission.setAmountInTripCurrency(new BigDecimal("2000.00"));
+        submission.setReportedPaymentDate(LocalDate.of(2026, 5, 12));
+        submission.setPaymentMethod(PaymentMethod.BANK_TRANSFER);
+        submission.setStatus(PaymentSubmissionStatus.RESOLVED);
+        submission.setFileKey("submission-approved.png");
+        submission.setCreatedAt(LocalDateTime.now());
+        submission = paymentSubmissionRepository.save(submission);
+
+        PaymentOutcome outcome = new PaymentOutcome();
+        outcome.setSubmission(submission);
+        outcome.setStatus(PaymentOutcomeStatus.APPROVED);
+        outcome.setReportedAmount(new BigDecimal("2000.00"));
+        outcome.setAmountInTripCurrency(new BigDecimal("2000.00"));
+        outcome.setResolvedByEmail("admin@test.com");
+        outcome = paymentOutcomeRepository.save(outcome);
+
+        PaymentAllocation allocation = new PaymentAllocation();
+        allocation.setOutcome(outcome);
+        allocation.setInstallment(installment);
+        allocation.setAllocationOrder(1);
+        allocation.setReportedAmount(new BigDecimal("2000.00"));
+        allocation.setAmountInTripCurrency(new BigDecimal("2000.00"));
+        paymentAllocationRepository.save(allocation);
+
+        outcome.setAllocations(new LinkedHashSet<>(List.of(allocation)));
+        paymentOutcomeRepository.save(outcome);
+
+        byte[] responseBody = exportSpreadsheet(trip.getId(), adminTokens.accessToken());
+        try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(responseBody))) {
+            var sheet = workbook.getSheet("Comprobantes");
+            assertNotNull(sheet);
+            assertEquals("Aprobado", sheet.getRow(1).getCell(11).getStringCellValue());
+            assertEquals(2000.0, sheet.getRow(1).getCell(7).getNumericCellValue());
+            assertEquals(2000.0, sheet.getRow(1).getCell(10).getNumericCellValue());
+        }
+    }
+
+    @Test
+    void exportSpreadsheet_withoutReceipts() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-export-empty"));
+        UserCreateDTO userDto = buildValidUser("user-export-empty");
+        signUp(userDto);
+        Trip trip = buildTripForBulk("Trip Export Empty", BigDecimal.valueOf(5000), 2, 10, BigDecimal.valueOf(100), false, LocalDate.now().plusMonths(1));
+
+        mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UserAssignBulkDTO(List.of(userDto.students().get(0).dni())))))
+                .andExpect(status().isOk());
+
+        byte[] responseBody = exportSpreadsheet(trip.getId(), adminTokens.accessToken());
+        try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(responseBody))) {
+            var sheet = workbook.getSheet("Comprobantes");
+            assertNotNull(sheet);
+            assertEquals(0, sheet.getLastRowNum());
+            assertEquals("Cuota", sheet.getRow(0).getCell(0).getStringCellValue());
+            assertEquals("Observación", sheet.getRow(0).getCell(12).getStringCellValue());
+        }
+    }
+
+    private byte[] exportSpreadsheet(Long tripId, String accessToken) throws Exception {
+        return mockMvc.perform(get("/api/v1/trips/{id}/spreadsheet/export", tripId)
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsByteArray();
     }
 
     @Test

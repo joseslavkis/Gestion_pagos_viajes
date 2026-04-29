@@ -69,6 +69,20 @@ public interface PaymentReceiptRepository extends JpaRepository<PaymentReceipt, 
         LEFT JOIN FETCH i.student
         LEFT JOIN FETCH p.bankAccount
         LEFT JOIN FETCH p.batch
+        WHERE i.trip.id = :tripId
+        ORDER BY i.installmentNumber ASC, p.reportedPaymentDate DESC, p.id DESC
+        """)
+    List<PaymentReceipt> findByTripIdWithContext(@Param("tripId") Long tripId);
+
+    @Query("""
+        SELECT p
+        FROM PaymentReceipt p
+        JOIN FETCH p.installment i
+        JOIN FETCH i.trip
+        JOIN FETCH i.user
+        LEFT JOIN FETCH i.student
+        LEFT JOIN FETCH p.bankAccount
+        LEFT JOIN FETCH p.batch
         WHERE p.batch.id IN :batchIds
         ORDER BY p.batch.id DESC, i.installmentNumber ASC, p.id ASC
         """)

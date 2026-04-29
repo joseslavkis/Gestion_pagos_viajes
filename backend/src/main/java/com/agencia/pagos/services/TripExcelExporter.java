@@ -1,5 +1,6 @@
 package com.agencia.pagos.services;
 
+import com.agencia.pagos.dtos.internal.SpreadsheetReceiptRowDTO;
 import com.agencia.pagos.dtos.response.SpreadsheetDTO;
 import com.agencia.pagos.dtos.response.SpreadsheetRowDTO;
 import com.agencia.pagos.dtos.response.SpreadsheetRowInstallmentDTO;
@@ -24,6 +25,7 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 @Component
@@ -33,7 +35,7 @@ public class TripExcelExporter {
     private static final int INSTALLMENT_COLUMNS = 5;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd/MM/yyyy");
 
-    public byte[] export(SpreadsheetDTO data, String currency) {
+    public byte[] export(SpreadsheetDTO data, String currency, List<SpreadsheetReceiptRowDTO> receipts) {
         try (XSSFWorkbook workbook = new XSSFWorkbook();
              ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
             String currencyCode = "USD".equalsIgnoreCase(currency) ? "USD" : "ARS";
@@ -175,6 +177,8 @@ public class TripExcelExporter {
 
             sheet.createFreezePane(1, 2);
 
+            createReceiptsSheet(workbook, receipts);
+
             workbook.write(outputStream);
             return outputStream.toByteArray();
         } catch (IOException ex) {
@@ -308,5 +312,79 @@ public class TripExcelExporter {
             return "Planilla";
         }
         return sanitized.substring(0, Math.min(31, sanitized.length()));
+    }
+
+    private void createReceiptsSheet(XSSFWorkbook workbook, List<SpreadsheetReceiptRowDTO> receipts) {
+        var sheet = workbook.createSheet("Comprobantes");
+        CellStyle headerStyle = createColumnHeaderStyle(workbook);
+        CellStyle rowEvenStyle = createDataRowStyle(workbook, "#ffffff");
+        CellStyle rowOddStyle = createDataRowStyle(workbook, "#f0f7ff");
+        CellStyle amountEvenStyle = createAmountStyle(workbook, "#ffffff", "ARS");
+        CellStyle amountOddStyle = createAmountStyle(workbook, "#f0f7ff", "ARS");
+
+        String[] headers = {
+                "Cuota",
+                "Vencimiento cuota",
+                "Apellido alumno",
+                "Nombre alumno",
+                "DNI alumno",
+                "Fecha",
+                "Medio",
+                "Monto",
+                "Moneda",
+                "Cambio",
+                "Monto convertido",
+                "Estado",
+                "Observación"
+        };
+
+        var headerRow = sheet.createRow(0);
+        for (int col = 0; col < headers.length; col++) {
+            Cell cell = headerRow.createCell(col);
+            cell.setCellStyle(headerStyle);
+            cell.setCellValue(headers[col]);
+        }
+
+        int rowIndex = 1;
+        for (SpreadsheetReceiptRowDTO receipt : receipts == null ? List.<SpreadsheetReceiptRowDTO>of() : receipts) {
+            boolean odd = ((rowIndex - 1) % 2) != 0;
+            CellStyle baseStyle = odd ? rowOddStyle : rowEvenStyle;
+            CellStyle amountStyle = odd ? amountOddStyle : amountEvenStyle;
+            var row = sheet.createRow(rowIndex++);
+
+            if (receipt.installmentNumber() != null) {
+                writeNumberCell(row, 0, BigDecimal.valueOf(receipt.installmentNumber()), baseStyle);
+            } else {
+                writeTextCell(row, 0, "", baseStyle);
+            }
+            writeTextCell(row, 1, receipt.installmentDueDate() == null ? "" : receipt.installmentDueDate().format(DATE_FORMATTER), baseStyle);
+            writeTextCell(row, 2, receipt.studentLastname(), baseStyle);
+            writeTextCell(row, 3, receipt.studentName(), baseStyle);
+            writeTextCell(row, 4, receipt.studentDni(), baseStyle);
+            writeTextCell(row, 5, receipt.reportedPaymentDate() == null ? "" : receipt.reportedPaymentDate().format(DATE_FORMATTER), baseStyle);
+            writeTextCell(row, 6, receipt.paymentMethod(), baseStyle);
+            writeNumberCell(row, 7, receipt.reportedAmount(), amountStyle);
+            writeTextCell(row, 8, receipt.paymentCurrency(), baseStyle);
+            writeNumberCell(row, 9, receipt.exchangeRate(), amountStyle);
+            writeNumberCell(row, 10, receipt.amountInTripCurrency(), amountStyle);
+            writeTextCell(row, 11, receipt.status(), baseStyle);
+            writeTextCell(row, 12, receipt.adminObservation(), baseStyle);
+        }
+
+        int lastRow = Math.max(0, rowIndex - 1);
+        sheet.setAutoFilter(new CellRangeAddress(0, lastRow, 0, 12));
+        sheet.createFreezePane(0, 1);
+
+        for (int col = 0; col <= 12; col++) {
+            sheet.autoSizeColumn(col);
+            int minWidth = switch (col) {
+                case 11 -> 14 * 256;
+                case 12 -> 24 * 256;
+                default -> 12 * 256;
+            };
+            if (sheet.getColumnWidth(col) < minWidth) {
+                sheet.setColumnWidth(col, minWidth);
+            }
+        }
     }
 }
