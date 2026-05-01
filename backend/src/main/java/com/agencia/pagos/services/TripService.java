@@ -36,6 +36,8 @@ import com.agencia.pagos.repositories.StudentRepository;
 import com.agencia.pagos.repositories.TripRepository;
 import com.agencia.pagos.repositories.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -63,6 +65,7 @@ public class TripService {
 
     // [A-1] Use Argentina's business timezone for all "today" comparisons
     private static final ZoneId BUSINESS_ZONE = ZoneId.of("America/Argentina/Buenos_Aires");
+    private static final Logger LOGGER = LoggerFactory.getLogger(TripService.class);
 
     private final TripRepository tripRepository;
     private final UserRepository userRepository;
@@ -285,11 +288,11 @@ public class TripService {
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + tripId));
 
         SpreadsheetDTO data = getSpreadsheetUnpaged(tripId);
-        List<SpreadsheetReceiptRowDTO> receipts = buildReceiptRows(tripId, trip.getCurrency().name());
+        List<SpreadsheetReceiptRowDTO> receipts = buildReceiptRows(tripId);
         return tripExcelExporter.export(data, trip.getCurrency().name(), receipts);
     }
 
-    private List<SpreadsheetReceiptRowDTO> buildReceiptRows(Long tripId, String tripCurrency) {
+    private List<SpreadsheetReceiptRowDTO> buildReceiptRows(Long tripId) {
         List<SpreadsheetReceiptRowDTO> rows = new ArrayList<>();
 
         List<PaymentReceipt> paymentReceipts = paymentReceiptRepository == null
@@ -394,8 +397,12 @@ public class TripService {
                             adminObservation
                     );
                 }
-            } catch (RuntimeException ignored) {
-                // fallback to anchor installment projection
+            } catch (RuntimeException ex) {
+                LOGGER.warn(
+                        "Could not project payment submission {} into installments, falling back to anchor installment",
+                        submission.getId(),
+                        ex
+                );
             }
         }
 

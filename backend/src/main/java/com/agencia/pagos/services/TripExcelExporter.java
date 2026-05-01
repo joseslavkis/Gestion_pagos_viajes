@@ -177,7 +177,7 @@ public class TripExcelExporter {
 
             sheet.createFreezePane(1, 2);
 
-            createReceiptsSheet(workbook, receipts);
+            createReceiptsSheet(workbook, receipts, currencyCode);
 
             workbook.write(outputStream);
             return outputStream.toByteArray();
@@ -314,13 +314,13 @@ public class TripExcelExporter {
         return sanitized.substring(0, Math.min(31, sanitized.length()));
     }
 
-    private void createReceiptsSheet(XSSFWorkbook workbook, List<SpreadsheetReceiptRowDTO> receipts) {
+    private void createReceiptsSheet(XSSFWorkbook workbook, List<SpreadsheetReceiptRowDTO> receipts, String currencyCode) {
         var sheet = workbook.createSheet("Comprobantes");
         CellStyle headerStyle = createColumnHeaderStyle(workbook);
         CellStyle rowEvenStyle = createDataRowStyle(workbook, "#ffffff");
         CellStyle rowOddStyle = createDataRowStyle(workbook, "#f0f7ff");
-        CellStyle amountEvenStyle = createAmountStyle(workbook, "#ffffff", "ARS");
-        CellStyle amountOddStyle = createAmountStyle(workbook, "#f0f7ff", "ARS");
+        CellStyle amountEvenStyle = createAmountStyle(workbook, "#ffffff", currencyCode);
+        CellStyle amountOddStyle = createAmountStyle(workbook, "#f0f7ff", currencyCode);
 
         String[] headers = {
                 "Cuota",
