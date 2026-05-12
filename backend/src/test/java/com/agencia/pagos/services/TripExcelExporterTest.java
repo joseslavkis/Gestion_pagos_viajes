@@ -227,7 +227,10 @@ class TripExcelExporterTest {
         byte[] excelBytes = exporter.export(buildSummarySpreadsheet(), "ARS", List.of(receipt));
 
         try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(excelBytes))) {
-            var row = workbook.getSheet("Comprobantes").getRow(1);
+            var sheet = workbook.getSheet("Comprobantes");
+            // Header (row 0) + one data row = exactly one data row
+            assertEquals(1, sheet.getLastRowNum());
+            var row = sheet.getRow(1);
 
             assertEquals("2", dataFormatter.formatCellValue(row.getCell(0)));
             assertEquals("10/07/2026", dataFormatter.formatCellValue(row.getCell(1)));

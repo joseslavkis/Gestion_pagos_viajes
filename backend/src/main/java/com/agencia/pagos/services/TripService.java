@@ -15,7 +15,6 @@ import com.agencia.pagos.entities.Currency;
 import com.agencia.pagos.entities.Installment;
 import com.agencia.pagos.entities.InstallmentStatus;
 import com.agencia.pagos.entities.PendingTripStudent;
-import com.agencia.pagos.entities.PaymentAllocation;
 import com.agencia.pagos.entities.PaymentOutcome;
 import com.agencia.pagos.entities.PaymentOutcomeStatus;
 import com.agencia.pagos.entities.PaymentReceipt;
@@ -335,36 +334,27 @@ public class TripService {
     }
 
     private void appendSubmissionRows(List<SpreadsheetReceiptRowDTO> rows, PaymentSubmission submission) {
-        List<SpreadsheetReceiptRowDTO> approvedAllocationRows = new ArrayList<>();
         PaymentOutcome rejectedOutcome = null;
+        PaymentOutcome approvedOutcome = null;
 
         for (PaymentOutcome outcome : submission.getOutcomes() == null ? Set.<PaymentOutcome>of() : submission.getOutcomes()) {
             if (outcome.getStatus() == PaymentOutcomeStatus.REJECTED && rejectedOutcome == null) {
                 rejectedOutcome = outcome;
             }
-            if (outcome.getStatus() != PaymentOutcomeStatus.APPROVED || outcome.getAllocations() == null) {
-                continue;
-            }
-
-            for (PaymentAllocation allocation : outcome.getAllocations()) {
-                if (allocation.getInstallment() == null) {
-                    continue;
-                }
-                approvedAllocationRows.add(
-                        toSubmissionRow(
-                                submission,
-                                allocation.getInstallment(),
-                                allocation.getReportedAmount(),
-                                allocation.getAmountInTripCurrency(),
-                                "Aprobado",
-                                outcome.getAdminObservation()
-                        )
-                );
+            if (outcome.getStatus() == PaymentOutcomeStatus.APPROVED && approvedOutcome == null) {
+                approvedOutcome = outcome;
             }
         }
 
-        if (!approvedAllocationRows.isEmpty()) {
-            rows.addAll(approvedAllocationRows);
+        if (approvedOutcome != null) {
+            rows.add(toSubmissionRow(
+                    submission,
+                    submission.getAnchorInstallment(),
+                    approvedOutcome.getReportedAmount(),
+                    approvedOutcome.getAmountInTripCurrency(),
+                    "Aprobado",
+                    approvedOutcome.getAdminObservation()
+            ));
             return;
         }
 
