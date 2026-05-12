@@ -573,6 +573,13 @@ export function UserDashboardPage() {
       if (convertedAmount != null) {
         nextAmountInput = formatAmountInput(convertedAmount);
       }
+    } else if (nextCurrency === tripCurrency && selectedInstallment != null) {
+      // Race-condition guard: when switching back to the trip's native currency
+      // and the preview has not resolved yet (paymentPreview is undefined while
+      // usePaymentPreview refetches), fall back to the installment's remaining
+      // amount. Without this, rapid USD→ARS→USD switches leave the input stuck
+      // at the intermediate converted value (e.g. 420000 instead of 300).
+      nextAmountInput = formatAmountInput(getInstallmentRemainingAmount(selectedInstallment));
     }
 
     setPaymentCurrency(nextCurrency);
