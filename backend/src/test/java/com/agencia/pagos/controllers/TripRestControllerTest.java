@@ -1329,6 +1329,92 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
     }
 
     @Test
+    void exportSpreadsheet_withApprovedSubmissionCoveringMultipleInstallments_hasSingleComprobanteRow() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-export-multi-inst"));
+        UserCreateDTO userDto = buildValidUser("user-export-multi-inst");
+        signUp(userDto);
+        Trip trip = buildTripForBulk("Trip Export Multi Inst", BigDecimal.valueOf(9000), 3, 10,
+                BigDecimal.valueOf(100), false, LocalDate.now().plusMonths(1));
+
+        mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new UserAssignBulkDTO(List.of(userDto.students().get(0).dni())))))
+                .andExpect(status().isOk());
+
+        List<Installment> installments = installmentRepository.findAll().stream()
+                .sorted(Comparator.comparingInt(Installment::getInstallmentNumber))
+                .toList();
+        assertEquals(3, installments.size());
+        Installment firstInstallment = installments.get(0);
+        User user = userRepository.findByEmail(userDto.email()).orElseThrow();
+
+        PaymentSubmission submission = new PaymentSubmission();
+        submission.setTrip(trip);
+        submission.setUser(user);
+        submission.setStudent(firstInstallment.getStudent());
+        submission.setAnchorInstallment(firstInstallment);
+        submission.setReportedAmount(new BigDecimal("9000.00"));
+        submission.setPaymentCurrency(Currency.ARS);
+        submission.setExchangeRate(new BigDecimal("1.00"));
+        submission.setAmountInTripCurrency(new BigDecimal("9000.00"));
+        submission.setReportedPaymentDate(LocalDate.of(2026, 5, 12));
+        submission.setPaymentMethod(PaymentMethod.BANK_TRANSFER);
+        submission.setStatus(PaymentSubmissionStatus.RESOLVED);
+        submission.setFileKey("multi-receipt.png");
+        submission.setCreatedAt(LocalDateTime.now());
+        submission = paymentSubmissionRepository.save(submission);
+
+        PaymentOutcome outcome = new PaymentOutcome();
+        outcome.setSubmission(submission);
+        outcome.setStatus(PaymentOutcomeStatus.APPROVED);
+        outcome.setReportedAmount(new BigDecimal("9000.00"));
+        outcome.setAmountInTripCurrency(new BigDecimal("9000.00"));
+        outcome.setResolvedByEmail("admin@test.com");
+        outcome = paymentOutcomeRepository.save(outcome);
+
+        PaymentAllocation alloc1 = new PaymentAllocation();
+        alloc1.setOutcome(outcome);
+        alloc1.setInstallment(installments.get(0));
+        alloc1.setAllocationOrder(1);
+        alloc1.setReportedAmount(new BigDecimal("3000.00"));
+        alloc1.setAmountInTripCurrency(new BigDecimal("3000.00"));
+        alloc1 = paymentAllocationRepository.save(alloc1);
+
+        PaymentAllocation alloc2 = new PaymentAllocation();
+        alloc2.setOutcome(outcome);
+        alloc2.setInstallment(installments.get(1));
+        alloc2.setAllocationOrder(2);
+        alloc2.setReportedAmount(new BigDecimal("3000.00"));
+        alloc2.setAmountInTripCurrency(new BigDecimal("3000.00"));
+        alloc2 = paymentAllocationRepository.save(alloc2);
+
+        PaymentAllocation alloc3 = new PaymentAllocation();
+        alloc3.setOutcome(outcome);
+        alloc3.setInstallment(installments.get(2));
+        alloc3.setAllocationOrder(3);
+        alloc3.setReportedAmount(new BigDecimal("3000.00"));
+        alloc3.setAmountInTripCurrency(new BigDecimal("3000.00"));
+        alloc3 = paymentAllocationRepository.save(alloc3);
+
+        outcome.setAllocations(new LinkedHashSet<>(List.of(alloc1, alloc2, alloc3)));
+        paymentOutcomeRepository.save(outcome);
+
+        byte[] responseBody = exportSpreadsheet(trip.getId(), adminTokens.accessToken());
+        try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(responseBody))) {
+            var sheet = workbook.getSheet("Comprobantes");
+            assertNotNull(sheet);
+            // Should have header row (row 0) + exactly ONE data row (row 1)
+            assertEquals(1, sheet.getLastRowNum());
+            assertEquals("Aprobado", sheet.getRow(1).getCell(11).getStringCellValue());
+            // The amount should be the full submission amount, not per-allocation
+            assertEquals(9000.0, sheet.getRow(1).getCell(7).getNumericCellValue());
+            assertEquals(9000.0, sheet.getRow(1).getCell(10).getNumericCellValue());
+        }
+    }
+
+    @Test
     void exportSpreadsheet_withoutReceipts() throws Exception {
         TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-export-empty"));
         UserCreateDTO userDto = buildValidUser("user-export-empty");
