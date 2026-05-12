@@ -350,8 +350,8 @@ public class TripService {
             rows.add(toSubmissionRow(
                     submission,
                     submission.getAnchorInstallment(),
-                    submission.getReportedAmount(),
-                    submission.getAmountInTripCurrency(),
+                    approvedOutcome.getReportedAmount(),
+                    approvedOutcome.getAmountInTripCurrency(),
                     "Aprobado",
                     approvedOutcome.getAdminObservation()
             ));
