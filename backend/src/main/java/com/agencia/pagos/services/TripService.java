@@ -326,13 +326,13 @@ public class TripService {
 
         rows.sort(
                 Comparator.comparing(SpreadsheetReceiptRowDTO::reportedPaymentDate,
-                                Comparator.nullsLast(Comparator.<LocalDate>naturalOrder().reversed()))
+                                Comparator.nullsLast(Comparator.reverseOrder()))
                         .thenComparing(SpreadsheetReceiptRowDTO::installmentNumber,
                                 Comparator.nullsLast(Integer::compareTo))
-                        .thenComparing(row -> row.studentLastname() == null ? "" : row.studentLastname(),
-                                String.CASE_INSENSITIVE_ORDER)
-                        .thenComparing(row -> row.studentName() == null ? "" : row.studentName(),
-                                String.CASE_INSENSITIVE_ORDER)
+                        .thenComparing(SpreadsheetReceiptRowDTO::studentLastname,
+                                Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER))
+                        .thenComparing(SpreadsheetReceiptRowDTO::studentName,
+                                Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER))
         );
 
         return rows;

@@ -152,17 +152,22 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
     }));
   };
 
-  const handleOrderChange = (value: string) => {
-    const orderMap: Record<string, Pick<SpreadsheetParams, "sortBy" | "order">> = {
-      "student-asc": { sortBy: "student", order: "asc" },
-      "student-desc": { sortBy: "student", order: "desc" },
-      "parent-asc": { sortBy: "parent", order: "asc" },
-      "parent-desc": { sortBy: "parent", order: "desc" },
-      "email-asc": { sortBy: "email", order: "asc" },
-      "date-asc": { sortBy: "date", order: "asc" },
-      "date-desc": { sortBy: "date", order: "desc" },
-    };
+  const orderMap: Record<string, Pick<SpreadsheetParams, "sortBy" | "order">> = {
+    "student-asc": { sortBy: "student", order: "asc" },
+    "student-desc": { sortBy: "student", order: "desc" },
+    "parent-asc": { sortBy: "parent", order: "asc" },
+    "parent-desc": { sortBy: "parent", order: "desc" },
+    "email-asc": { sortBy: "email", order: "asc" },
+    "date-asc": { sortBy: "date", order: "asc" },
+    "date-desc": { sortBy: "date", order: "desc" },
+  };
 
+  const currentOrderKey =
+    Object.entries(orderMap).find(
+      ([, v]) => v.sortBy === params.sortBy && v.order === params.order,
+    )?.[0] ?? "student-asc";
+
+  const handleOrderChange = (value: string) => {
     const resolved = orderMap[value];
     if (resolved) {
       setParams((current) => ({ ...current, page: 0, ...resolved }));
@@ -338,21 +343,7 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
               </select>
               <select
                 className={styles.select}
-                value={
-                  params.sortBy === "student" && params.order === "desc"
-                    ? "student-desc"
-                    : params.sortBy === "parent" && params.order === "asc"
-                      ? "parent-asc"
-                      : params.sortBy === "parent" && params.order === "desc"
-                        ? "parent-desc"
-                        : params.sortBy === "email"
-                          ? "email-asc"
-                          : params.sortBy === "date" && params.order === "desc"
-                            ? "date-desc"
-                            : params.sortBy === "date"
-                              ? "date-asc"
-                              : "student-asc"
-                }
+                value={currentOrderKey}
                 onChange={(event) => handleOrderChange(event.target.value)}
               >
                 <option value="student-asc">Alumno A→Z</option>
