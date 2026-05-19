@@ -1,6 +1,7 @@
 import { screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { SpreadsheetParamsSchema } from "@/features/trips/types/trips-dtos";
 import { SpreadsheetPage } from "@/features/trips/pages/SpreadsheetPage";
 import styles from "@/features/trips/pages/SpreadsheetPage.module.css";
 import { renderWithProviders } from "@/test/test-utils";
@@ -84,5 +85,13 @@ describe("SpreadsheetPage", () => {
 
     const badge = screen.getByText("Al día").parentElement;
     expect(badge).toHaveClass(styles.statusNeutral);
+  });
+
+  it("accepts sortBy date in SpreadsheetParamsSchema", () => {
+    const result = SpreadsheetParamsSchema.safeParse({ sortBy: "date" });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.sortBy).toBe("date");
+    }
   });
 });

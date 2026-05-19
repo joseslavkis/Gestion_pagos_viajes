@@ -266,20 +266,26 @@ class TripExcelExporterTest {
                 "TRANSFER", new BigDecimal("100.00"), "ARS", null, new BigDecimal("100.00"), "Aprobado", null
         );
 
-        byte[] excelBytes = exporter.export(buildSummarySpreadsheet(), "ARS", List.of(first, second, third));
+        byte[] excelBytes = exporter.export(buildSummarySpreadsheet(), "ARS",
+                List.of(third, first, second));
 
         try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(excelBytes))) {
             var sheet = workbook.getSheet("Comprobantes");
-            assertEquals("1", dataFormatter.formatCellValue(sheet.getRow(1).getCell(0)));
-            assertEquals("Alvarez", dataFormatter.formatCellValue(sheet.getRow(1).getCell(2)));
-            assertEquals("Ana", dataFormatter.formatCellValue(sheet.getRow(1).getCell(3)));
+            // Row 1: third receipt (latest payment date 2026-07-15)
+            assertEquals("2", dataFormatter.formatCellValue(sheet.getRow(1).getCell(0)));
+            assertEquals("Pérez", dataFormatter.formatCellValue(sheet.getRow(1).getCell(2)));
+            assertEquals("Lautaro", dataFormatter.formatCellValue(sheet.getRow(1).getCell(3)));
+            assertEquals("15/07/2026", dataFormatter.formatCellValue(sheet.getRow(1).getCell(5)));
 
+            // Row 2: first receipt (payment date 2026-06-20)
             assertEquals("1", dataFormatter.formatCellValue(sheet.getRow(2).getCell(0)));
             assertEquals("Alvarez", dataFormatter.formatCellValue(sheet.getRow(2).getCell(2)));
-            assertEquals("Beto", dataFormatter.formatCellValue(sheet.getRow(2).getCell(3)));
+            assertEquals("Ana", dataFormatter.formatCellValue(sheet.getRow(2).getCell(3)));
 
-            assertEquals("2", dataFormatter.formatCellValue(sheet.getRow(3).getCell(0)));
-            assertEquals("Pérez", dataFormatter.formatCellValue(sheet.getRow(3).getCell(2)));
+            // Row 3: second receipt (earliest payment date 2026-06-15)
+            assertEquals("1", dataFormatter.formatCellValue(sheet.getRow(3).getCell(0)));
+            assertEquals("Alvarez", dataFormatter.formatCellValue(sheet.getRow(3).getCell(2)));
+            assertEquals("Beto", dataFormatter.formatCellValue(sheet.getRow(3).getCell(3)));
         }
     }
 

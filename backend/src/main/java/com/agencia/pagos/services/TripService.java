@@ -52,6 +52,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -324,10 +325,14 @@ public class TripService {
         }
 
         rows.sort(
-                Comparator.comparing(SpreadsheetReceiptRowDTO::installmentNumber, Comparator.nullsLast(Integer::compareTo))
-                        .thenComparing(row -> row.studentLastname() == null ? "" : row.studentLastname(), String.CASE_INSENSITIVE_ORDER)
-                        .thenComparing(row -> row.studentName() == null ? "" : row.studentName(), String.CASE_INSENSITIVE_ORDER)
-                        .thenComparing(SpreadsheetReceiptRowDTO::reportedPaymentDate, Comparator.nullsLast(LocalDate::compareTo))
+                Comparator.comparing(SpreadsheetReceiptRowDTO::reportedPaymentDate,
+                                Comparator.nullsLast(Comparator.reverseOrder()))
+                        .thenComparing(SpreadsheetReceiptRowDTO::installmentNumber,
+                                Comparator.nullsLast(Integer::compareTo))
+                        .thenComparing(SpreadsheetReceiptRowDTO::studentLastname,
+                                Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER))
+                        .thenComparing(SpreadsheetReceiptRowDTO::studentName,
+                                Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER))
         );
 
         return rows;
@@ -898,6 +903,9 @@ public class TripService {
     }
 
     private static String normalizeSortBy(String sortBy) {
+        if ("date".equalsIgnoreCase(sortBy)) {
+            return "date";
+        }
         if ("parent".equalsIgnoreCase(sortBy)) {
             return "parent";
         }
@@ -956,6 +964,16 @@ public class TripService {
         } else if ("email".equals(sortBy)) {
             comparator = Comparator.comparing(SpreadsheetRowDTO::email, textComparator)
                     .thenComparing(SpreadsheetRowDTO::lastname, textComparator);
+        } else if ("date".equals(sortBy)) {
+            Comparator<LocalDate> dateComparator = Comparator.nullsLast(LocalDate::compareTo);
+            comparator = Comparator.comparing(
+                    row -> row.installments().stream()
+                            .map(SpreadsheetRowInstallmentDTO::dueDate)
+                            .filter(Objects::nonNull)
+                            .min(LocalDate::compareTo)
+                            .orElse(null),
+                    dateComparator
+            );
         } else {
             comparator = Comparator.comparing(TripService::studentSortLastname, textComparator)
                     .thenComparing(TripService::studentSortName, textComparator);
