@@ -4,6 +4,8 @@ import type {
   BulkAssignResultDTO,
   SpreadsheetDTO,
   SpreadsheetParams,
+  SpreadsheetReceiptPageDTO,
+  SpreadsheetReceiptParams,
   StatusResponseDTO,
   TripCreateDTO,
   TripDetailDTO,
@@ -15,6 +17,7 @@ import type {
 import {
   BulkAssignResultDTOSchema,
   SpreadsheetDTOSchema,
+  SpreadsheetReceiptPageDTOSchema,
   StatusResponseDTOSchema,
   TripDetailDTOSchema,
   TripStudentAdminDTOSchema,
@@ -229,6 +232,41 @@ export function useSpreadsheet(tripId: number, params: SpreadsheetParams) {
           : `/api/v1/trips/${tripId}/spreadsheet`;
 
       return apiGet(endpoint, (json) => SpreadsheetDTOSchema.parse(json), {
+        headers:
+          tokenState.state === "LOGGED_IN"
+            ? {
+                Authorization: `Bearer ${tokenState.accessToken}`,
+              }
+            : undefined,
+      });
+    },
+  });
+}
+
+export function useComprobantes(tripId: number, params: SpreadsheetReceiptParams) {
+  const [tokenState] = useToken();
+
+  return useQuery<SpreadsheetReceiptPageDTO, ApiError>({
+    queryKey: [
+      "trips",
+      tripId,
+      "comprobantes",
+      params.page,
+      params.size,
+      params.sortBy,
+      params.order,
+    ],
+    enabled: tripId > 0,
+    queryFn: async () => {
+      const queryParams = new URLSearchParams();
+      queryParams.set("page", String(params.page));
+      queryParams.set("size", String(params.size));
+      queryParams.set("sortBy", params.sortBy);
+      queryParams.set("order", params.order);
+
+      const endpoint = `/api/v1/trips/${tripId}/comprobantes?${queryParams.toString()}`;
+
+      return apiGet(endpoint, (json) => SpreadsheetReceiptPageDTOSchema.parse(json), {
         headers:
           tokenState.state === "LOGGED_IN"
             ? {

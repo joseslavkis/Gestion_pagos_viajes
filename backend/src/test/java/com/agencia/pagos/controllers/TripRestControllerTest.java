@@ -1469,4 +1469,65 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                         .header("Authorization", "Bearer " + userTokens.accessToken()))
                 .andExpect(status().isForbidden());
     }
+
+    @Test
+    void getComprobantes_returnsPaginatedJson() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-comprobantes-page"));
+        UserCreateDTO userDto = buildValidUser("user-comprobantes-page");
+        signUp(userDto);
+        Trip trip = buildTripForBulk("Trip Comprobantes Page", BigDecimal.valueOf(5000), 2, 10, BigDecimal.valueOf(100), false, LocalDate.now().plusMonths(1));
+
+        mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new UserAssignBulkDTO(List.of(userDto.students().get(0).dni())))))
+                .andExpect(status().isOk());
+
+        List<Installment> installments = installmentRepository.findByTripIdWithUsers(trip.getId());
+        Installment inst = installments.get(0);
+
+        // Create 3 payment receipts
+        for (int i = 0; i < 3; i++) {
+            paymentReceiptRepository.save(PaymentReceipt.builder()
+                    .installment(inst)
+                    .reportedAmount(new BigDecimal("500" + i))
+                    .paymentCurrency(Currency.ARS)
+                    .exchangeRate(BigDecimal.ONE)
+                    .amountInTripCurrency(new BigDecimal("500" + i))
+                    .reportedPaymentDate(LocalDate.of(2026, 3, 10 + i))
+                    .paymentMethod(PaymentMethod.BANK_TRANSFER)
+                    .status(ReceiptStatus.APPROVED)
+                    .fileKey("file-" + i)
+                    .build());
+        }
+
+        mockMvc.perform(get("/api/v1/trips/{id}/comprobantes", trip.getId())
+                        .param("page", "0")
+                        .param("size", "20")
+                        .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tripName").value("Trip Comprobantes Page"))
+                .andExpect(jsonPath("$.page").value(0))
+                .andExpect(jsonPath("$.size").value(20))
+                .andExpect(jsonPath("$.totalElements").value(3))
+                .andExpect(jsonPath("$.totalPages").value(1))
+                .andExpect(jsonPath("$.content", hasSize(3)))
+                .andExpect(jsonPath("$.content[0].status").value("Aprobado"))
+                .andExpect(jsonPath("$.content[0].paymentMethod").value("BANK_TRANSFER"));
+    }
+
+    @Test
+    void getComprobantes_tripNotFound_devuelve404() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-comprobantes-404"));
+
+        mockMvc.perform(get("/api/v1/trips/{id}/comprobantes", 99999L)
+                        .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void getComprobantes_sinAutenticacion_devuelve401() throws Exception {
+        mockMvc.perform(get("/api/v1/trips/{id}/comprobantes", 1L))
+                .andExpect(status().isUnauthorized());
+    }
 }

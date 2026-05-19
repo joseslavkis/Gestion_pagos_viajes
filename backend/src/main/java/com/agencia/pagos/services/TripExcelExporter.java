@@ -1,6 +1,6 @@
 package com.agencia.pagos.services;
 
-import com.agencia.pagos.dtos.internal.SpreadsheetReceiptRowDTO;
+import com.agencia.pagos.dtos.response.SpreadsheetReceiptRowDTO;
 import com.agencia.pagos.dtos.response.SpreadsheetDTO;
 import com.agencia.pagos.dtos.response.SpreadsheetRowDTO;
 import com.agencia.pagos.dtos.response.SpreadsheetRowInstallmentDTO;

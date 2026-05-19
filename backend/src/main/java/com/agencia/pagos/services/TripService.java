@@ -3,9 +3,10 @@ package com.agencia.pagos.services;
 import com.agencia.pagos.dtos.request.TripCreateDTO;
 import com.agencia.pagos.dtos.request.TripUpdateDTO;
 import com.agencia.pagos.dtos.request.UserAssignBulkDTO;
-import com.agencia.pagos.dtos.internal.SpreadsheetReceiptRowDTO;
+import com.agencia.pagos.dtos.response.SpreadsheetReceiptRowDTO;
 import com.agencia.pagos.dtos.response.BulkAssignResultDTO;
 import com.agencia.pagos.dtos.response.SpreadsheetDTO;
+import com.agencia.pagos.dtos.response.SpreadsheetReceiptPageDTO;
 import com.agencia.pagos.dtos.response.SpreadsheetRowDTO;
 import com.agencia.pagos.dtos.response.SpreadsheetRowInstallmentDTO;
 import com.agencia.pagos.dtos.response.TripDetailDTO;
@@ -280,6 +281,49 @@ public class TripService {
             InstallmentStatus status
     ) {
         return buildSpreadsheet(tripId, page, size, search, sortBy, order, status, true);
+    }
+
+    @Transactional(readOnly = true)
+    public SpreadsheetReceiptPageDTO getComprobantes(
+            Long tripId,
+            String sortBy,
+            String order,
+            int page,
+            int size
+    ) {
+        if (size > 100) {
+            throw new IllegalArgumentException("Page size cannot exceed 100");
+        }
+
+        Trip trip = tripRepository.findById(tripId)
+                .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + tripId));
+
+        List<SpreadsheetReceiptRowDTO> rows = buildReceiptRows(tripId);
+
+        if ("asc".equalsIgnoreCase(order)) {
+            rows = new ArrayList<>(rows);
+            java.util.Collections.reverse(rows);
+        }
+
+        long totalElements = rows.size();
+        int safePage = Math.max(0, page);
+        int safeSize = Math.max(1, size);
+        int totalPages = totalElements == 0 ? 0 : Math.max(1, (int) Math.ceil((double) totalElements / safeSize));
+        int offset = safePage * safeSize;
+
+        List<SpreadsheetReceiptRowDTO> paged = rows.stream()
+                .skip(offset)
+                .limit(safeSize)
+                .toList();
+
+        return new SpreadsheetReceiptPageDTO(
+                trip.getName(),
+                safePage,
+                safeSize,
+                totalElements,
+                totalPages,
+                paged
+        );
     }
 
     @Transactional(readOnly = true)

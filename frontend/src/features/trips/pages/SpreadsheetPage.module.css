@@ -711,3 +711,68 @@
   border: 1px solid rgba(22, 163, 74, 0.4);
   color: #166534;
 }
+
+/* View toggle pill group */
+
+.viewToggle {
+  display: flex;
+  gap: 0.5rem;
+  padding-top: 0.5rem;
+}
+
+.viewToggleOption {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.6rem 1.2rem;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  background: transparent;
+  color: #64748b;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 180ms ease, color 180ms ease, border-color 180ms ease;
+}
+
+.viewToggleOption:hover:not(:disabled) {
+  background: rgba(11, 91, 207, 0.06);
+  color: #0b5bcf;
+  border-color: rgba(11, 91, 207, 0.35);
+}
+
+.viewToggleOption:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.viewToggleOptionActive {
+  background: rgba(11, 91, 207, 0.12);
+  border-color: rgba(11, 91, 207, 0.4);
+  color: #0b5bcf;
+}
+
+/* Comprobantes flat table overrides */
+
+.comprobantesTable th,
+.comprobantesTable td {
+  min-width: 140px;
+  max-width: 220px;
+  position: static;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.comprobantesTable th:first-child,
+.comprobantesTable td:first-child {
+  min-width: 80px;
+  max-width: 90px;
+}
+
+.comprobantesTable th:last-child,
+.comprobantesTable td:last-child {
+  min-width: 180px;
+  max-width: 250px;
+}

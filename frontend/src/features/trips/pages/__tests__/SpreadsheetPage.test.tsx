@@ -8,6 +8,7 @@ import { renderWithProviders } from "@/test/test-utils";
 
 const useSpreadsheetMock = vi.fn();
 const useTripMock = vi.fn();
+const useComprobantesMock = vi.fn();
 
 vi.mock("wouter", async (importOriginal) => {
   const actual = await importOriginal<typeof import("wouter")>();
@@ -21,6 +22,7 @@ vi.mock("@/features/trips/services/trips-service", () => ({
   downloadSpreadsheetExcel: vi.fn(),
   useSpreadsheet: (...args: unknown[]) => useSpreadsheetMock(...args),
   useTrip: (...args: unknown[]) => useTripMock(...args),
+  useComprobantes: (...args: unknown[]) => useComprobantesMock(...args),
 }));
 
 vi.mock("@/features/payments/components/PaymentDrawer", () => ({
@@ -70,6 +72,12 @@ describe("SpreadsheetPage", () => {
           },
         ],
       },
+      isLoading: false,
+      error: null,
+    });
+
+    useComprobantesMock.mockReturnValue({
+      data: null,
       isLoading: false,
       error: null,
     });

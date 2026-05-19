@@ -5,6 +5,7 @@ import com.agencia.pagos.dtos.request.TripUpdateDTO;
 import com.agencia.pagos.dtos.request.UserAssignBulkDTO;
 import com.agencia.pagos.dtos.response.BulkAssignResultDTO;
 import com.agencia.pagos.dtos.response.SpreadsheetDTO;
+import com.agencia.pagos.dtos.response.SpreadsheetReceiptPageDTO;
 import com.agencia.pagos.dtos.response.StatusResponseDTO;
 import com.agencia.pagos.dtos.response.TripDetailDTO;
 import com.agencia.pagos.dtos.response.TripStudentAdminDTO;
@@ -134,6 +135,20 @@ class TripRestController {
                         status
                 )
         );
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @GetMapping(value = "/{id}/comprobantes", produces = "application/json")
+    @Operation(summary = "Get paginated comprobantes (admin only)")
+    @ApiResponse(responseCode = "404", description = "Trip not found", content = @Content)
+    ResponseEntity<SpreadsheetReceiptPageDTO> getComprobantes(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "reportedPaymentDate") String sortBy,
+            @RequestParam(defaultValue = "desc") String order,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size
+    ) {
+        return ResponseEntity.ok(tripService.getComprobantes(id, sortBy, order, page, size));
     }
 
     @PreAuthorize("hasRole('ADMIN')")

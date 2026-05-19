@@ -1,15 +1,26 @@
 package com.agencia.pagos;
 
 import com.agencia.pagos.dtos.response.SpreadsheetDTO;
+import com.agencia.pagos.dtos.response.SpreadsheetReceiptPageDTO;
 import com.agencia.pagos.entities.Currency;
 import com.agencia.pagos.entities.Installment;
 import com.agencia.pagos.entities.InstallmentStatus;
+import com.agencia.pagos.entities.PaymentMethod;
+import com.agencia.pagos.entities.PaymentReceipt;
+import com.agencia.pagos.entities.ReceiptStatus;
 import com.agencia.pagos.entities.Student;
 import com.agencia.pagos.entities.Trip;
 import com.agencia.pagos.entities.user.User;
+import com.agencia.pagos.repositories.InstallmentReminderNotificationRepository;
 import com.agencia.pagos.repositories.InstallmentRepository;
+import com.agencia.pagos.repositories.PaymentReceiptRepository;
+import com.agencia.pagos.repositories.PendingTripStudentRepository;
+import com.agencia.pagos.repositories.StudentRepository;
 import com.agencia.pagos.repositories.TripRepository;
 import com.agencia.pagos.repositories.UserRepository;
+import com.agencia.pagos.services.InstallmentStatusResolver;
+import com.agencia.pagos.services.InstallmentUiStatusResolver;
+import com.agencia.pagos.services.TripExcelExporter;
 import com.agencia.pagos.services.TripService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,6 +32,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -37,13 +49,36 @@ class TripServiceSpreadsheetTest {
     private UserRepository userRepository;
 
     @Mock
+    private StudentRepository studentRepository;
+
+    @Mock
     private InstallmentRepository installmentRepository;
+
+    @Mock
+    private PaymentReceiptRepository paymentReceiptRepository;
+
+    @Mock
+    private InstallmentReminderNotificationRepository installmentReminderNotificationRepository;
+
+    @Mock
+    private PendingTripStudentRepository pendingTripStudentRepository;
 
     private TripService tripService;
 
     @BeforeEach
     void setUp() {
-        tripService = new TripService(tripRepository, userRepository, installmentRepository);
+        tripService = new TripService(
+                tripRepository,
+                userRepository,
+                studentRepository,
+                installmentRepository,
+                paymentReceiptRepository,
+                installmentReminderNotificationRepository,
+                pendingTripStudentRepository,
+                new InstallmentStatusResolver(),
+                new InstallmentUiStatusResolver(),
+                new TripExcelExporter()
+        );
     }
 
     @Test
@@ -168,6 +203,99 @@ class TripServiceSpreadsheetTest {
         assertEquals("Tomas", result.rows().get(0).studentName());
         assertEquals("Mateo", result.rows().get(1).studentName());
         assertEquals("Sofia", result.rows().get(2).studentName());
+    }
+
+    @Test
+    void getComprobantes_paginatesCorrectly() {
+        Trip trip = buildTrip(50L);
+        List<PaymentReceipt> receipts = new ArrayList<>();
+        for (int i = 0; i < 45; i++) {
+            Installment installment = buildInstallment(
+                    500L + i, trip,
+                    buildParent(50L, "Padre", "Nro" + i, "p" + i + "@test.com"),
+                    buildStudent(50L + i, "Alumno" + i, "Apellido" + i, String.format("%08d", 40000000 + i)),
+                    i + 1
+            );
+            receipts.add(PaymentReceipt.builder()
+                    .id(500L + i)
+                    .installment(installment)
+                    .reportedPaymentDate(LocalDate.of(2026, 1, 1).plusDays(i))
+                    .paymentMethod(PaymentMethod.BANK_TRANSFER)
+                    .reportedAmount(new BigDecimal("85000"))
+                    .paymentCurrency(Currency.ARS)
+                    .exchangeRate(BigDecimal.ONE)
+                    .amountInTripCurrency(new BigDecimal("85000"))
+                    .status(ReceiptStatus.APPROVED)
+                    .adminObservation(null)
+                    .fileKey("receipt-" + i + ".pdf")
+                    .build());
+        }
+
+        when(tripRepository.findById(50L)).thenReturn(Optional.of(trip));
+        when(paymentReceiptRepository.findByTripIdWithContext(50L)).thenReturn(receipts);
+
+        SpreadsheetReceiptPageDTO result = tripService.getComprobantes(50L, "reportedPaymentDate", "desc", 0, 20);
+
+        assertEquals(20, result.content().size());
+        assertEquals(45L, result.totalElements());
+        assertEquals(3, result.totalPages());
+        assertEquals(0, result.page());
+        assertEquals(20, result.size());
+        assertEquals("Viaje", result.tripName());
+    }
+
+    @Test
+    void getComprobantes_emptyTrip() {
+        Trip trip = buildTrip(60L);
+
+        when(tripRepository.findById(60L)).thenReturn(Optional.of(trip));
+        when(paymentReceiptRepository.findByTripIdWithContext(60L)).thenReturn(List.of());
+
+        SpreadsheetReceiptPageDTO result = tripService.getComprobantes(60L, "reportedPaymentDate", "desc", 0, 20);
+
+        assertEquals(0, result.content().size());
+        assertEquals(0L, result.totalElements());
+        assertEquals(0, result.totalPages());
+        assertEquals(0, result.page());
+        assertEquals(20, result.size());
+    }
+
+    @Test
+    void getComprobantes_sortAsc_returnsReversedOrder() {
+        Trip trip = buildTrip(70L);
+        List<PaymentReceipt> receipts = new ArrayList<>();
+        // Create 5 receipts with dates 2026-01-01 through 2026-01-05
+        for (int i = 0; i < 5; i++) {
+            Installment installment = buildInstallment(
+                    700L + i, trip,
+                    buildParent(70L, "Padre", "N" + i, "p" + i + "@test.com"),
+                    buildStudent(70L + i, "A" + i, "Z" + i, String.format("%08d", 50000000 + i)),
+                    1
+            );
+            receipts.add(PaymentReceipt.builder()
+                    .id(700L + i)
+                    .installment(installment)
+                    .reportedPaymentDate(LocalDate.of(2026, 1, 1).plusDays(4 - i)) // reversed: 5,4,3,2,1
+                    .paymentMethod(PaymentMethod.BANK_TRANSFER)
+                    .reportedAmount(BigDecimal.TEN)
+                    .paymentCurrency(Currency.ARS)
+                    .exchangeRate(BigDecimal.ONE)
+                    .amountInTripCurrency(BigDecimal.TEN)
+                    .status(ReceiptStatus.APPROVED)
+                    .adminObservation(null)
+                    .fileKey("r" + i + ".pdf")
+                    .build());
+        }
+
+        when(tripRepository.findById(70L)).thenReturn(Optional.of(trip));
+        when(paymentReceiptRepository.findByTripIdWithContext(70L)).thenReturn(receipts);
+
+        SpreadsheetReceiptPageDTO result = tripService.getComprobantes(70L, "reportedPaymentDate", "asc", 0, 10);
+
+        assertEquals(5, result.content().size());
+        // In ascending order: oldest date first
+        assertEquals(LocalDate.of(2026, 1, 1), result.content().get(0).reportedPaymentDate());
+        assertEquals(LocalDate.of(2026, 1, 5), result.content().get(4).reportedPaymentDate());
     }
 
     private Trip buildTrip(Long id) {
