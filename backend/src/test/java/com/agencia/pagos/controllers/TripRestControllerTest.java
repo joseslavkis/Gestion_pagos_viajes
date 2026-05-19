@@ -14,6 +14,7 @@ import com.agencia.pagos.entities.PaymentAllocation;
 import com.agencia.pagos.entities.PaymentOutcome;
 import com.agencia.pagos.entities.PaymentOutcomeStatus;
 import com.agencia.pagos.entities.PaymentReceipt;
+import com.agencia.pagos.entities.ReceiptStatus;
 import com.agencia.pagos.entities.PaymentMethod;
 import com.agencia.pagos.entities.PaymentSubmission;
 import com.agencia.pagos.entities.PaymentSubmissionStatus;
