@@ -261,41 +261,47 @@ class TripServiceSpreadsheetTest {
     }
 
     @Test
-    void getComprobantes_sortAsc_returnsReversedOrder() {
+    void getComprobantes_sortAsc_keepsSecondaryOrderStable() {
         Trip trip = buildTrip(70L);
         List<PaymentReceipt> receipts = new ArrayList<>();
-        // Create 5 receipts with dates 2026-01-01 through 2026-01-05
-        for (int i = 0; i < 5; i++) {
-            Installment installment = buildInstallment(
-                    700L + i, trip,
-                    buildParent(70L, "Padre", "N" + i, "p" + i + "@test.com"),
-                    buildStudent(70L + i, "A" + i, "Z" + i, String.format("%08d", 50000000 + i)),
-                    1
-            );
-            receipts.add(PaymentReceipt.builder()
-                    .id(700L + i)
-                    .installment(installment)
-                    .reportedPaymentDate(LocalDate.of(2026, 1, 1).plusDays(4 - i)) // reversed: 5,4,3,2,1
-                    .paymentMethod(PaymentMethod.BANK_TRANSFER)
-                    .reportedAmount(BigDecimal.TEN)
-                    .paymentCurrency(Currency.ARS)
-                    .exchangeRate(BigDecimal.ONE)
-                    .amountInTripCurrency(BigDecimal.TEN)
-                    .status(ReceiptStatus.APPROVED)
-                    .adminObservation(null)
-                    .fileKey("r" + i + ".pdf")
-                    .build());
-        }
+        receipts.add(buildReceipt(700L, trip, 2, "Beto", "Zulu", LocalDate.of(2026, 1, 1)));
+        receipts.add(buildReceipt(701L, trip, 1, "Ana", "Alfa", LocalDate.of(2026, 1, 1)));
+        receipts.add(buildReceipt(702L, trip, 3, "Caro", "Mora", LocalDate.of(2026, 1, 2)));
 
         when(tripRepository.findById(70L)).thenReturn(Optional.of(trip));
         when(paymentReceiptRepository.findByTripIdWithContext(70L)).thenReturn(receipts);
 
         SpreadsheetReceiptPageDTO result = tripService.getComprobantes(70L, "reportedPaymentDate", "asc", 0, 10);
 
-        assertEquals(5, result.content().size());
-        // In ascending order: oldest date first
+        assertEquals(3, result.content().size());
         assertEquals(LocalDate.of(2026, 1, 1), result.content().get(0).reportedPaymentDate());
-        assertEquals(LocalDate.of(2026, 1, 5), result.content().get(4).reportedPaymentDate());
+        assertEquals(1, result.content().get(0).installmentNumber());
+        assertEquals(2, result.content().get(1).installmentNumber());
+        assertEquals(LocalDate.of(2026, 1, 2), result.content().get(2).reportedPaymentDate());
+    }
+
+    private PaymentReceipt buildReceipt(Long id, Trip trip, int installmentNumber, String studentName, String studentLastname,
+                                        LocalDate reportedPaymentDate) {
+        Installment installment = buildInstallment(
+                id,
+                trip,
+                buildParent(id, "Padre", "N" + installmentNumber, "p" + installmentNumber + "@test.com"),
+                buildStudent(id, studentName, studentLastname, String.format("%08d", 50000000 + installmentNumber)),
+                installmentNumber
+        );
+        return PaymentReceipt.builder()
+                .id(id)
+                .installment(installment)
+                .reportedPaymentDate(reportedPaymentDate)
+                .paymentMethod(PaymentMethod.BANK_TRANSFER)
+                .reportedAmount(BigDecimal.TEN)
+                .paymentCurrency(Currency.ARS)
+                .exchangeRate(BigDecimal.ONE)
+                .amountInTripCurrency(BigDecimal.TEN)
+                .status(ReceiptStatus.APPROVED)
+                .adminObservation(null)
+                .fileKey("r" + id + ".pdf")
+                .build();
     }
 
     private Trip buildTrip(Long id) {

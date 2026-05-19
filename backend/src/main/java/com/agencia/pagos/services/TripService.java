@@ -299,11 +299,7 @@ public class TripService {
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + tripId));
 
         List<SpreadsheetReceiptRowDTO> rows = buildReceiptRows(tripId);
-
-        if ("asc".equalsIgnoreCase(order)) {
-            rows = new ArrayList<>(rows);
-            java.util.Collections.reverse(rows);
-        }
+        rows.sort(buildReceiptComparator(sortBy, order));
 
         long totalElements = rows.size();
         int safePage = Math.max(0, page);
@@ -368,18 +364,28 @@ public class TripService {
             appendSubmissionRows(rows, submission);
         }
 
-        rows.sort(
-                Comparator.comparing(SpreadsheetReceiptRowDTO::reportedPaymentDate,
-                                Comparator.nullsLast(Comparator.reverseOrder()))
-                        .thenComparing(SpreadsheetReceiptRowDTO::installmentNumber,
-                                Comparator.nullsLast(Integer::compareTo))
-                        .thenComparing(SpreadsheetReceiptRowDTO::studentLastname,
-                                Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER))
-                        .thenComparing(SpreadsheetReceiptRowDTO::studentName,
-                                Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER))
-        );
+        rows.sort(buildReceiptComparator("reportedPaymentDate", "desc"));
 
         return rows;
+    }
+
+    private Comparator<SpreadsheetReceiptRowDTO> buildReceiptComparator(String sortBy, String order) {
+        Comparator<LocalDate> reportedPaymentDateComparator = "asc".equalsIgnoreCase(order)
+                ? Comparator.naturalOrder()
+                : Comparator.reverseOrder();
+
+        if (!"reportedPaymentDate".equalsIgnoreCase(sortBy) && !"date".equalsIgnoreCase(sortBy)) {
+            sortBy = "reportedPaymentDate";
+        }
+
+        return Comparator.comparing(SpreadsheetReceiptRowDTO::reportedPaymentDate,
+                        Comparator.nullsLast(reportedPaymentDateComparator))
+                .thenComparing(SpreadsheetReceiptRowDTO::installmentNumber,
+                        Comparator.nullsLast(Integer::compareTo))
+                .thenComparing(SpreadsheetReceiptRowDTO::studentLastname,
+                        Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER))
+                .thenComparing(SpreadsheetReceiptRowDTO::studentName,
+                        Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER));
     }
 
     private void appendSubmissionRows(List<SpreadsheetReceiptRowDTO> rows, PaymentSubmission submission) {

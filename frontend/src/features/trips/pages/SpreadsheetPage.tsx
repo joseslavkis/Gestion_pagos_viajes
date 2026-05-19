@@ -28,6 +28,25 @@ const currencyFormatter = new Intl.NumberFormat("es-AR", {
   currency: "ARS",
 });
 
+const usdCurrencyFormatter = new Intl.NumberFormat("es-AR", {
+  style: "currency",
+  currency: "USD",
+});
+
+const dateFormatter = new Intl.DateTimeFormat("es-AR", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  timeZone: "America/Argentina/Buenos_Aires",
+});
+
+const paymentMethodLabels: Record<string, string> = {
+  BANK_TRANSFER: "Transferencia bancaria",
+  CASH: "Efectivo",
+  DEPOSIT: "Depósito",
+  OTHER: "Otro",
+};
+
 type SpreadsheetPageProps = {
   tripId: number;
 };
@@ -314,12 +333,16 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
               <div className={styles.titleBlock}>
                 <h1 className={styles.title}>{data?.tripName ?? "Planilla de viaje"}</h1>
                 <p className={styles.subtitle}>
-                  Vista de cuotas y estados de pago por participante. Moneda: {tripData?.currency ?? "ARS"}
+                  {view === "planilla"
+                    ? `Vista de cuotas y estados de pago por participante. Moneda: ${tripData?.currency ?? "ARS"}`
+                    : `Vista de comprobantes registrados para el viaje. Moneda del viaje: ${tripData?.currency ?? "ARS"}`}
                 </p>
-                {data ? (
+                {view === "planilla" && data ? (
                   <span className={styles.counter}>
                     {data.totalElements} participantes · {data.installmentsCount} cuotas
                   </span>
+                ) : view === "comprobantes" && comprobantesData ? (
+                  <span className={styles.counter}>{comprobantesData.totalElements} comprobantes</span>
                 ) : null}
               </div>
             </div>
@@ -403,18 +426,17 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
             <div className={styles.toolbar}>
               <select
                 className={styles.select}
-                value={`${comprobantesParams.sortBy}-${comprobantesParams.order}`}
+                value={comprobantesParams.order}
                 onChange={(event) => {
-                  const [order] = event.target.value.split("-");
                   setComprobantesParams((c) => ({
                     ...c,
                     page: 0,
-                    order: order as "asc" | "desc",
+                    order: event.target.value as "asc" | "desc",
                   }));
                 }}
               >
-                <option value="reportedPaymentDate-desc">Fecha ↓</option>
-                <option value="reportedPaymentDate-asc">Fecha ↑</option>
+                <option value="desc">Fecha ↓</option>
+                <option value="asc">Fecha ↑</option>
               </select>
             </div>
             )}
@@ -638,13 +660,15 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                       : (comprobantesData?.content ?? []).map((receipt: SpreadsheetReceiptRowDTO, index: number) => (
                           <tr key={index} className={index % 2 === 0 ? styles.rowEven : styles.rowOdd}>
                             <td className={styles.td}>{receipt.installmentNumber ?? "-"}</td>
-                            <td className={styles.td}>{receipt.installmentDueDate ?? "-"}</td>
+                            <td className={styles.td}>{formatDate(receipt.installmentDueDate)}</td>
                             <td className={styles.td}>{receipt.studentLastname ?? "-"}</td>
                             <td className={styles.td}>{receipt.studentName ?? "-"}</td>
                             <td className={styles.td}>{receipt.studentDni ?? "-"}</td>
-                            <td className={styles.td}>{receipt.reportedPaymentDate}</td>
-                            <td className={styles.td}>{receipt.paymentMethod ?? "-"}</td>
-                            <td className={styles.td}>{tripCurrencyFormatter.format(receipt.reportedAmount)}</td>
+                            <td className={styles.td}>{formatDate(receipt.reportedPaymentDate)}</td>
+                            <td className={styles.td}>{formatPaymentMethod(receipt.paymentMethod)}</td>
+                            <td className={styles.td}>
+                              {formatMoneyByCurrency(receipt.reportedAmount, receipt.paymentCurrency ?? tripData?.currency ?? "ARS")}
+                            </td>
                             <td className={styles.td}>{receipt.paymentCurrency ?? "-"}</td>
                             <td className={styles.td}>{receipt.exchangeRate != null ? receipt.exchangeRate.toFixed(2) : "-"}</td>
                             <td className={styles.td}>{tripCurrencyFormatter.format(receipt.amountInTripCurrency)}</td>
@@ -700,6 +724,31 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
       </section>
     </CommonLayout>
   );
+}
+
+function formatDate(isoDate: string | null | undefined): string {
+  if (!isoDate) {
+    return "-";
+  }
+
+  const date = new Date(`${isoDate}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? isoDate : dateFormatter.format(date);
+}
+
+function formatMoneyByCurrency(amount: number, currency: string): string {
+  if (currency === "USD") {
+    return usdCurrencyFormatter.format(amount);
+  }
+
+  return currencyFormatter.format(amount);
+}
+
+function formatPaymentMethod(paymentMethod: string | null | undefined): string {
+  if (!paymentMethod) {
+    return "-";
+  }
+
+  return paymentMethodLabels[paymentMethod] ?? paymentMethod;
 }
 
 function getStatusClass(
