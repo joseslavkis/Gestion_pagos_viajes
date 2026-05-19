@@ -14,6 +14,8 @@ import com.agencia.pagos.services.TripService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -75,6 +77,99 @@ class TripServiceSpreadsheetTest {
         assertEquals("Bruno", result.rows().get(1).studentName());
     }
 
+    @ParameterizedTest
+    @CsvSource({"unknown", "INVALID", "''", "xyz"})
+    void normalizeSortBy_fallsBackToStudentForUnknownValues(String sortBy) {
+        Trip trip = buildTrip(20L);
+        Installment a = buildInstallment(
+                201L, trip,
+                buildParent(10L, "Carlos", "Gomez", "carlos@test.com"),
+                buildStudent(21L, "Emilia", "Zabala", "50111222"),
+                1);
+        Installment b = buildInstallment(
+                202L, trip,
+                buildParent(11L, "Ana", "Lopez", "ana@test.com"),
+                buildStudent(22L, "Luca", "Acosta", "50222333"),
+                1);
+
+        when(tripRepository.findById(20L)).thenReturn(Optional.of(trip));
+        when(installmentRepository.findByTripIdWithUsers(20L)).thenReturn(List.of(a, b));
+
+        SpreadsheetDTO result = tripService.getSpreadsheet(20L, 0, 20, null,
+                sortBy.isEmpty() ? "student" : sortBy, "asc", null);
+
+        assertEquals(2, result.rows().size());
+        // Default fallback is student sort: Acosta before Zabala
+        assertEquals("Acosta", result.rows().get(0).studentLastname());
+        assertEquals("Zabala", result.rows().get(1).studentLastname());
+    }
+
+    @Test
+    void getSpreadsheet_sortByDateAsc_ordersByEarliestDueDateFirst() {
+        Trip trip = buildTrip(30L);
+        // Participant A: earliest due date July 15 (latest)
+        Installment a = buildInstallmentWithDueDate(
+                301L, trip,
+                buildParent(20L, "Maria", "Rios", "maria@test.com"),
+                buildStudent(31L, "Tomas", "Paz", "60111222"),
+                1, LocalDate.of(2026, 7, 15));
+        // Participant B: earliest due date May 10 (earliest)
+        Installment b = buildInstallmentWithDueDate(
+                302L, trip,
+                buildParent(21L, "Pedro", "Luna", "pedro@test.com"),
+                buildStudent(32L, "Sofia", "Diaz", "60222333"),
+                1, LocalDate.of(2026, 5, 10));
+        // Participant C: earliest due date June 20 (middle)
+        Installment c = buildInstallmentWithDueDate(
+                303L, trip,
+                buildParent(22L, "Laura", "Mora", "laura@test.com"),
+                buildStudent(33L, "Mateo", "Rey", "60333444"),
+                1, LocalDate.of(2026, 6, 20));
+
+        when(tripRepository.findById(30L)).thenReturn(Optional.of(trip));
+        when(installmentRepository.findByTripIdWithUsers(30L)).thenReturn(List.of(a, b, c));
+
+        SpreadsheetDTO result = tripService.getSpreadsheet(30L, 0, 20, null, "date", "asc", null);
+
+        assertEquals(3, result.rows().size());
+        // Ascending order by earliest due date: May 10 (B), June 20 (C), July 15 (A)
+        assertEquals("Sofia", result.rows().get(0).studentName());
+        assertEquals("Mateo", result.rows().get(1).studentName());
+        assertEquals("Tomas", result.rows().get(2).studentName());
+    }
+
+    @Test
+    void getSpreadsheet_sortByDateDesc_ordersByLatestDueDateFirst() {
+        Trip trip = buildTrip(40L);
+        // Same data setup as asc test
+        Installment a = buildInstallmentWithDueDate(
+                401L, trip,
+                buildParent(30L, "Maria", "Rios", "maria@test.com"),
+                buildStudent(41L, "Tomas", "Paz", "70111222"),
+                1, LocalDate.of(2026, 7, 15));
+        Installment b = buildInstallmentWithDueDate(
+                402L, trip,
+                buildParent(31L, "Pedro", "Luna", "pedro@test.com"),
+                buildStudent(42L, "Sofia", "Diaz", "70222333"),
+                1, LocalDate.of(2026, 5, 10));
+        Installment c = buildInstallmentWithDueDate(
+                403L, trip,
+                buildParent(32L, "Laura", "Mora", "laura@test.com"),
+                buildStudent(43L, "Mateo", "Rey", "70333444"),
+                1, LocalDate.of(2026, 6, 20));
+
+        when(tripRepository.findById(40L)).thenReturn(Optional.of(trip));
+        when(installmentRepository.findByTripIdWithUsers(40L)).thenReturn(List.of(a, b, c));
+
+        SpreadsheetDTO result = tripService.getSpreadsheet(40L, 0, 20, null, "date", "desc", null);
+
+        assertEquals(3, result.rows().size());
+        // Descending order: July 15 (A), June 20 (C), May 10 (B)
+        assertEquals("Tomas", result.rows().get(0).studentName());
+        assertEquals("Mateo", result.rows().get(1).studentName());
+        assertEquals("Sofia", result.rows().get(2).studentName());
+    }
+
     private Trip buildTrip(Long id) {
         Trip trip = new Trip();
         setField(trip, "id", id);
@@ -108,13 +203,18 @@ class TripServiceSpreadsheetTest {
     }
 
     private Installment buildInstallment(Long id, Trip trip, User user, Student student, int installmentNumber) {
+        return buildInstallmentWithDueDate(id, trip, user, student, installmentNumber, LocalDate.of(2026, 5, 10));
+    }
+
+    private Installment buildInstallmentWithDueDate(
+            Long id, Trip trip, User user, Student student, int installmentNumber, LocalDate dueDate) {
         Installment installment = new Installment();
         installment.setId(id);
         installment.setTrip(trip);
         installment.setUser(user);
         installment.setStudent(student);
         installment.setInstallmentNumber(installmentNumber);
-        installment.setDueDate(LocalDate.of(2026, 5, 10));
+        installment.setDueDate(dueDate);
         installment.setCapitalAmount(new BigDecimal("1000.00"));
         installment.setRetroactiveAmount(BigDecimal.ZERO.setScale(2));
         installment.setFineAmount(BigDecimal.ZERO.setScale(2));

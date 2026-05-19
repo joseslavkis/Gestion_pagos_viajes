@@ -159,6 +159,8 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
       "parent-asc": { sortBy: "parent", order: "asc" },
       "parent-desc": { sortBy: "parent", order: "desc" },
       "email-asc": { sortBy: "email", order: "asc" },
+      "date-asc": { sortBy: "date", order: "asc" },
+      "date-desc": { sortBy: "date", order: "desc" },
     };
 
     const resolved = orderMap[value];
@@ -345,7 +347,11 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                         ? "parent-desc"
                         : params.sortBy === "email"
                           ? "email-asc"
-                          : "student-asc"
+                          : params.sortBy === "date" && params.order === "desc"
+                            ? "date-desc"
+                            : params.sortBy === "date"
+                              ? "date-asc"
+                              : "student-asc"
                 }
                 onChange={(event) => handleOrderChange(event.target.value)}
               >
@@ -354,6 +360,8 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                 <option value="parent-asc">Responsable A→Z</option>
                 <option value="parent-desc">Responsable Z→A</option>
                 <option value="email-asc">Email A→Z</option>
+                <option value="date-asc">Fecha ↑</option>
+                <option value="date-desc">Fecha ↓</option>
               </select>
             </div>
           </header>
