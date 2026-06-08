@@ -123,7 +123,7 @@ public class PaymentService {
     public PaymentBatchPreviewDTO previewPayment(PaymentPreviewRequestDTO dto, String email) {
         User user = getUserByEmail(email);
         PaymentScopeSelection selection = resolvePaymentScope(user, dto.anchorInstallmentId(), false);
-        ExchangeRateQuote quote = resolveExchangeRateQuote(
+        ExchangeRateQuote quote = fetchLiveQuoteForPreview(
                 selection.anchorInstallment().getTrip().getCurrency(),
                 dto.paymentCurrency(),
                 dto.reportedPaymentDate()
@@ -160,14 +160,23 @@ public class PaymentService {
         User user = getUserByEmail(email);
         PaymentScopeSelection selection = resolvePaymentScope(user, anchorInstallmentId, true);
         BankAccount bankAccount = resolveBankAccount(bankAccountId, paymentCurrency);
-        if (previewToken != null && !previewToken.isBlank()) {
+        boolean requiresQuote = requiresExchangeRate(
+                selection.anchorInstallment().getTrip().getCurrency(),
+                paymentCurrency
+        );
+
+        if (requiresQuote) {
+            if (previewToken == null || previewToken.isBlank()) {
+                throw new IllegalArgumentException(
+                        "La previsualización del pago es obligatoria o venció. Volvé a calcularla antes de enviar el comprobante."
+                );
+            }
             ExchangeRateQuote quote = applyPreviewToken(
                     user,
                     anchorInstallmentId,
                     paymentCurrency,
                     reportedAmount,
                     reportedPaymentDate,
-                    selection.anchorInstallment().getTrip().getCurrency() != paymentCurrency,
                     previewToken
             );
             return persistPaymentSubmission(
@@ -182,11 +191,17 @@ public class PaymentService {
             );
         }
 
-        ExchangeRateQuote quote = resolveExchangeRateQuote(
-                selection.anchorInstallment().getTrip().getCurrency(),
-                paymentCurrency,
-                reportedPaymentDate
-        );
+        ExchangeRateQuote sameCurrencyQuote = null;
+        if (previewToken != null && !previewToken.isBlank()) {
+            sameCurrencyQuote = applyPreviewToken(
+                    user,
+                    anchorInstallmentId,
+                    paymentCurrency,
+                    reportedAmount,
+                    reportedPaymentDate,
+                    previewToken
+            );
+        }
         return persistPaymentSubmission(
                 selection,
                 bankAccount,
@@ -195,7 +210,7 @@ public class PaymentService {
                 paymentCurrency,
                 paymentMethod,
                 file,
-                quote
+                sameCurrencyQuote
         );
     }
 
@@ -650,14 +665,11 @@ public class PaymentService {
         return bankAccount;
     }
 
-    private BigDecimal resolveExchangeRate(Currency tripCurrency, Currency paymentCurrency, LocalDate reportedPaymentDate) {
-        if (tripCurrency == paymentCurrency) {
-            return null;
-        }
-        return exchangeRateService.getOfficialRateForDate(reportedPaymentDate);
+    private boolean requiresExchangeRate(Currency tripCurrency, Currency paymentCurrency) {
+        return tripCurrency != paymentCurrency;
     }
 
-    private ExchangeRateQuote resolveExchangeRateQuote(Currency tripCurrency, Currency paymentCurrency, LocalDate reportedPaymentDate) {
+    private ExchangeRateQuote fetchLiveQuoteForPreview(Currency tripCurrency, Currency paymentCurrency, LocalDate reportedPaymentDate) {
         if (tripCurrency == paymentCurrency) {
             return null;
         }
@@ -692,7 +704,6 @@ public class PaymentService {
             Currency paymentCurrency,
             BigDecimal reportedAmount,
             LocalDate reportedPaymentDate,
-            boolean quoteRequired,
             String previewToken
     ) {
         PaymentPreviewTokenService.PreviewSnapshot snapshot = paymentPreviewTokenService
@@ -720,13 +731,8 @@ public class PaymentService {
                     "El comprobante de imputación no coincide con la fecha de pago. Volvé a calcular la previsualización."
             );
         }
-        if (!quoteRequired) {
-            return null;
-        }
         if (snapshot.quoteSellRate() == null) {
-            throw new IllegalArgumentException(
-                    "El comprobante de imputación no incluye tipo de cambio. Volvé a calcular la previsualización."
-            );
+            return null;
         }
         return new ExchangeRateQuote(
                 snapshot.quoteSellRate(),

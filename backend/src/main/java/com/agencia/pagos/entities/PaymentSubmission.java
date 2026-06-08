@@ -73,16 +73,16 @@ public class PaymentSubmission {
     @Column(nullable = false)
     private LocalDate reportedPaymentDate;
 
-    @Column
+    @Column(name = "exchange_rate_requested_date")
     private LocalDate exchangeRateRequestedDate;
 
-    @Column
+    @Column(name = "exchange_rate_effective_date")
     private LocalDate exchangeRateEffectiveDate;
 
-    @Column(length = 64)
+    @Column(name = "exchange_rate_source", length = 64)
     private String exchangeRateSource;
 
-    @Column(length = 128)
+    @Column(name = "exchange_rate_provider_timestamp", length = 128)
     private String exchangeRateProviderTimestamp;
 
     @Enumerated(EnumType.STRING)
