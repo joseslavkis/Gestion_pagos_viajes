@@ -14,7 +14,8 @@ public record RegisterPaymentDTO(
         @NotNull LocalDate reportedPaymentDate,
         @NotNull Currency paymentCurrency,
         @NotNull PaymentMethod paymentMethod,
-        @NotNull Long bankAccountId
+        @NotNull Long bankAccountId,
+        String previewToken
 ) {
         public RegisterPaymentDTO(
                         Long anchorInstallmentId,
@@ -23,7 +24,7 @@ public record RegisterPaymentDTO(
                         PaymentMethod paymentMethod,
                         Long bankAccountId
         ) {
-                this(anchorInstallmentId, reportedAmount, reportedPaymentDate, Currency.ARS, paymentMethod, bankAccountId);
+                this(anchorInstallmentId, reportedAmount, reportedPaymentDate, Currency.ARS, paymentMethod, bankAccountId, null);
         }
 
         public RegisterPaymentDTO(
@@ -32,6 +33,6 @@ public record RegisterPaymentDTO(
                         LocalDate reportedPaymentDate,
                         PaymentMethod paymentMethod
         ) {
-                this(anchorInstallmentId, reportedAmount, reportedPaymentDate, Currency.ARS, paymentMethod, null);
+                this(anchorInstallmentId, reportedAmount, reportedPaymentDate, Currency.ARS, paymentMethod, null, null);
         }
 }

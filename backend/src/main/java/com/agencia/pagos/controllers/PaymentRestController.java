@@ -69,6 +69,7 @@ class PaymentRestController {
             @RequestParam("paymentMethod") PaymentMethod paymentMethod,
             @RequestParam("bankAccountId") Long bankAccountId,
             @RequestParam(value = "file", required = false) MultipartFile file,
+            @RequestParam(value = "previewToken", required = false) String previewToken,
             @AuthenticationPrincipal(expression = "username") String email
     ) {
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -80,6 +81,7 @@ class PaymentRestController {
                         paymentMethod,
                         bankAccountId,
                         file,
+                        previewToken,
                         email));
     }
 

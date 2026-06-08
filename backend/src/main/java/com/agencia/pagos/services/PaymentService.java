@@ -82,6 +82,7 @@ public class PaymentService {
     private final PaymentAllocationPlanner paymentAllocationPlanner;
     private final PaymentInstallmentOverlayService paymentInstallmentOverlayService;
     private final PaymentAttachmentStorageService paymentAttachmentStorageService;
+    private final PaymentPreviewTokenService paymentPreviewTokenService;
 
     @Autowired
     public PaymentService(
@@ -98,7 +99,8 @@ public class PaymentService {
             ExchangeRateService exchangeRateService,
             PaymentAllocationPlanner paymentAllocationPlanner,
             PaymentInstallmentOverlayService paymentInstallmentOverlayService,
-            PaymentAttachmentStorageService paymentAttachmentStorageService
+            PaymentAttachmentStorageService paymentAttachmentStorageService,
+            PaymentPreviewTokenService paymentPreviewTokenService
     ) {
         this.paymentReceiptRepository = paymentReceiptRepository;
         this.paymentBatchRepository = paymentBatchRepository;
@@ -114,13 +116,14 @@ public class PaymentService {
         this.paymentAllocationPlanner = paymentAllocationPlanner;
         this.paymentInstallmentOverlayService = paymentInstallmentOverlayService;
         this.paymentAttachmentStorageService = paymentAttachmentStorageService;
+        this.paymentPreviewTokenService = paymentPreviewTokenService;
     }
 
     @Transactional(readOnly = true)
     public PaymentBatchPreviewDTO previewPayment(PaymentPreviewRequestDTO dto, String email) {
         User user = getUserByEmail(email);
         PaymentScopeSelection selection = resolvePaymentScope(user, dto.anchorInstallmentId(), false);
-        BigDecimal exchangeRate = resolveExchangeRate(
+        ExchangeRateQuote quote = resolveExchangeRateQuote(
                 selection.anchorInstallment().getTrip().getCurrency(),
                 dto.paymentCurrency(),
                 dto.reportedPaymentDate()
@@ -129,9 +132,18 @@ public class PaymentService {
                 selection.installments(),
                 dto.reportedAmount(),
                 dto.paymentCurrency(),
-                exchangeRate
+                quote == null ? null : quote.sellRate()
         );
-        return toPreviewDTO(selection.anchorInstallment(), dto.reportedPaymentDate(), plan);
+        PaymentPreviewTokenService.PreviewSnapshot snapshot = buildPreviewSnapshot(
+                user,
+                selection.anchorInstallment().getId(),
+                dto.paymentCurrency(),
+                dto.reportedAmount(),
+                dto.reportedPaymentDate(),
+                quote
+        );
+        String previewToken = paymentPreviewTokenService.issueToken(snapshot);
+        return toPreviewDTO(selection.anchorInstallment(), dto.reportedPaymentDate(), plan, quote, previewToken);
     }
 
     public PaymentSubmissionDTO registerPayment(
@@ -142,21 +154,66 @@ public class PaymentService {
             PaymentMethod paymentMethod,
             Long bankAccountId,
             MultipartFile file,
+            String previewToken,
             String email
     ) {
         User user = getUserByEmail(email);
         PaymentScopeSelection selection = resolvePaymentScope(user, anchorInstallmentId, true);
         BankAccount bankAccount = resolveBankAccount(bankAccountId, paymentCurrency);
-        BigDecimal exchangeRate = resolveExchangeRate(
+        if (previewToken != null && !previewToken.isBlank()) {
+            ExchangeRateQuote quote = applyPreviewToken(
+                    user,
+                    anchorInstallmentId,
+                    paymentCurrency,
+                    reportedAmount,
+                    reportedPaymentDate,
+                    selection.anchorInstallment().getTrip().getCurrency() != paymentCurrency,
+                    previewToken
+            );
+            return persistPaymentSubmission(
+                    selection,
+                    bankAccount,
+                    reportedAmount,
+                    reportedPaymentDate,
+                    paymentCurrency,
+                    paymentMethod,
+                    file,
+                    quote
+            );
+        }
+
+        ExchangeRateQuote quote = resolveExchangeRateQuote(
                 selection.anchorInstallment().getTrip().getCurrency(),
                 paymentCurrency,
                 reportedPaymentDate
         );
+        return persistPaymentSubmission(
+                selection,
+                bankAccount,
+                reportedAmount,
+                reportedPaymentDate,
+                paymentCurrency,
+                paymentMethod,
+                file,
+                quote
+        );
+    }
+
+    private PaymentSubmissionDTO persistPaymentSubmission(
+            PaymentScopeSelection selection,
+            BankAccount bankAccount,
+            BigDecimal reportedAmount,
+            LocalDate reportedPaymentDate,
+            Currency paymentCurrency,
+            PaymentMethod paymentMethod,
+            MultipartFile file,
+            ExchangeRateQuote quote
+    ) {
         PaymentAllocationPlanner.PlanResult plan = paymentAllocationPlanner.plan(
                 selection.installments(),
                 reportedAmount,
                 paymentCurrency,
-                exchangeRate
+                quote == null ? null : quote.sellRate()
         );
 
         PaymentSubmission submission = new PaymentSubmission();
@@ -170,6 +227,12 @@ public class PaymentService {
         submission.setExchangeRate(plan.exchangeRate());
         submission.setAmountInTripCurrency(plan.amountInTripCurrency());
         submission.setReportedPaymentDate(reportedPaymentDate);
+        if (quote != null) {
+            submission.setExchangeRateRequestedDate(quote.requestedDate());
+            submission.setExchangeRateEffectiveDate(quote.effectiveDate());
+            submission.setExchangeRateSource(quote.source());
+            submission.setExchangeRateProviderTimestamp(quote.providerTimestamp());
+        }
         submission.setPaymentMethod(paymentMethod);
         submission.setStatus(PaymentSubmissionStatus.PENDING);
         submission.setFileKey(paymentAttachmentStorageService.storeReceipt(
@@ -185,6 +248,29 @@ public class PaymentService {
         return toSubmissionDTO(saved, toInstallmentDTOs(plan.allocations(), null));
     }
 
+    public PaymentSubmissionDTO registerPayment(
+            Long anchorInstallmentId,
+            BigDecimal reportedAmount,
+            LocalDate reportedPaymentDate,
+            Currency paymentCurrency,
+            PaymentMethod paymentMethod,
+            Long bankAccountId,
+            MultipartFile file,
+            String email
+    ) {
+        return registerPayment(
+                anchorInstallmentId,
+                reportedAmount,
+                reportedPaymentDate,
+                paymentCurrency,
+                paymentMethod,
+                bankAccountId,
+                file,
+                null,
+                email
+        );
+    }
+
     public PaymentSubmissionDTO registerPayment(RegisterPaymentDTO dto, String email) {
         return registerPayment(
                 dto.anchorInstallmentId(),
@@ -194,6 +280,7 @@ public class PaymentService {
                 dto.paymentMethod(),
                 dto.bankAccountId(),
                 null,
+                dto.previewToken(),
                 email
         );
     }
@@ -570,10 +657,93 @@ public class PaymentService {
         return exchangeRateService.getOfficialRateForDate(reportedPaymentDate);
     }
 
+    private ExchangeRateQuote resolveExchangeRateQuote(Currency tripCurrency, Currency paymentCurrency, LocalDate reportedPaymentDate) {
+        if (tripCurrency == paymentCurrency) {
+            return null;
+        }
+        return exchangeRateService.getOfficialQuoteForDate(reportedPaymentDate);
+    }
+
+    private PaymentPreviewTokenService.PreviewSnapshot buildPreviewSnapshot(
+            User user,
+            Long anchorInstallmentId,
+            Currency paymentCurrency,
+            BigDecimal reportedAmount,
+            LocalDate reportedPaymentDate,
+            ExchangeRateQuote quote
+    ) {
+        return new PaymentPreviewTokenService.PreviewSnapshot(
+                user.getId(),
+                anchorInstallmentId,
+                paymentCurrency,
+                reportedAmount.setScale(2, RoundingMode.HALF_UP),
+                reportedPaymentDate,
+                quote == null ? null : quote.sellRate(),
+                quote == null ? null : quote.requestedDate(),
+                quote == null ? null : quote.effectiveDate(),
+                quote == null ? null : quote.source(),
+                quote == null ? null : quote.providerTimestamp()
+        );
+    }
+
+    private ExchangeRateQuote applyPreviewToken(
+            User user,
+            Long anchorInstallmentId,
+            Currency paymentCurrency,
+            BigDecimal reportedAmount,
+            LocalDate reportedPaymentDate,
+            boolean quoteRequired,
+            String previewToken
+    ) {
+        PaymentPreviewTokenService.PreviewSnapshot snapshot = paymentPreviewTokenService
+                .parseAndValidate(previewToken, user.getId())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "El comprobante de imputación venció o es inválido. Volvé a calcular la previsualización."
+                ));
+        if (!snapshot.anchorInstallmentId().equals(anchorInstallmentId)) {
+            throw new IllegalArgumentException(
+                    "El comprobante de imputación no corresponde a esta cuota. Volvé a calcular la previsualización."
+            );
+        }
+        if (snapshot.paymentCurrency() != paymentCurrency) {
+            throw new IllegalArgumentException(
+                    "El comprobante de imputación no coincide con la moneda del pago. Volvé a calcular la previsualización."
+            );
+        }
+        if (snapshot.reportedAmount().compareTo(reportedAmount.setScale(2, RoundingMode.HALF_UP)) != 0) {
+            throw new IllegalArgumentException(
+                    "El comprobante de imputación no coincide con el monto informado. Volvé a calcular la previsualización."
+            );
+        }
+        if (!snapshot.reportedPaymentDate().equals(reportedPaymentDate)) {
+            throw new IllegalArgumentException(
+                    "El comprobante de imputación no coincide con la fecha de pago. Volvé a calcular la previsualización."
+            );
+        }
+        if (!quoteRequired) {
+            return null;
+        }
+        if (snapshot.quoteSellRate() == null) {
+            throw new IllegalArgumentException(
+                    "El comprobante de imputación no incluye tipo de cambio. Volvé a calcular la previsualización."
+            );
+        }
+        return new ExchangeRateQuote(
+                snapshot.quoteSellRate(),
+                snapshot.quoteRequestedDate() != null ? snapshot.quoteRequestedDate() : reportedPaymentDate,
+                snapshot.quoteEffectiveDate() != null ? snapshot.quoteEffectiveDate() : reportedPaymentDate,
+                snapshot.quoteSource() != null ? snapshot.quoteSource() : "unknown",
+                snapshot.quoteSource() != null ? snapshot.quoteSource() : "unknown",
+                snapshot.quoteProviderTimestamp()
+        );
+    }
+
     private PaymentBatchPreviewDTO toPreviewDTO(
             Installment anchorInstallment,
             LocalDate reportedPaymentDate,
-            PaymentAllocationPlanner.PlanResult plan
+            PaymentAllocationPlanner.PlanResult plan,
+            ExchangeRateQuote quote,
+            String previewToken
     ) {
         return new PaymentBatchPreviewDTO(
                 anchorInstallment.getId(),
@@ -585,6 +755,11 @@ public class PaymentService {
                 plan.totalPendingAmountInTripCurrency(),
                 plan.amountInTripCurrency(),
                 reportedPaymentDate,
+                quote == null ? null : quote.requestedDate(),
+                quote == null ? null : quote.effectiveDate(),
+                quote == null ? null : quote.source(),
+                quote == null ? null : quote.providerTimestamp(),
+                previewToken,
                 toInstallmentDTOs(plan.allocations(), null)
         );
     }
@@ -626,6 +801,10 @@ public class PaymentService {
                 submission.getAmountInTripCurrency(),
                 approvedAmountInTripCurrency,
                 submission.getReportedPaymentDate(),
+                submission.getExchangeRateRequestedDate(),
+                submission.getExchangeRateEffectiveDate(),
+                submission.getExchangeRateSource(),
+                submission.getExchangeRateProviderTimestamp(),
                 submission.getPaymentMethod(),
                 resolveFileReference(submission.getFileKey()),
                 adminObservation,
@@ -700,6 +879,10 @@ public class PaymentService {
                 submission.getExchangeRate(),
                 submission.getAmountInTripCurrency(),
                 submission.getReportedPaymentDate(),
+                submission.getExchangeRateRequestedDate(),
+                submission.getExchangeRateEffectiveDate(),
+                submission.getExchangeRateSource(),
+                submission.getExchangeRateProviderTimestamp(),
                 submission.getPaymentMethod(),
                 resolveFileReference(submission.getFileKey()),
                 submission.getBankAccount() != null ? submission.getBankAccount().getId() : null,
@@ -729,6 +912,10 @@ public class PaymentService {
                 receipt.getExchangeRate(),
                 receipt.getAmountInTripCurrency(),
                 receipt.getReportedPaymentDate(),
+                null,
+                null,
+                null,
+                null,
                 receipt.getPaymentMethod(),
                 toHistoryStatus(receipt.getStatus()),
                 resolveFileReference(resolveFileKey(receipt)),
@@ -751,6 +938,10 @@ public class PaymentService {
                 submission.getExchangeRate(),
                 allocation.getAmountInTripCurrency(),
                 submission.getReportedPaymentDate(),
+                submission.getExchangeRateRequestedDate(),
+                submission.getExchangeRateEffectiveDate(),
+                submission.getExchangeRateSource(),
+                submission.getExchangeRateProviderTimestamp(),
                 submission.getPaymentMethod(),
                 allocation.getOutcome().getStatus() == PaymentOutcomeStatus.VOIDED ? PaymentHistoryStatus.VOIDED : PaymentHistoryStatus.APPROVED,
                 resolveFileReference(submission.getFileKey()),
@@ -829,6 +1020,10 @@ public class PaymentService {
                 amountInTripCurrency,
                 approvedAmountInTripCurrency,
                 batch != null ? batch.getReportedPaymentDate() : firstReceipt.getReportedPaymentDate(),
+                null,
+                null,
+                null,
+                null,
                 batch != null ? batch.getPaymentMethod() : firstReceipt.getPaymentMethod(),
                 resolveFileReference(batch != null ? batch.getFileKey() : firstReceipt.getFileKey()),
                 sortedReceipts.stream()
