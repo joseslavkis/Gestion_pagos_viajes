@@ -146,8 +146,14 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
         Installment first = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
         createInstallment(fixture.trip(), fixture.user(), fixture.student(), 2, "100.00", InstallmentStatus.YELLOW);
 
-        org.mockito.Mockito.when(exchangeRateService.getOfficialRateForDate(org.mockito.ArgumentMatchers.any(LocalDate.class)))
-                .thenReturn(new BigDecimal("1000.00"));
+        org.mockito.Mockito.when(exchangeRateService.getOfficialQuoteForDate(org.mockito.ArgumentMatchers.any(LocalDate.class)))
+                .thenReturn(new com.agencia.pagos.services.ExchangeRateQuote(
+                        new BigDecimal("1000.00"),
+                        LocalDate.now(),
+                        LocalDate.now(),
+                        "test",
+                        "test",
+                        null));
 
         mockMvc.perform(post("/api/v1/payments/preview")
                         .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
@@ -289,6 +295,93 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                             return request;
                         }))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void registerPayment_crossCurrencyWithoutTokenReturns400() throws Exception {
+        PaymentFixture fixture = createPaymentFixture("pmt-free-cross-no-token", Currency.USD);
+        Installment first = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+        createInstallment(fixture.trip(), fixture.user(), fixture.student(), 2, "100.00", InstallmentStatus.YELLOW);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+        given(paymentAttachmentStorageService.storeReceipt(any(), anyLong(), anyLong(), any()))
+                .willReturn("receipts/trip-1/user-2/test.jpg");
+
+        mockMvc.perform(multipart("/api/v1/payments")
+                        .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                        .param("anchorInstallmentId", String.valueOf(first.getId()))
+                        .param("reportedAmount", "150000.00")
+                        .param("reportedPaymentDate", LocalDate.now().toString())
+                        .param("paymentCurrency", "ARS")
+                        .param("paymentMethod", "BANK_TRANSFER")
+                        .param("bankAccountId", String.valueOf(bankAccount.getId()))
+                        .with(request -> {
+                            request.setMethod("POST");
+                            return request;
+                        }))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void registerPayment_crossCurrencyWithValidTokenDoesNotCallProvider() throws Exception {
+        PaymentFixture fixture = createPaymentFixture("pmt-free-cross-valid-token", Currency.USD);
+        Installment first = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+        createInstallment(fixture.trip(), fixture.user(), fixture.student(), 2, "100.00", InstallmentStatus.YELLOW);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+        given(paymentAttachmentStorageService.storeReceipt(any(), anyLong(), anyLong(), any()))
+                .willReturn("receipts/trip-1/user-2/test.jpg");
+        given(paymentAttachmentStorageService.resolveFileReference("receipts/trip-1/user-2/test.jpg"))
+                .willReturn("https://backend.example/api/v1/payment-attachments/receipt-token");
+        org.mockito.Mockito.when(exchangeRateService.getOfficialQuoteForDate(org.mockito.ArgumentMatchers.any(LocalDate.class)))
+                .thenReturn(new com.agencia.pagos.services.ExchangeRateQuote(
+                        new BigDecimal("1000.00"),
+                        LocalDate.now(),
+                        LocalDate.now(),
+                        "test",
+                        "test",
+                        null));
+
+        org.mockito.Mockito.clearInvocations(exchangeRateService);
+
+        String previewResponse = mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/api/v1/payments/preview")
+                        .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(("""
+                                {
+                                  "anchorInstallmentId": %d,
+                                  "reportedAmount": 150000.00,
+                                  "reportedPaymentDate": "%s",
+                                  "paymentCurrency": "ARS"
+                                }
+                                """).formatted(first.getId(), LocalDate.now())))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        String previewToken = objectMapper.readTree(previewResponse).path("previewToken").asText();
+        org.junit.jupiter.api.Assertions.assertNotNull(previewToken);
+
+        org.mockito.Mockito.clearInvocations(exchangeRateService);
+
+        mockMvc.perform(multipart("/api/v1/payments")
+                        .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                        .param("anchorInstallmentId", String.valueOf(first.getId()))
+                        .param("reportedAmount", "150000.00")
+                        .param("reportedPaymentDate", LocalDate.now().toString())
+                        .param("paymentCurrency", "ARS")
+                        .param("paymentMethod", "BANK_TRANSFER")
+                        .param("bankAccountId", String.valueOf(bankAccount.getId()))
+                        .param("previewToken", previewToken)
+                        .with(request -> {
+                            request.setMethod("POST");
+                            return request;
+                        }))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.submissionId").exists());
+
+        org.mockito.Mockito.verify(exchangeRateService, org.mockito.Mockito.never())
+                .getOfficialQuoteForDate(org.mockito.ArgumentMatchers.any(LocalDate.class));
+        org.mockito.Mockito.verify(exchangeRateService, org.mockito.Mockito.never())
+                .getOfficialRateForDate(org.mockito.ArgumentMatchers.any(LocalDate.class));
     }
 
     @Test

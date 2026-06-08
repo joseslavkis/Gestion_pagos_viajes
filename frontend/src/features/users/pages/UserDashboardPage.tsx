@@ -662,6 +662,7 @@ export function UserDashboardPage() {
         paymentMethod,
         bankAccountId: selectedBankAccountId,
         file: receiptFile,
+        previewToken: paymentPreview.previewToken,
       });
 
       setSelectedAnchorInstallmentId(null);
@@ -961,7 +962,7 @@ export function UserDashboardPage() {
                     {" "}Equivale a{" "}
                     {formatAmountByCurrency(paymentPreview.tripCurrency, paymentPreview.amountInTripCurrency)} del viaje
                     {paymentPreview.exchangeRate != null
-                      ? ` · tipo de cambio BNA ${formatAmountByCurrency("ARS", paymentPreview.exchangeRate)}`
+                      ? ` · cotización oficial ${formatAmountByCurrency("ARS", paymentPreview.exchangeRate)}${paymentPreview.quoteEffectiveDate ? ` correspondiente al ${formatReportedDate(paymentPreview.quoteEffectiveDate)}` : ""}`
                       : ""}
                   </p>
                 </div>
@@ -1013,7 +1014,7 @@ export function UserDashboardPage() {
 
               {selectedInstallment && paymentCurrency !== selectedInstallment.tripCurrency ? (
                 <p className={styles.helperWarning}>
-                  Se usará el tipo de cambio BNA oficial del día de pago. El administrador verá el detalle de la conversión.
+                  Se usará la cotización oficial correspondiente a la fecha informada. Si ese día no tiene cotización, se usará la última disponible anterior.
                 </p>
               ) : null}
 

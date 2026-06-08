@@ -58,6 +58,11 @@ export const PaymentBatchPreviewDTOSchema = z.object({
   totalPendingAmountInTripCurrency: MoneySchema,
   amountInTripCurrency: MoneySchema,
   reportedPaymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  quoteRequestedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
+  quoteEffectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
+  quoteSource: z.string().nullish(),
+  quoteProviderTimestamp: z.string().nullish(),
+  previewToken: z.string().nullish(),
   installments: PaymentBatchInstallmentDTOSchema.array(),
 });
 export type PaymentBatchPreviewDTO = z.infer<typeof PaymentBatchPreviewDTOSchema>;
@@ -73,6 +78,10 @@ export const PaymentSubmissionDTOSchema = z.object({
   amountInTripCurrency: MoneySchema,
   approvedAmountInTripCurrency: MoneySchema,
   reportedPaymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  quoteRequestedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
+  quoteEffectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
+  quoteSource: z.string().nullish(),
+  quoteProviderTimestamp: z.string().nullish(),
   paymentMethod: PaymentMethodSchema,
   fileKey: z.string(),
   adminObservation: z.string().nullable(),
@@ -157,6 +166,7 @@ export type RegisterPaymentFormData = {
   paymentMethod: PaymentMethod;
   bankAccountId: number;
   file?: File | null;
+  previewToken?: string | null;
 };
 
 export const PaymentPreviewRequestDTOSchema = z.object({

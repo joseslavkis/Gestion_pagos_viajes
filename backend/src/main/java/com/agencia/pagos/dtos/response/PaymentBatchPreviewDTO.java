@@ -16,6 +16,11 @@ public record PaymentBatchPreviewDTO(
         BigDecimal totalPendingAmountInTripCurrency,
         BigDecimal amountInTripCurrency,
         LocalDate reportedPaymentDate,
+        LocalDate quoteRequestedDate,
+        LocalDate quoteEffectiveDate,
+        String quoteSource,
+        String quoteProviderTimestamp,
+        String previewToken,
         List<PaymentBatchInstallmentDTO> installments
 ) {
 }

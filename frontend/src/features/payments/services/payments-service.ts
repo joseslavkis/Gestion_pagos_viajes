@@ -37,6 +37,9 @@ export function useRegisterPayment() {
       if (payload.file) {
         formData.append("file", payload.file);
       }
+      if (payload.previewToken) {
+        formData.append("previewToken", payload.previewToken);
+      }
 
       const headers: Record<string, string> = {};
       if (tokenState.state === "LOGGED_IN") {

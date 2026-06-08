@@ -73,6 +73,18 @@ public class PaymentSubmission {
     @Column(nullable = false)
     private LocalDate reportedPaymentDate;
 
+    @Column(name = "exchange_rate_requested_date")
+    private LocalDate exchangeRateRequestedDate;
+
+    @Column(name = "exchange_rate_effective_date")
+    private LocalDate exchangeRateEffectiveDate;
+
+    @Column(name = "exchange_rate_source", length = 64)
+    private String exchangeRateSource;
+
+    @Column(name = "exchange_rate_provider_timestamp", length = 128)
+    private String exchangeRateProviderTimestamp;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private PaymentMethod paymentMethod;
@@ -185,6 +197,38 @@ public class PaymentSubmission {
 
     public void setReportedPaymentDate(LocalDate reportedPaymentDate) {
         this.reportedPaymentDate = reportedPaymentDate;
+    }
+
+    public LocalDate getExchangeRateRequestedDate() {
+        return exchangeRateRequestedDate;
+    }
+
+    public void setExchangeRateRequestedDate(LocalDate exchangeRateRequestedDate) {
+        this.exchangeRateRequestedDate = exchangeRateRequestedDate;
+    }
+
+    public LocalDate getExchangeRateEffectiveDate() {
+        return exchangeRateEffectiveDate;
+    }
+
+    public void setExchangeRateEffectiveDate(LocalDate exchangeRateEffectiveDate) {
+        this.exchangeRateEffectiveDate = exchangeRateEffectiveDate;
+    }
+
+    public String getExchangeRateSource() {
+        return exchangeRateSource;
+    }
+
+    public void setExchangeRateSource(String exchangeRateSource) {
+        this.exchangeRateSource = exchangeRateSource;
+    }
+
+    public String getExchangeRateProviderTimestamp() {
+        return exchangeRateProviderTimestamp;
+    }
+
+    public void setExchangeRateProviderTimestamp(String exchangeRateProviderTimestamp) {
+        this.exchangeRateProviderTimestamp = exchangeRateProviderTimestamp;
     }
 
     public PaymentMethod getPaymentMethod() {
