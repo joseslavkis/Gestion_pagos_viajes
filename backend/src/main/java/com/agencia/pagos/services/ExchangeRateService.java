@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
@@ -30,13 +32,25 @@ public class ExchangeRateService {
     private static final String CURRENT_SOURCE = "dolarapi.com";
     private static final String HISTORICAL_SOURCE = "argentinadatos.com";
 
+    private static final int DEFAULT_FALLBACK_DAYS = 10;
+
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
     private final Clock clock;
     private final int historicalFallbackDays;
 
-    public ExchangeRateService() {
-        this(RestClient.create(), new ObjectMapper(), Clock.system(ARGENTINA_ZONE), 10);
+    @Autowired
+    public ExchangeRateService(
+            RestClient.Builder restClientBuilder,
+            ObjectMapper objectMapper,
+            @Value("${exchange-rate.fallback-days:10}") int historicalFallbackDays
+    ) {
+        this(
+                restClientBuilder.build(),
+                objectMapper,
+                Clock.system(ARGENTINA_ZONE),
+                historicalFallbackDays > 0 ? historicalFallbackDays : DEFAULT_FALLBACK_DAYS
+        );
     }
 
     ExchangeRateService(RestClient restClient, ObjectMapper objectMapper, Clock clock, int historicalFallbackDays) {
@@ -68,6 +82,15 @@ public class ExchangeRateService {
 
     public BigDecimal getOfficialRateForDate(LocalDate date) {
         return getOfficialQuoteForDate(date).sellRate();
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return null;
     }
 
     private BigDecimal fetchCurrentRate(LocalDate today) {
