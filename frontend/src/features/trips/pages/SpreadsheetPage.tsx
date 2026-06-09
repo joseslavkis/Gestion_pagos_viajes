@@ -9,9 +9,11 @@ import {
   getSpreadsheetParticipantPrimaryLabel,
   getSpreadsheetStatusVariant,
 } from "@/features/trips/lib/spreadsheet-ui";
-import { downloadSpreadsheetExcel, useSpreadsheet, useTrip } from "@/features/trips/services/trips-service";
+import { downloadSpreadsheetExcel, useComprobantes, useSpreadsheet, useTrip } from "@/features/trips/services/trips-service";
 import type {
   SpreadsheetParams,
+  SpreadsheetReceiptParams,
+  SpreadsheetReceiptRowDTO,
   SpreadsheetRowDTO,
   SpreadsheetRowInstallmentDTO,
 } from "@/features/trips/types/trips-dtos";
@@ -25,6 +27,25 @@ const currencyFormatter = new Intl.NumberFormat("es-AR", {
   style: "currency",
   currency: "ARS",
 });
+
+const usdCurrencyFormatter = new Intl.NumberFormat("es-AR", {
+  style: "currency",
+  currency: "USD",
+});
+
+const dateFormatter = new Intl.DateTimeFormat("es-AR", {
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  timeZone: "America/Argentina/Buenos_Aires",
+});
+
+const paymentMethodLabels: Record<string, string> = {
+  BANK_TRANSFER: "Transferencia bancaria",
+  CASH: "Efectivo",
+  DEPOSIT: "Depósito",
+  OTHER: "Otro",
+};
 
 type SpreadsheetPageProps = {
   tripId: number;
@@ -57,7 +78,19 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
   const tableContainerRef = useRef<HTMLDivElement | null>(null);
   const pageRef = useRef<HTMLElement | null>(null);
 
+  const [view, setView] = useState<"planilla" | "comprobantes">(() => {
+    const stored = sessionStorage.getItem("spreadsheetView");
+    return stored === "comprobantes" ? "comprobantes" : "planilla";
+  });
+  const [comprobantesParams, setComprobantesParams] = useState<SpreadsheetReceiptParams>({
+    sortBy: "reportedPaymentDate",
+    order: "desc",
+    page: 0,
+    size: 20,
+  });
+
   const { data, isLoading, error } = useSpreadsheet(tripId, params);
+  const { data: comprobantesData, isLoading: comprobantesLoading, error: comprobantesError } = useComprobantes(tripId, comprobantesParams);
   const { data: tripData } = useTrip(tripId);
 
   const tripCurrencyFormatter = useMemo(() => {
@@ -300,16 +333,50 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
               <div className={styles.titleBlock}>
                 <h1 className={styles.title}>{data?.tripName ?? "Planilla de viaje"}</h1>
                 <p className={styles.subtitle}>
-                  Vista de cuotas y estados de pago por participante. Moneda: {tripData?.currency ?? "ARS"}
+                  {view === "planilla"
+                    ? `Vista de cuotas y estados de pago por participante. Moneda: ${tripData?.currency ?? "ARS"}`
+                    : `Vista de comprobantes registrados para el viaje. Moneda del viaje: ${tripData?.currency ?? "ARS"}`}
                 </p>
-                {data ? (
+                {view === "planilla" && data ? (
                   <span className={styles.counter}>
                     {data.totalElements} participantes · {data.installmentsCount} cuotas
                   </span>
+                ) : view === "comprobantes" && comprobantesData ? (
+                  <span className={styles.counter}>{comprobantesData.totalElements} comprobantes</span>
                 ) : null}
               </div>
             </div>
 
+            <div className={styles.viewToggle}>
+              <button
+                type="button"
+                className={`${styles.viewToggleOption} ${view === "planilla" ? styles.viewToggleOptionActive : ""}`}
+                onClick={() => {
+                  setView("planilla");
+                  sessionStorage.setItem("spreadsheetView", "planilla");
+                  setParams((c) => ({ ...c, page: 0 }));
+                  setComprobantesParams((c) => ({ ...c, page: 0 }));
+                }}
+                disabled={view === "planilla"}
+              >
+                Planilla
+              </button>
+              <button
+                type="button"
+                className={`${styles.viewToggleOption} ${view === "comprobantes" ? styles.viewToggleOptionActive : ""}`}
+                onClick={() => {
+                  setView("comprobantes");
+                  sessionStorage.setItem("spreadsheetView", "comprobantes");
+                  setParams((c) => ({ ...c, page: 0 }));
+                  setComprobantesParams((c) => ({ ...c, page: 0 }));
+                }}
+                disabled={view === "comprobantes"}
+              >
+                Comprobantes
+              </button>
+            </div>
+
+            {view === "planilla" ? (
             <div className={styles.toolbar}>
               <div className={styles.searchField}>
                 <input
@@ -355,8 +422,27 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                 <option value="date-desc">Fecha ↓</option>
               </select>
             </div>
+            ) : (
+            <div className={styles.toolbar}>
+              <select
+                className={styles.select}
+                value={comprobantesParams.order}
+                onChange={(event) => {
+                  setComprobantesParams((c) => ({
+                    ...c,
+                    page: 0,
+                    order: event.target.value as "asc" | "desc",
+                  }));
+                }}
+              >
+                <option value="desc">Fecha ↓</option>
+                <option value="asc">Fecha ↑</option>
+              </select>
+            </div>
+            )}
           </header>
 
+          {view === "planilla" ? (
           <RequestState
             isLoading={isLoading}
             error={error ?? null}
@@ -531,8 +617,103 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
               </div>
             </div>
           </RequestState>
+          ) : (
+          <RequestState
+            isLoading={comprobantesLoading}
+            error={comprobantesError ?? null}
+            loadingLabel="Cargando comprobantes..."
+          >
+            <div className={`${styles.tableContainer} ${hasScrolledHorizontally ? styles.tableContainerScrolled : ""}`}>
+              <div
+                ref={tableContainerRef}
+                className={`${styles.scrollShell} ${canScrollRight ? styles.scrollShellFadeRight : ""}`}
+              >
+                <table className={`${styles.table} ${styles.comprobantesTable}`}>
+                  <thead className={styles.thead}>
+                    <tr>
+                      <th className={styles.th}># Cuota</th>
+                      <th className={styles.th}>Fecha vencimiento</th>
+                      <th className={styles.th}>Apellido alumno</th>
+                      <th className={styles.th}>Nombre alumno</th>
+                      <th className={styles.th}>DNI alumno</th>
+                      <th className={styles.th}>Fecha pago declarado</th>
+                      <th className={styles.th}>Medio de pago</th>
+                      <th className={styles.th}>Monto declarado</th>
+                      <th className={styles.th}>Moneda</th>
+                      <th className={styles.th}>Tipo de cambio</th>
+                      <th className={styles.th}>Monto en moneda viaje</th>
+                      <th className={styles.th}>Estado</th>
+                      <th className={styles.th}>Observación admin</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {comprobantesLoading
+                      ? Array.from({ length: 5 }).map((_, rowIndex) => (
+                          <tr key={rowIndex} className={styles.skeletonRow}>
+                            {Array.from({ length: 13 }).map((__, colIndex) => (
+                              <td key={colIndex} className={styles.td}>
+                                <div className={styles.skeletonBlock} />
+                              </td>
+                            ))}
+                          </tr>
+                        ))
+                      : (comprobantesData?.content ?? []).map((receipt: SpreadsheetReceiptRowDTO, index: number) => (
+                          <tr key={index} className={index % 2 === 0 ? styles.rowEven : styles.rowOdd}>
+                            <td className={styles.td}>{receipt.installmentNumber ?? "-"}</td>
+                            <td className={styles.td}>{formatDate(receipt.installmentDueDate)}</td>
+                            <td className={styles.td}>{receipt.studentLastname ?? "-"}</td>
+                            <td className={styles.td}>{receipt.studentName ?? "-"}</td>
+                            <td className={styles.td}>{receipt.studentDni ?? "-"}</td>
+                            <td className={styles.td}>{formatDate(receipt.reportedPaymentDate)}</td>
+                            <td className={styles.td}>{formatPaymentMethod(receipt.paymentMethod)}</td>
+                            <td className={styles.td}>
+                              {formatMoneyByCurrency(receipt.reportedAmount, receipt.paymentCurrency ?? tripData?.currency ?? "ARS")}
+                            </td>
+                            <td className={styles.td}>{receipt.paymentCurrency ?? "-"}</td>
+                            <td className={styles.td}>{receipt.exchangeRate != null ? receipt.exchangeRate.toFixed(2) : "-"}</td>
+                            <td className={styles.td}>{tripCurrencyFormatter.format(receipt.amountInTripCurrency)}</td>
+                            <td className={styles.td}>{receipt.status}</td>
+                            <td className={styles.td}>{receipt.adminObservation ?? "-"}</td>
+                          </tr>
+                        ))}
+                  </tbody>
+                </table>
+              </div>
 
-          {selected ? (
+              {!comprobantesLoading && (comprobantesData?.content ?? []).length === 0 ? (
+                <div className={styles.emptyState}>
+                  <h2 className={styles.emptyTitle}>No hay comprobantes registrados para este viaje</h2>
+                </div>
+              ) : null}
+
+              <div className={styles.pagination}>
+                <button
+                  type="button"
+                  className={styles.pageButton}
+                  onClick={() => setComprobantesParams((c) => ({ ...c, page: Math.max(0, c.page - 1) }))}
+                  disabled={comprobantesParams.page === 0}
+                  aria-label="Página anterior"
+                >
+                  ←
+                </button>
+                <span>
+                  Página {(comprobantesData?.totalPages ?? 0) === 0 ? 1 : comprobantesParams.page + 1} de {comprobantesData?.totalPages ?? 1}
+                </span>
+                <button
+                  type="button"
+                  className={styles.pageButton}
+                  onClick={() => setComprobantesParams((c) => ({ ...c, page: c.page + 1 }))}
+                  disabled={comprobantesParams.page >= (comprobantesData?.totalPages ?? 1) - 1}
+                  aria-label="Página siguiente"
+                >
+                  →
+                </button>
+              </div>
+            </div>
+          </RequestState>
+          )}
+
+          {view === "planilla" && selected ? (
             <PaymentDrawer
               installment={selected.installment}
               row={selected.row}
@@ -543,6 +724,31 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
       </section>
     </CommonLayout>
   );
+}
+
+function formatDate(isoDate: string | null | undefined): string {
+  if (!isoDate) {
+    return "-";
+  }
+
+  const date = new Date(`${isoDate}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? isoDate : dateFormatter.format(date);
+}
+
+function formatMoneyByCurrency(amount: number, currency: string): string {
+  if (currency === "USD") {
+    return usdCurrencyFormatter.format(amount);
+  }
+
+  return currencyFormatter.format(amount);
+}
+
+function formatPaymentMethod(paymentMethod: string | null | undefined): string {
+  if (!paymentMethod) {
+    return "-";
+  }
+
+  return paymentMethodLabels[paymentMethod] ?? paymentMethod;
 }
 
 function getStatusClass(

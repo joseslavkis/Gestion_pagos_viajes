@@ -1,4 +1,4 @@
-package com.agencia.pagos.dtos.internal;
+package com.agencia.pagos.dtos.response;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;

@@ -213,3 +213,43 @@ export const SpreadsheetParamsSchema = z.object({
 });
 
 export type SpreadsheetParams = z.infer<typeof SpreadsheetParamsSchema>;
+
+// Schema para los comprobantes (receipts)
+
+export const SpreadsheetReceiptRowDTOSchema = z.object({
+  installmentNumber: z.number().int().nullable(),
+  installmentDueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  studentLastname: z.string().nullable(),
+  studentName: z.string().nullable(),
+  studentDni: z.string().nullable(),
+  reportedPaymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  paymentMethod: z.string().nullable(),
+  reportedAmount: MoneySchema,
+  paymentCurrency: z.string().nullable(),
+  exchangeRate: MoneySchema.nullable(),
+  amountInTripCurrency: MoneySchema,
+  status: z.string(),
+  adminObservation: z.string().nullable(),
+});
+
+export type SpreadsheetReceiptRowDTO = z.infer<typeof SpreadsheetReceiptRowDTOSchema>;
+
+export const SpreadsheetReceiptParamsSchema = z.object({
+  sortBy: z.literal("reportedPaymentDate").default("reportedPaymentDate"),
+  order: z.enum(["asc", "desc"]).default("desc"),
+  page: z.number().min(0).default(0),
+  size: z.number().min(1).max(100).default(20),
+});
+
+export type SpreadsheetReceiptParams = z.infer<typeof SpreadsheetReceiptParamsSchema>;
+
+export const SpreadsheetReceiptPageDTOSchema = z.object({
+  tripName: z.string(),
+  page: z.number(),
+  size: z.number(),
+  totalElements: z.number(),
+  totalPages: z.number(),
+  content: SpreadsheetReceiptRowDTOSchema.array(),
+});
+
+export type SpreadsheetReceiptPageDTO = z.infer<typeof SpreadsheetReceiptPageDTOSchema>;

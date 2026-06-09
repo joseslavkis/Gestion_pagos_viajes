@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SpreadsheetParamsSchema } from "@/features/trips/types/trips-dtos";
@@ -8,6 +8,7 @@ import { renderWithProviders } from "@/test/test-utils";
 
 const useSpreadsheetMock = vi.fn();
 const useTripMock = vi.fn();
+const useComprobantesMock = vi.fn();
 
 vi.mock("wouter", async (importOriginal) => {
   const actual = await importOriginal<typeof import("wouter")>();
@@ -21,6 +22,7 @@ vi.mock("@/features/trips/services/trips-service", () => ({
   downloadSpreadsheetExcel: vi.fn(),
   useSpreadsheet: (...args: unknown[]) => useSpreadsheetMock(...args),
   useTrip: (...args: unknown[]) => useTripMock(...args),
+  useComprobantes: (...args: unknown[]) => useComprobantesMock(...args),
 }));
 
 vi.mock("@/features/payments/components/PaymentDrawer", () => ({
@@ -29,6 +31,8 @@ vi.mock("@/features/payments/components/PaymentDrawer", () => ({
 
 describe("SpreadsheetPage", () => {
   beforeEach(() => {
+    sessionStorage.clear();
+
     useTripMock.mockReturnValue({
       data: { currency: "ARS" },
     });
@@ -73,6 +77,35 @@ describe("SpreadsheetPage", () => {
       isLoading: false,
       error: null,
     });
+
+    useComprobantesMock.mockReturnValue({
+      data: {
+        tripName: "Bariloche",
+        page: 0,
+        size: 20,
+        totalElements: 1,
+        totalPages: 1,
+        content: [
+          {
+            installmentNumber: 1,
+            installmentDueDate: "2026-06-10",
+            studentLastname: "Perez",
+            studentName: "Luca",
+            studentDni: "40111222",
+            reportedPaymentDate: "2026-05-03",
+            paymentMethod: "BANK_TRANSFER",
+            reportedAmount: 1500,
+            paymentCurrency: "USD",
+            exchangeRate: 1100,
+            amountInTripCurrency: 1650000,
+            status: "Aprobado",
+            adminObservation: "Ok",
+          },
+        ],
+      },
+      isLoading: false,
+      error: null,
+    });
   });
 
   it("prioriza al alumno en Participante y pinta Al día en gris", async () => {
@@ -93,5 +126,17 @@ describe("SpreadsheetPage", () => {
     if (result.success) {
       expect(result.data.sortBy).toBe("date");
     }
+  });
+
+  it("muestra comprobantes con fecha formateada, método legible y sin filtros extra", async () => {
+    renderWithProviders(<SpreadsheetPage tripId={1} />, "ROLE_ADMIN");
+
+    fireEvent.click(screen.getByRole("button", { name: "Comprobantes" }));
+
+    expect(screen.queryByPlaceholderText("Buscar por alumno, responsable o email...")).not.toBeInTheDocument();
+    expect(await screen.findByText("10/06/2026")).toBeInTheDocument();
+    expect(screen.getByText("03/05/2026")).toBeInTheDocument();
+    expect(screen.getByText("Transferencia bancaria")).toBeInTheDocument();
+    expect(screen.queryByText("BANK_TRANSFER")).not.toBeInTheDocument();
   });
 });

@@ -3,9 +3,10 @@ package com.agencia.pagos.services;
 import com.agencia.pagos.dtos.request.TripCreateDTO;
 import com.agencia.pagos.dtos.request.TripUpdateDTO;
 import com.agencia.pagos.dtos.request.UserAssignBulkDTO;
-import com.agencia.pagos.dtos.internal.SpreadsheetReceiptRowDTO;
+import com.agencia.pagos.dtos.response.SpreadsheetReceiptRowDTO;
 import com.agencia.pagos.dtos.response.BulkAssignResultDTO;
 import com.agencia.pagos.dtos.response.SpreadsheetDTO;
+import com.agencia.pagos.dtos.response.SpreadsheetReceiptPageDTO;
 import com.agencia.pagos.dtos.response.SpreadsheetRowDTO;
 import com.agencia.pagos.dtos.response.SpreadsheetRowInstallmentDTO;
 import com.agencia.pagos.dtos.response.TripDetailDTO;
@@ -283,6 +284,45 @@ public class TripService {
     }
 
     @Transactional(readOnly = true)
+    public SpreadsheetReceiptPageDTO getComprobantes(
+            Long tripId,
+            String sortBy,
+            String order,
+            int page,
+            int size
+    ) {
+        if (size > 100) {
+            throw new IllegalArgumentException("Page size cannot exceed 100");
+        }
+
+        Trip trip = tripRepository.findById(tripId)
+                .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + tripId));
+
+        List<SpreadsheetReceiptRowDTO> rows = buildReceiptRows(tripId);
+        rows.sort(buildReceiptComparator(sortBy, order));
+
+        long totalElements = rows.size();
+        int safePage = Math.max(0, page);
+        int safeSize = Math.max(1, size);
+        int totalPages = totalElements == 0 ? 0 : Math.max(1, (int) Math.ceil((double) totalElements / safeSize));
+        int offset = safePage * safeSize;
+
+        List<SpreadsheetReceiptRowDTO> paged = rows.stream()
+                .skip(offset)
+                .limit(safeSize)
+                .toList();
+
+        return new SpreadsheetReceiptPageDTO(
+                trip.getName(),
+                safePage,
+                safeSize,
+                totalElements,
+                totalPages,
+                paged
+        );
+    }
+
+    @Transactional(readOnly = true)
     public byte[] exportSpreadsheetAsExcel(Long tripId) {
         Trip trip = tripRepository.findById(tripId)
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + tripId));
@@ -324,18 +364,28 @@ public class TripService {
             appendSubmissionRows(rows, submission);
         }
 
-        rows.sort(
-                Comparator.comparing(SpreadsheetReceiptRowDTO::reportedPaymentDate,
-                                Comparator.nullsLast(Comparator.reverseOrder()))
-                        .thenComparing(SpreadsheetReceiptRowDTO::installmentNumber,
-                                Comparator.nullsLast(Integer::compareTo))
-                        .thenComparing(SpreadsheetReceiptRowDTO::studentLastname,
-                                Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER))
-                        .thenComparing(SpreadsheetReceiptRowDTO::studentName,
-                                Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER))
-        );
+        rows.sort(buildReceiptComparator("reportedPaymentDate", "desc"));
 
         return rows;
+    }
+
+    private Comparator<SpreadsheetReceiptRowDTO> buildReceiptComparator(String sortBy, String order) {
+        Comparator<LocalDate> reportedPaymentDateComparator = "asc".equalsIgnoreCase(order)
+                ? Comparator.naturalOrder()
+                : Comparator.reverseOrder();
+
+        if (!"reportedPaymentDate".equalsIgnoreCase(sortBy) && !"date".equalsIgnoreCase(sortBy)) {
+            sortBy = "reportedPaymentDate";
+        }
+
+        return Comparator.comparing(SpreadsheetReceiptRowDTO::reportedPaymentDate,
+                        Comparator.nullsLast(reportedPaymentDateComparator))
+                .thenComparing(SpreadsheetReceiptRowDTO::installmentNumber,
+                        Comparator.nullsLast(Integer::compareTo))
+                .thenComparing(SpreadsheetReceiptRowDTO::studentLastname,
+                        Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER))
+                .thenComparing(SpreadsheetReceiptRowDTO::studentName,
+                        Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER));
     }
 
     private void appendSubmissionRows(List<SpreadsheetReceiptRowDTO> rows, PaymentSubmission submission) {
