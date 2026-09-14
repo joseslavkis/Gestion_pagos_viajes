@@ -14,6 +14,13 @@ public interface PendingTripStudentRepository extends JpaRepository<PendingTripS
 
     boolean existsByStudentDni(String studentDni);
 
+    /**
+     * Serializes every transaction that creates or claims a pending assignment for one DNI.
+     * The lock is transaction-scoped and requires the PostgreSQL database used by the application.
+     */
+    @Query(value = "SELECT pg_advisory_xact_lock(hashtextextended(CAST(:studentDni AS text), 0))", nativeQuery = true)
+    void lockStudentDni(@Param("studentDni") String studentDni);
+
     @Query("""
         SELECT p
         FROM PendingTripStudent p

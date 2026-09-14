@@ -935,6 +935,7 @@ class TripServicePendingAssignmentsTest {
                 installmentRepository
         );
         order.verify(tripRepository).findByIdForUpdate(300L);
+        order.verify(paymentSubmissionRepository).findByTripIdForUpdate(300L);
         order.verify(paymentReceiptRepository).deleteByInstallmentTripId(300L);
         order.verify(paymentAllocationRepository).deleteByTripId(300L);
         order.verify(paymentOutcomeRepository).deleteByTripId(300L);

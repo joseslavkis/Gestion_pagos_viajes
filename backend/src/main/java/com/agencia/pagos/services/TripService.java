@@ -45,6 +45,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -187,6 +188,9 @@ public class TripService {
         Trip trip = tripRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + id));
 
+        // Lock submissions before deleting outcomes so review/void either finishes first or
+        // observes the submission as deleted; it cannot mutate rows while their outcomes vanish.
+        paymentSubmissionRepository.findByTripIdForUpdate(trip.getId());
         paymentReceiptRepository.deleteByInstallmentTripId(trip.getId());
         paymentAllocationRepository.deleteByTripId(trip.getId());
         paymentOutcomeRepository.deleteByTripId(trip.getId());
@@ -400,9 +404,6 @@ public class TripService {
 
     // [C-2, A-1] Uses pessimistic lock + Argentina timezone
     public BulkAssignResultDTO assignUsersInBulk(Long tripId, UserAssignBulkDTO dto) {
-        Trip trip = tripRepository.findByIdForUpdate(tripId)
-                .orElseThrow(() -> new EntityNotFoundException("Trip not found"));
-
         List<String> requestedDnis = dto.studentDnis().stream()
                 .map(StudentDniNormalizer::normalizeAndValidate)
                 .toList();
@@ -410,6 +411,11 @@ public class TripService {
         if (new LinkedHashSet<>(requestedDnis).size() != requestedDnis.size()) {
             throw new IllegalStateException("Los DNIs no deben repetirse");
         }
+
+        lockStudentDnis(requestedDnis);
+
+        Trip trip = tripRepository.findByIdForUpdate(tripId)
+                .orElseThrow(() -> new EntityNotFoundException("Trip not found"));
 
         Map<String, Student> studentsByDni = studentRepository.findByDniIn(requestedDnis).stream()
                 .collect(Collectors.toMap(Student::getDni, Function.identity()));
@@ -545,10 +551,12 @@ public class TripService {
     }
 
     public void unassignStudentByDni(Long tripId, String studentDni) {
+        String normalizedDni = StudentDniNormalizer.normalizeAndValidate(studentDni);
+        pendingTripStudentRepository.lockStudentDni(normalizedDni);
+
         Trip trip = tripRepository.findByIdForUpdate(tripId)
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found"));
 
-        String normalizedDni = StudentDniNormalizer.normalizeAndValidate(studentDni);
         List<PendingTripStudent> pendingStudents = pendingTripStudentRepository.findByTripIdAndStudentDni(tripId, normalizedDni);
         // Pessimistic-lock the actual installment scope (trip + student DNI) so concurrent payment
         // registration/review paths cannot interleave between the activity check and the deletes.
@@ -638,6 +646,7 @@ public class TripService {
         if (studentDni == null || studentDni.isBlank()) {
             return result == null ? new HashMap<>() : result;
         }
+        pendingTripStudentRepository.lockStudentDni(studentDni);
         Set<Long> tripIds = pendingTripStudentRepository.findByStudentDniWithTrip(studentDni).stream()
                 .map(p -> p.getTrip().getId())
                 .collect(Collectors.toCollection(TreeSet::new));
@@ -648,6 +657,13 @@ public class TripService {
             lockedById.put(tripId, trip);
         }
         return lockedById;
+    }
+
+    private void lockStudentDnis(Collection<String> studentDnis) {
+        studentDnis.stream()
+                .distinct()
+                .sorted()
+                .forEach(pendingTripStudentRepository::lockStudentDni);
     }
 
     /**

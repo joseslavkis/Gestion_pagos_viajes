@@ -21,6 +21,10 @@ public interface PaymentSubmissionRepository extends JpaRepository<PaymentSubmis
     @Query("SELECT p FROM PaymentSubmission p WHERE p.id = :id")
     Optional<PaymentSubmission> findByIdForUpdate(@Param("id") Long id);
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT p FROM PaymentSubmission p WHERE p.trip.id = :tripId ORDER BY p.id")
+    List<PaymentSubmission> findByTripIdForUpdate(@Param("tripId") Long tripId);
+
     @Query("""
         SELECT p
         FROM PaymentSubmission p
