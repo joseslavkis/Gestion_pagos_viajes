@@ -30,6 +30,17 @@
 		<java.version>21</java.version>
 		<jjwt.version>0.12.6</jjwt.version>
 			<lombok.version>1.18.38</lombok.version>
+		<!--
+			Override Spring Boot 3.4.3's managed Testcontainers 1.20.5.
+			2.x uses Docker Engine API 1.44 by default and falls back to 1.32,
+			which covers Docker Engine >=29 (>=API 1.40) and older Linux daemons.
+			2.x also transitively pulls docker-java 3.7.1, which fixes the
+			BadRequestException handshake failure we observed with 1.21.2 /
+			docker-java 3.4.2 on Docker Desktop 29.7.2 (Apple Silicon).
+			See https://github.com/testcontainers/testcontainers-java/releases/tag/2.0.5
+			and docker-java issue #2547.
+		-->
+		<testcontainers.version>2.0.5</testcontainers.version>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -81,12 +92,12 @@
 		</dependency>
 		<dependency>
 			<groupId>org.testcontainers</groupId>
-			<artifactId>junit-jupiter</artifactId>
+			<artifactId>testcontainers-junit-jupiter</artifactId>
 			<scope>test</scope>
 		</dependency>
 		<dependency>
 			<groupId>org.testcontainers</groupId>
-			<artifactId>postgresql</artifactId>
+			<artifactId>testcontainers-postgresql</artifactId>
 			<scope>test</scope>
 		</dependency>
 

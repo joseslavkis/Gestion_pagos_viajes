@@ -301,6 +301,8 @@ public class PaymentService {
     }
 
     public PaymentSubmissionDTO reviewPayment(Long submissionId, ReviewPaymentDTO dto, String reviewerEmail) {
+        paymentSubmissionRepository.findByIdForUpdate(submissionId)
+                .orElseThrow(() -> new EntityNotFoundException("PaymentSubmission not found with id " + submissionId));
         PaymentSubmission submission = paymentSubmissionRepository.findByIdWithContext(submissionId)
                 .orElseThrow(() -> new EntityNotFoundException("PaymentSubmission not found with id " + submissionId));
 
@@ -385,17 +387,19 @@ public class PaymentService {
     }
 
     public PaymentSubmissionDTO voidPayment(Long submissionId, String reviewerEmail) {
+        paymentSubmissionRepository.findByIdForUpdate(submissionId)
+                .orElseThrow(() -> new EntityNotFoundException("PaymentSubmission not found with id " + submissionId));
         PaymentSubmission submission = paymentSubmissionRepository.findByIdWithContext(submissionId)
                 .orElseThrow(() -> new EntityNotFoundException("PaymentSubmission not found with id " + submissionId));
+
+        if (submission.getStatus() == PaymentSubmissionStatus.VOIDED) {
+            throw new IllegalStateException("Este pago ya fue anulado");
+        }
 
         PaymentOutcome approvedOutcome = submission.getOutcomes().stream()
                 .filter(outcome -> outcome.getStatus() == PaymentOutcomeStatus.APPROVED)
                 .findFirst()
                 .orElseThrow(() -> new IllegalStateException("Solo se puede anular un pago con tramo aprobado"));
-
-        if (submission.getStatus() == PaymentSubmissionStatus.VOIDED || approvedOutcome.getStatus() == PaymentOutcomeStatus.VOIDED) {
-            throw new IllegalStateException("Este pago ya fue anulado");
-        }
 
         List<Installment> scopedInstallments = installmentRepository.findByTripIdAndUserIdAndStudentIdForUpdate(
                 submission.getTrip().getId(),
