@@ -8,8 +8,21 @@ import com.agencia.pagos.entities.Student;
 import com.agencia.pagos.entities.Trip;
 import com.agencia.pagos.entities.user.User;
 import com.agencia.pagos.repositories.InstallmentRepository;
+import com.agencia.pagos.repositories.InstallmentReminderNotificationRepository;
+import com.agencia.pagos.repositories.PaymentAllocationRepository;
+import com.agencia.pagos.repositories.PaymentOutcomeRepository;
+import com.agencia.pagos.repositories.PaymentReceiptRepository;
+import com.agencia.pagos.repositories.PaymentSubmissionRepository;
+import com.agencia.pagos.repositories.PendingTripStudentRepository;
+import com.agencia.pagos.repositories.StudentRepository;
 import com.agencia.pagos.repositories.TripRepository;
 import com.agencia.pagos.repositories.UserRepository;
+import com.agencia.pagos.services.InstallmentStatusResolver;
+import com.agencia.pagos.services.InstallmentUiStatusResolver;
+import com.agencia.pagos.services.PaymentAllocationPlanner;
+import com.agencia.pagos.services.PaymentInstallmentOverlayService;
+import com.agencia.pagos.services.TripExcelExporter;
+import com.agencia.pagos.services.TripInstallmentAmountCalculator;
 import com.agencia.pagos.services.TripService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,11 +52,52 @@ class TripServiceSpreadsheetTest {
     @Mock
     private InstallmentRepository installmentRepository;
 
+    @Mock
+    private StudentRepository studentRepository;
+
+    @Mock
+    private PaymentReceiptRepository paymentReceiptRepository;
+
+    @Mock
+    private PaymentSubmissionRepository paymentSubmissionRepository;
+
+    @Mock
+    private PaymentOutcomeRepository paymentOutcomeRepository;
+
+    @Mock
+    private PaymentAllocationRepository paymentAllocationRepository;
+
+    @Mock
+    private InstallmentReminderNotificationRepository installmentReminderNotificationRepository;
+
+    @Mock
+    private PendingTripStudentRepository pendingTripStudentRepository;
+
     private TripService tripService;
 
     @BeforeEach
     void setUp() {
-        tripService = new TripService(tripRepository, userRepository, installmentRepository);
+        tripService = new TripService(
+                tripRepository,
+                userRepository,
+                studentRepository,
+                installmentRepository,
+                paymentReceiptRepository,
+                paymentSubmissionRepository,
+                paymentOutcomeRepository,
+                paymentAllocationRepository,
+                installmentReminderNotificationRepository,
+                pendingTripStudentRepository,
+                new InstallmentStatusResolver(),
+                new InstallmentUiStatusResolver(),
+                new PaymentInstallmentOverlayService(
+                        paymentSubmissionRepository,
+                        new PaymentAllocationPlanner()
+                ),
+                new TripInstallmentAmountCalculator(),
+                new PaymentAllocationPlanner(),
+                new TripExcelExporter()
+        );
     }
 
     @Test

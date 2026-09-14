@@ -30,3 +30,7 @@ secrets/
 *.dump
 *.bak
 .DS_Store
+
+# Local OpenCode/CodeGraph artifacts
+.atl/
+.codegraph/

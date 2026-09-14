@@ -33,6 +33,7 @@ import com.agencia.pagos.repositories.PaymentBatchRepository;
 import com.agencia.pagos.repositories.PaymentOutcomeRepository;
 import com.agencia.pagos.repositories.PaymentReceiptRepository;
 import com.agencia.pagos.repositories.PaymentSubmissionRepository;
+import com.agencia.pagos.repositories.TripRepository;
 import com.agencia.pagos.repositories.UserRepository;
 import com.agencia.pagos.services.storage.PaymentAttachmentStorageService;
 import jakarta.persistence.EntityNotFoundException;
@@ -74,6 +75,7 @@ public class PaymentService {
     private final PaymentOutcomeRepository paymentOutcomeRepository;
     private final PaymentAllocationRepository paymentAllocationRepository;
     private final InstallmentRepository installmentRepository;
+    private final TripRepository tripRepository;
     private final UserRepository userRepository;
     private final BankAccountRepository bankAccountRepository;
     private final InstallmentStatusResolver installmentStatusResolver;
@@ -92,6 +94,7 @@ public class PaymentService {
             PaymentOutcomeRepository paymentOutcomeRepository,
             PaymentAllocationRepository paymentAllocationRepository,
             InstallmentRepository installmentRepository,
+            TripRepository tripRepository,
             UserRepository userRepository,
             BankAccountRepository bankAccountRepository,
             InstallmentStatusResolver installmentStatusResolver,
@@ -108,6 +111,7 @@ public class PaymentService {
         this.paymentOutcomeRepository = paymentOutcomeRepository;
         this.paymentAllocationRepository = paymentAllocationRepository;
         this.installmentRepository = installmentRepository;
+        this.tripRepository = tripRepository;
         this.userRepository = userRepository;
         this.bankAccountRepository = bankAccountRepository;
         this.installmentStatusResolver = installmentStatusResolver;
@@ -158,6 +162,14 @@ public class PaymentService {
             String email
     ) {
         User user = getUserByEmail(email);
+        // [DEADLOCK FIX] Establish Trip → Installments lock order to match
+        // TripService.unassignStudentByDni (which also locks Trip before Installments). The
+        // PaymentSubmission row needs a FK share-lock on Trip on INSERT, so locking Installments
+        // first would create a Trip ↔ Installments cycle with concurrent unassigns. The initial
+        // non-locking lookup is purely for trip-ID discovery; ownership/anchoring validation
+        // remains inside resolvePaymentScope (which re-loads the anchor with user + student
+        // associations and throws AccessDeniedException if it doesn't belong to the caller).
+        lockTripForPaymentRegistration(anchorInstallmentId);
         PaymentScopeSelection selection = resolvePaymentScope(user, anchorInstallmentId, true);
         BankAccount bankAccount = resolveBankAccount(bankAccountId, paymentCurrency);
         boolean requiresQuote = requiresExchangeRate(
@@ -589,6 +601,31 @@ public class PaymentService {
     private User getUserByEmail(String email) {
         return userRepository.findByEmail(email)
                 .orElseThrow(() -> new EntityNotFoundException("User not found with email " + email));
+    }
+
+    /**
+     * Acquires a {@code SELECT ... FOR UPDATE} on the Trip row referenced by the given anchor
+     * installment, BEFORE any installment scope lock is acquired. This is the lock-order
+     * contract enforced by {@code registerPayment} to prevent a Trip ↔ Installments deadlock
+     * with {@code TripService.unassignStudentByDni} (which also locks Trip before Installments).
+     *
+     * <p>The non-locking initial lookup is purely for trip-ID discovery — it intentionally does
+     * NOT perform ownership validation. Ownership validation remains the responsibility of
+     * {@link #resolvePaymentScope(User, Long, boolean)} which re-loads the anchor with its user
+     * + student associations and throws {@link AccessDeniedException} if the anchor belongs to
+     * another user. Calling this method with an anchor that doesn't belong to the caller is
+     * safe: the caller will still receive a typed {@code AccessDeniedException} from
+     * {@code resolvePaymentScope}; the Trip lock acquired here is then released on rollback.
+     *
+     * <p>Throws {@link EntityNotFoundException} if the anchor installment (or its referenced
+     * Trip) does not exist.
+     */
+    private void lockTripForPaymentRegistration(Long anchorInstallmentId) {
+        Long tripId = installmentRepository.findByIdWithTrip(anchorInstallmentId)
+                .map(installment -> installment.getTrip().getId())
+                .orElseThrow(() -> new EntityNotFoundException("Installment not found with id " + anchorInstallmentId));
+        tripRepository.findByIdForUpdate(tripId)
+                .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + tripId));
     }
 
     private PaymentScopeSelection resolvePaymentScope(User user, Long anchorInstallmentId, boolean forUpdate) {

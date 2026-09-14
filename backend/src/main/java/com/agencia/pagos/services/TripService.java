@@ -45,6 +45,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -54,6 +55,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -121,64 +123,6 @@ public class TripService {
         this.tripExcelExporter = tripExcelExporter;
     }
 
-    public TripService(
-            TripRepository tripRepository,
-            UserRepository userRepository,
-            StudentRepository studentRepository,
-            InstallmentRepository installmentRepository,
-            PaymentReceiptRepository paymentReceiptRepository,
-            InstallmentReminderNotificationRepository installmentReminderNotificationRepository,
-            PendingTripStudentRepository pendingTripStudentRepository,
-            InstallmentStatusResolver installmentStatusResolver,
-            InstallmentUiStatusResolver installmentUiStatusResolver,
-            TripExcelExporter tripExcelExporter
-    ) {
-        this(
-                tripRepository,
-                userRepository,
-                studentRepository,
-                installmentRepository,
-                paymentReceiptRepository,
-                null,
-                null,
-                null,
-                installmentReminderNotificationRepository,
-                pendingTripStudentRepository,
-                installmentStatusResolver,
-                installmentUiStatusResolver,
-                null,
-                new TripInstallmentAmountCalculator(),
-                null,
-                tripExcelExporter
-        );
-    }
-
-    // Backward-compatible constructor for tests that still instantiate TripService with 3 args.
-    public TripService(
-            TripRepository tripRepository,
-            UserRepository userRepository,
-            InstallmentRepository installmentRepository
-    ) {
-        this(
-                tripRepository,
-                userRepository,
-                null,
-                installmentRepository,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                new InstallmentStatusResolver(),
-                new InstallmentUiStatusResolver(),
-                null,
-                new TripInstallmentAmountCalculator(),
-                null,
-                new TripExcelExporter()
-        );
-    }
-
     public TripDetailDTO createTrip(TripCreateDTO dto) {
         Trip trip = new Trip();
         trip.setName(dto.name());
@@ -241,27 +185,18 @@ public class TripService {
     }
 
     public void deleteTrip(Long id) {
-        Trip trip = tripRepository.findByIdWithUsers(id)
+        Trip trip = tripRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + id));
 
-        if (paymentReceiptRepository != null) {
-            paymentReceiptRepository.deleteByInstallmentTripId(trip.getId());
-        }
-        if (paymentAllocationRepository != null) {
-            paymentAllocationRepository.deleteByTripId(trip.getId());
-        }
-        if (paymentOutcomeRepository != null) {
-            paymentOutcomeRepository.deleteByTripId(trip.getId());
-        }
-        if (paymentSubmissionRepository != null) {
-            paymentSubmissionRepository.deleteByTripId(trip.getId());
-        }
-        if (installmentReminderNotificationRepository != null) {
-            installmentReminderNotificationRepository.deleteByInstallmentTripId(trip.getId());
-        }
-        if (pendingTripStudentRepository != null) {
-            pendingTripStudentRepository.deleteByTripId(trip.getId());
-        }
+        // Lock submissions before deleting outcomes so review/void either finishes first or
+        // observes the submission as deleted; it cannot mutate rows while their outcomes vanish.
+        paymentSubmissionRepository.findByTripIdForUpdate(trip.getId());
+        paymentReceiptRepository.deleteByInstallmentTripId(trip.getId());
+        paymentAllocationRepository.deleteByTripId(trip.getId());
+        paymentOutcomeRepository.deleteByTripId(trip.getId());
+        paymentSubmissionRepository.deleteByTripId(trip.getId());
+        installmentReminderNotificationRepository.deleteByInstallmentTripId(trip.getId());
+        pendingTripStudentRepository.deleteByTripId(trip.getId());
         installmentRepository.deleteByTripId(trip.getId());
 
         trip.getAssignedUsers().clear();
@@ -295,9 +230,7 @@ public class TripService {
     private List<SpreadsheetReceiptRowDTO> buildReceiptRows(Long tripId) {
         List<SpreadsheetReceiptRowDTO> rows = new ArrayList<>();
 
-        List<PaymentReceipt> paymentReceipts = paymentReceiptRepository == null
-                ? List.of()
-                : paymentReceiptRepository.findByTripIdWithContext(tripId);
+        List<PaymentReceipt> paymentReceipts = paymentReceiptRepository.findByTripIdWithContext(tripId);
         for (PaymentReceipt receipt : paymentReceipts) {
             Student student = receipt.getInstallment() == null ? null : receipt.getInstallment().getStudent();
             rows.add(new SpreadsheetReceiptRowDTO(
@@ -317,9 +250,7 @@ public class TripService {
             ));
         }
 
-        List<PaymentSubmission> submissions = paymentSubmissionRepository == null
-                ? List.of()
-                : paymentSubmissionRepository.findByTripIdWithContext(tripId);
+        List<PaymentSubmission> submissions = paymentSubmissionRepository.findByTripIdWithContext(tripId);
         for (PaymentSubmission submission : submissions) {
             appendSubmissionRows(rows, submission);
         }
@@ -373,7 +304,7 @@ public class TripService {
             String statusLabel,
             String adminObservation
     ) {
-        if (paymentAllocationPlanner != null && submission.getAnchorInstallment() != null) {
+        if (submission.getAnchorInstallment() != null) {
             try {
                 var plan = paymentAllocationPlanner.plan(
                         List.of(submission.getAnchorInstallment()),
@@ -473,13 +404,6 @@ public class TripService {
 
     // [C-2, A-1] Uses pessimistic lock + Argentina timezone
     public BulkAssignResultDTO assignUsersInBulk(Long tripId, UserAssignBulkDTO dto) {
-        Trip trip = tripRepository.findByIdForUpdate(tripId)
-                .orElseThrow(() -> new EntityNotFoundException("Trip not found"));
-
-        if (studentRepository == null || pendingTripStudentRepository == null) {
-            throw new IllegalStateException("Student repositories are not available");
-        }
-
         List<String> requestedDnis = dto.studentDnis().stream()
                 .map(StudentDniNormalizer::normalizeAndValidate)
                 .toList();
@@ -487,6 +411,11 @@ public class TripService {
         if (new LinkedHashSet<>(requestedDnis).size() != requestedDnis.size()) {
             throw new IllegalStateException("Los DNIs no deben repetirse");
         }
+
+        lockStudentDnis(requestedDnis);
+
+        Trip trip = tripRepository.findByIdForUpdate(tripId)
+                .orElseThrow(() -> new EntityNotFoundException("Trip not found"));
 
         Map<String, Student> studentsByDni = studentRepository.findByDniIn(requestedDnis).stream()
                 .collect(Collectors.toMap(Student::getDni, Function.identity()));
@@ -622,17 +551,37 @@ public class TripService {
     }
 
     public void unassignStudentByDni(Long tripId, String studentDni) {
+        String normalizedDni = StudentDniNormalizer.normalizeAndValidate(studentDni);
+        pendingTripStudentRepository.lockStudentDni(normalizedDni);
+
         Trip trip = tripRepository.findByIdForUpdate(tripId)
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found"));
 
-        String normalizedDni = StudentDniNormalizer.normalizeAndValidate(studentDni);
         List<PendingTripStudent> pendingStudents = pendingTripStudentRepository.findByTripIdAndStudentDni(tripId, normalizedDni);
-        List<Installment> installments = installmentRepository.findByTripIdAndStudentDni(tripId, normalizedDni);
+        // Pessimistic-lock the actual installment scope (trip + student DNI) so concurrent payment
+        // registration/review paths cannot interleave between the activity check and the deletes.
+        List<Installment> installments = installmentRepository.findByTripIdAndStudentDniForUpdate(tripId, normalizedDni);
 
         if (pendingStudents.isEmpty() && installments.isEmpty()) {
             throw new EntityNotFoundException("No existe una asignación para el DNI " + normalizedDni + " en este viaje.");
         }
 
+        List<Long> installmentIds = installments.stream()
+                .map(Installment::getId)
+                .toList();
+
+        // GUARD: never delete financial history. If the locked scope carries any activity, refuse.
+        // CRITICAL: this guard runs BEFORE any delete — including pending rows — so a mixed
+        // pending+installment rejection is guaranteed to leave the PendingTripStudent row intact
+        // (explicit semantics, not merely relying on transaction rollback).
+        if (!installmentIds.isEmpty() && hasFinancialActivity(installmentIds, installments)) {
+            throw new IllegalStateException(
+                    "No se puede desasignar al alumno porque posee actividad financiera registrada."
+            );
+        }
+
+        // Pending rows are only deleted once the financial guard has cleared, even when there
+        // are no installments in scope (pure pending path) or when the installment scope is clean.
         if (!pendingStudents.isEmpty()) {
             pendingTripStudentRepository.deleteAll(pendingStudents);
         }
@@ -641,16 +590,11 @@ public class TripService {
             return;
         }
 
-        List<Long> installmentIds = installments.stream()
-                .map(Installment::getId)
-                .toList();
-
-        if (installmentReminderNotificationRepository != null && !installmentIds.isEmpty()) {
+        if (!installmentIds.isEmpty()) {
             installmentReminderNotificationRepository.deleteByInstallmentIdIn(installmentIds);
         }
-        if (paymentReceiptRepository != null && !installmentIds.isEmpty()) {
-            paymentReceiptRepository.deleteByInstallmentIdIn(installmentIds);
-        }
+        // No financial records (receipts, submissions, outcomes, allocations) are deleted on
+        // unassignment; the no-activity branch above guarantees the scope is clean.
 
         User parent = installments.get(0).getUser();
         installmentRepository.deleteAll(installments);
@@ -661,6 +605,106 @@ public class TripService {
         }
     }
 
+    /**
+     * Locks every Trip referenced by a {@code PendingTripStudent} row for the given student DNI,
+     * in ascending trip-ID order, and returns the locked Trip entities keyed by trip id. The
+     * lock order is total and matches {@link #unassignStudentByDni(Long, String)} (which locks
+     * {@code Trip} before any pending delete) so signup and unassignment cannot deadlock on a
+     * Trip ↔ PendingTripStudent cycle.
+     *
+     * <p>Algorithm (single, deterministic pass):
+     * <ol>
+     *   <li>snapshot pending rows for the DNI <em>without a lock</em> via
+     *       {@code PendingTripStudentRepository.findByStudentDniWithTrip}; collect the distinct
+     *       trip IDs;</li>
+     *   <li>sort the IDs ascending and acquire {@code SELECT ... FOR UPDATE} on each Trip in
+     *       that exact order — the total ordering matches {@code unassignStudentByDni};</li>
+     *   <li>return the resulting locked Trip entities keyed by id (empty when no pending rows).</li>
+     * </ol>
+     * Any pending row inserted for a trip not present in the snapshot is <strong>not</strong>
+     * silently processed in this materialization: it remains a legitimate pending assignment
+     * that a later materialization (or sign-up) will pick up. This is the explicit contract — no
+     * fixed-point iteration, no max iteration cap, no incremental acquisition that could
+     * reorder the lock acquisition across multiple Trips and risk a deadlock.
+     *
+     * <p>Caller contract: any pending-row lock acquired AFTER this method returns MUST be scoped
+     * via {@code PendingTripStudentRepository.findByStudentDniAndTripIdInWithTripForUpdate(dni,
+     * lockedTripIds.keySet())}. Locking a pending row whose trip has not been locked by us yet
+     * would invert the Trip → Pending ordering and reintroduce a deadlock.
+     */
+    public Map<Long, Trip> lockCandidateTripsForStudentDni(String studentDni) {
+        return snapshotAndLockCandidateTrips(studentDni, null);
+    }
+
+    /**
+     * Snapshot pending rows for the given DNI <em>without a lock</em>, lock the distinct Trips
+     * deterministically ascending, and return the locked Trip entities keyed by trip id. The
+     * output map is empty when there are no pending rows for the DNI. When {@code result} is
+     * null, callers that don't need the Trip entities can read just the keys.
+     */
+    Map<Long, Trip> snapshotAndLockCandidateTrips(String studentDni, Map<Long, Trip> result) {
+        if (studentDni == null || studentDni.isBlank()) {
+            return result == null ? new HashMap<>() : result;
+        }
+        pendingTripStudentRepository.lockStudentDni(studentDni);
+        Set<Long> tripIds = pendingTripStudentRepository.findByStudentDniWithTrip(studentDni).stream()
+                .map(p -> p.getTrip().getId())
+                .collect(Collectors.toCollection(TreeSet::new));
+        Map<Long, Trip> lockedById = result == null ? new HashMap<>() : result;
+        for (Long tripId : tripIds) {
+            Trip trip = tripRepository.findByIdForUpdate(tripId)
+                    .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + tripId));
+            lockedById.put(tripId, trip);
+        }
+        return lockedById;
+    }
+
+    private void lockStudentDnis(Collection<String> studentDnis) {
+        studentDnis.stream()
+                .distinct()
+                .sorted()
+                .forEach(pendingTripStudentRepository::lockStudentDni);
+    }
+
+    /**
+     * Single source of truth for "does the locked installment scope carry any financial activity?".
+     * Returns {@code true} when ANY of the scoped installment IDs has:
+     * <ul>
+     *   <li>a {@code PaymentSubmission} anchored to it, regardless of PENDING/RESOLVED/VOIDED/unknown status;</li>
+     *   <li>a legacy {@code PaymentReceipt} attached to it;</li>
+     *   <li>{@code paidAmount > 0} on the already-locked installment entity.</li>
+     * </ul>
+     * Uses efficient exists queries against the indexed FK columns; no full collection loads.
+     */
+    private boolean hasFinancialActivity(List<Long> installmentIds, List<Installment> lockedInstallments) {
+        if (installmentIds == null || installmentIds.isEmpty()) {
+            return false;
+        }
+        if (paymentSubmissionRepository.existsByAnchorInstallmentIdIn(installmentIds)) {
+            return true;
+        }
+        if (paymentAllocationRepository.existsByInstallmentIdIn(installmentIds)) {
+            return true;
+        }
+        if (paymentReceiptRepository.existsByInstallmentIdIn(installmentIds)) {
+            return true;
+        }
+        for (Installment installment : lockedInstallments) {
+            BigDecimal paid = installment.getPaidAmount();
+            if (paid != null && paid.compareTo(BigDecimal.ZERO) > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Convenience entry point for direct callers: snapshot pending rows for the student DNI,
+     * lock every distinct Trip in ascending order, scope-lock the matching pending rows, then
+     * delegate to {@link #materializePendingAssignmentsForStudent(Student, Map, List)} with the
+     * locked map and pending rows. The lock order is Trip → PendingTripStudent, matching
+     * {@code unassignStudentByDni}.
+     */
     public void materializePendingAssignmentsForStudent(Student student) {
         if (student == null) {
             throw new IllegalArgumentException("Student is required");
@@ -668,25 +712,89 @@ public class TripService {
         if (student.getId() == null) {
             throw new IllegalArgumentException("Student must be persisted before assigning trips");
         }
-        if (pendingTripStudentRepository == null) {
-            throw new IllegalStateException("PendingTripStudentRepository is not available");
+        String studentDni = student.getDni();
+        Map<Long, Trip> lockedTripsById = snapshotAndLockCandidateTrips(studentDni, new HashMap<>());
+        if (lockedTripsById.isEmpty()) {
+            return;
         }
 
-        List<PendingTripStudent> pendingTrips = pendingTripStudentRepository.findByStudentDniWithTripForUpdate(student.getDni());
-        if (pendingTrips.isEmpty()) {
+        List<PendingTripStudent> pendingTrips = pendingTripStudentRepository
+                .findByStudentDniAndTripIdInWithTripForUpdate(studentDni, lockedTripsById.keySet());
+        materializePendingAssignmentsForStudent(student, lockedTripsById, pendingTrips);
+    }
+
+    /**
+     * Overload for callers that have already locked the candidate Trips (e.g. signup's
+     * {@code lockCandidateTripsForStudentDni}) but have not yet scope-locked the pending rows.
+     * Issues the scoped pending {@code FOR UPDATE} on the supplied Trip set, then delegates to
+     * the worker {@link #materializePendingAssignmentsForStudent(Student, Map, List)}.
+     */
+    public void materializePendingAssignmentsForStudent(Student student, Map<Long, Trip> lockedTripsById) {
+        if (student == null) {
+            throw new IllegalArgumentException("Student is required");
+        }
+        if (student.getId() == null) {
+            throw new IllegalArgumentException("Student must be persisted before assigning trips");
+        }
+        if (lockedTripsById == null || lockedTripsById.isEmpty()) {
+            return;
+        }
+
+        String studentDni = student.getDni();
+        List<PendingTripStudent> pendingTrips = pendingTripStudentRepository
+                .findByStudentDniAndTripIdInWithTripForUpdate(studentDni, lockedTripsById.keySet());
+        materializePendingAssignmentsForStudent(student, lockedTripsById, pendingTrips);
+    }
+
+    /**
+     * Proportional worker that completes the materialization using an <em>already-locked</em>
+     * Trip map and an <em>already-locked</em> pending-row list. The caller MUST have acquired
+     * every {@code SELECT ... FOR UPDATE} on the supplied Trip map and pending rows. This
+     * method performs <strong>only</strong> installment generation, parent-binding updates on
+     * the locked Trips, and pending row cleanup. It does NOT re-snapshot, does NOT lock any
+     * additional Trips, does NOT expand the Trip set, and does NOT re-read pending rows —
+     * preventing the duplicate scoped pending query and the Trip A/Trip B lock-expansion
+     * deadlock. {@code signup} now passes the same locked map and pending list here so the
+     * lock order across the whole transaction remains the total ascending order established by
+     * {@code lockCandidateTripsForStudentDni}.
+     *
+     * <p>An empty {@code lockedTripsById} is a no-op: there is nothing scoped to materialize
+     * and no writes are emitted. Disappearing pending rows (deleted between the caller's
+     * snapshot/lock and this call) surface as an empty {@code pendingTrips} list — the worker
+     * bails with no writes.
+     */
+    public void materializePendingAssignmentsForStudent(
+            Student student,
+            Map<Long, Trip> lockedTripsById,
+            List<PendingTripStudent> pendingTrips
+    ) {
+        if (student == null) {
+            throw new IllegalArgumentException("Student is required");
+        }
+        if (student.getId() == null) {
+            throw new IllegalArgumentException("Student must be persisted before assigning trips");
+        }
+        if (lockedTripsById == null || lockedTripsById.isEmpty()) {
+            return;
+        }
+        if (pendingTrips == null || pendingTrips.isEmpty()) {
+            // Rows disappeared between the caller's snapshot/lock and this call. No writes.
             return;
         }
 
         LocalDate now = LocalDate.now(BUSINESS_ZONE);
         List<Installment> installmentsToSave = new ArrayList<>();
-        Map<Long, Trip> lockedTripsById = new HashMap<>();
 
+        // Reuse the Trip entities already locked by the caller — no second lock acquisition
+        // needed. Reusing the managed entity guarantees we save() the updated assignedUsers
+        // collection. The Trip set is intentionally NOT expanded: every pending row in this
+        // pass MUST have its Trip id present in lockedTripsById.
         for (PendingTripStudent pendingTripStudent : pendingTrips) {
-            Trip trip = lockedTripsById.computeIfAbsent(
-                    pendingTripStudent.getTrip().getId(),
-                    tripId -> tripRepository.findByIdForUpdate(tripId)
-                            .orElseThrow(() -> new EntityNotFoundException("Trip not found"))
-            );
+            Long tripId = pendingTripStudent.getTrip().getId();
+            Trip trip = lockedTripsById.get(tripId);
+            if (trip == null) {
+                throw new EntityNotFoundException("Trip not found");
+            }
             List<BigDecimal> amounts = tripInstallmentAmountCalculator.calculate(
                     trip.getTotalAmount(),
                     trip.getFirstInstallmentAmount(),
@@ -1029,7 +1137,7 @@ public class TripService {
                 .map(Installment::getId)
                 .toList();
 
-        Map<Long, PaymentReceipt> latestReceiptByInstallmentId = installmentIds.isEmpty() || paymentReceiptRepository == null
+        Map<Long, PaymentReceipt> latestReceiptByInstallmentId = installmentIds.isEmpty()
                 ? Map.of()
                 : paymentReceiptRepository.findByInstallmentIdIn(installmentIds).stream()
                 .collect(Collectors.toMap(
@@ -1038,9 +1146,7 @@ public class TripService {
                         (existing, ignored) -> existing
                 ));
         Map<Long, PaymentInstallmentOverlayService.InstallmentOverlay> overlays =
-                paymentInstallmentOverlayService == null
-                        ? Map.of()
-                        : paymentInstallmentOverlayService.resolveForInstallments(tripInstallments);
+                paymentInstallmentOverlayService.resolveForInstallments(tripInstallments);
 
         List<SpreadsheetRowDTO> rows = installmentsByParticipant.values().stream()
                 .map(participantInstallments -> {

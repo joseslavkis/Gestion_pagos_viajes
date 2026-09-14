@@ -19,8 +19,10 @@ import com.agencia.pagos.entities.Installment;
 import com.agencia.pagos.entities.InstallmentStatus;
 import com.agencia.pagos.entities.PaymentReceipt;
 import com.agencia.pagos.entities.PasswordResetToken;
+import com.agencia.pagos.entities.PendingTripStudent;
 import com.agencia.pagos.entities.Role;
 import com.agencia.pagos.entities.Student;
+import com.agencia.pagos.entities.Trip;
 import com.agencia.pagos.entities.user.User;
 import com.agencia.pagos.entities.user.UserCredentials;
 import com.agencia.pagos.entities.refresh_token.RefreshToken;
@@ -413,8 +415,28 @@ public class UserService implements UserDetailsService {
     private Student claimPendingStudentForUser(User user, StudentCreateDTO dto) {
         String dni = StudentDniNormalizer.normalizeAndValidate(dto.dni());
 
-        var pendingAssignments = pendingTripStudentRepository.findByStudentDniWithTripForUpdate(dni);
+        // [DEADLOCK FIX] Establish Trip → PendingTripStudent lock ordering for the whole
+        // signup/materialization transaction so this path cannot deadlock with concurrent
+        // unassignStudentByDni (which acquires Trip first). Trip locks are acquired BEFORE
+        // any pending-row lock; the scoped pending FOR UPDATE is then issued against that same
+        // locked Trip set. Both the locked Trip map AND the already-locked pending rows are
+        // passed directly into the materialization worker so it does NOT re-snapshot, does
+        // NOT re-read pending rows, and does NOT expand the Trip set — that would reintroduce
+        // a Trip A/Trip B lock-expansion deadlock and a duplicate scoped pending query.
+        Map<Long, Trip> lockedTripsById = tripService.lockCandidateTripsForStudentDni(dni);
+        if (lockedTripsById.isEmpty()) {
+            if (studentRepository.existsByDni(dni)) {
+                throw new IllegalStateException("El DNI de alumno " + dni + " ya fue reclamado por otro usuario.");
+            }
+            throw new IllegalStateException(
+                    "El DNI de alumno " + dni + " no está habilitado todavía. Pedile a la agencia que lo cargue primero."
+            );
+        }
+
+        List<PendingTripStudent> pendingAssignments = pendingTripStudentRepository
+                .findByStudentDniAndTripIdInWithTripForUpdate(dni, lockedTripsById.keySet());
         if (pendingAssignments.isEmpty()) {
+            // Rows disappeared between snapshot and lock. Treat the same as "no pending row".
             if (studentRepository.existsByDni(dni)) {
                 throw new IllegalStateException("El DNI de alumno " + dni + " ya fue reclamado por otro usuario.");
             }
@@ -435,7 +457,7 @@ public class UserService implements UserDetailsService {
                 .build();
 
         Student savedStudent = studentRepository.save(student);
-        tripService.materializePendingAssignmentsForStudent(savedStudent);
+        tripService.materializePendingAssignmentsForStudent(savedStudent, lockedTripsById, pendingAssignments);
         return savedStudent;
     }
 
