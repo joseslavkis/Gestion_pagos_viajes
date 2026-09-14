@@ -15,7 +15,12 @@ class TripServiceComputeEffectiveStatusTest {
 
     private static final ZoneId BUSINESS_ZONE = ZoneId.of("America/Argentina/Buenos_Aires");
 
-    private final TripService tripService = new TripService(null, null, null);
+    private final TripService tripService = new TripService(
+            null, null, null, null, null, null, null, null,
+            null, null, new com.agencia.pagos.services.InstallmentStatusResolver(),
+            new com.agencia.pagos.services.InstallmentUiStatusResolver(), null, null, null,
+            new com.agencia.pagos.services.TripExcelExporter()
+    );
 
     @Test
     void cuotaTotalmenteCubierta_esGreenAunqueStoredStatusSeaYellow() {

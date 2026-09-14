@@ -28,6 +28,7 @@ import java.util.Set;
                 @Index(name = "idx_payment_submissions_status", columnList = "status"),
                 @Index(name = "idx_payment_submissions_scope", columnList = "trip_id,user_id,student_id"),
                 @Index(name = "idx_payment_submissions_user", columnList = "user_id"),
+                @Index(name = "idx_payment_submissions_anchor_installment", columnList = "anchor_installment_id"),
                 @Index(name = "idx_payment_submissions_reported_date", columnList = "reported_payment_date")
         }
 )

@@ -14,8 +14,6 @@ public interface PaymentReceiptRepository extends JpaRepository<PaymentReceipt, 
 
     void deleteByInstallmentTripId(Long tripId);
 
-    void deleteByInstallmentIdIn(List<Long> installmentIds);
-
     List<PaymentReceipt> findByInstallmentIdAndStatus(Long installmentId, ReceiptStatus status);
 
     List<PaymentReceipt> findByInstallmentUserId(Long userId);
@@ -116,4 +114,11 @@ public interface PaymentReceiptRepository extends JpaRepository<PaymentReceipt, 
           AND p.installment.trip.id = :tripId
         """)
     List<Long> findDistinctBatchIdsByInstallmentTripId(@Param("tripId") Long tripId);
+
+    /**
+     * Efficient existence check used by administrative flows that need to know whether any legacy
+     * {@code PaymentReceipt} is attached to one of the supplied installment IDs, independent of the
+     * current {@link com.agencia.pagos.entities.ReceiptStatus}.
+     */
+    boolean existsByInstallmentIdIn(List<Long> installmentIds);
 }

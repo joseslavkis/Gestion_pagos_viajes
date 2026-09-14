@@ -24,6 +24,8 @@ import com.agencia.pagos.repositories.TripRepository;
 import com.agencia.pagos.repositories.UserRepository;
 import com.agencia.pagos.services.InstallmentStatusResolver;
 import com.agencia.pagos.services.InstallmentUiStatusResolver;
+import com.agencia.pagos.services.PaymentAllocationPlanner;
+import com.agencia.pagos.services.PaymentInstallmentOverlayService;
 import com.agencia.pagos.services.TripExcelExporter;
 import com.agencia.pagos.services.TripInstallmentAmountCalculator;
 import com.agencia.pagos.services.TripService;
@@ -167,9 +169,12 @@ class TripServiceApprovedOutcomeAmountTest {
                 pendingTripStudentRepository,
                 new InstallmentStatusResolver(),
                 new InstallmentUiStatusResolver(),
-                null,   // PaymentInstallmentOverlayService
+                new PaymentInstallmentOverlayService(
+                        paymentSubmissionRepository,
+                        new PaymentAllocationPlanner()
+                ),
                 new TripInstallmentAmountCalculator(),
-                null,   // PaymentAllocationPlanner
+                new PaymentAllocationPlanner(),
                 new TripExcelExporter()
         );
 

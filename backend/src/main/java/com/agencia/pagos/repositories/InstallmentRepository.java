@@ -41,13 +41,17 @@ public interface InstallmentRepository extends JpaRepository<Installment, Long> 
         @Param("studentId") Long studentId
     );
 
+    /**
+     * Atomic pessimistic-write lock of the installment scope used by payment
+     * registration/review/void. Intentionally avoids {@code JOIN FETCH} so Hibernate issues a
+     * single {@code SELECT ... FOR UPDATE} instead of an unlocked select followed by
+     * follow-on locks (HHH000444). Associations are loaded on demand by the surrounding
+     * {@code @Transactional} service.
+     */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("""
         SELECT i
         FROM Installment i
-        JOIN FETCH i.trip
-        JOIN FETCH i.user
-        LEFT JOIN FETCH i.student
         WHERE i.trip.id = :tripId
           AND i.user.id = :userId
           AND (
@@ -89,6 +93,29 @@ public interface InstallmentRepository extends JpaRepository<Installment, Long> 
         ORDER BY i.installmentNumber ASC
         """)
     List<Installment> findByTripIdAndStudentDni(@Param("tripId") Long tripId, @Param("studentDni") String studentDni);
+
+    /**
+     * Atomic pessimistic-write lock of the installment scope used by administrative flows that
+     * decide and act on the entire installment scope (trip + student DNI), such as student
+     * unassignment. Acquires a {@code SELECT ... FOR UPDATE} so concurrent payment
+     * registration/review paths on the same installments cannot interleave between the activity
+     * check and the deletes. Intentionally avoids {@code JOIN FETCH} so Hibernate issues a
+     * single atomic lock query rather than an unlocked select with follow-on locks (HHH000444);
+     * associations are loaded on demand by the surrounding {@code @Transactional} service.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+        SELECT i
+        FROM Installment i
+        WHERE i.trip.id = :tripId
+          AND i.student IS NOT NULL
+          AND i.student.dni = :studentDni
+        ORDER BY i.installmentNumber ASC
+        """)
+    List<Installment> findByTripIdAndStudentDniForUpdate(
+            @Param("tripId") Long tripId,
+            @Param("studentDni") String studentDni
+    );
 
     boolean existsByTripIdAndUserId(Long tripId, Long userId);
 

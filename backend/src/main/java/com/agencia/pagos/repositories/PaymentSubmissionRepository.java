@@ -132,4 +132,12 @@ public interface PaymentSubmissionRepository extends JpaRepository<PaymentSubmis
             @Param("cutoff") LocalDateTime cutoff,
             Pageable pageable
     );
+
+    /**
+     * Efficient existence check used by administrative flows that need to know whether any submission
+     * is anchored to one of the supplied installment IDs, regardless of the current
+     * {@link PaymentSubmissionStatus} (PENDING/RESOLVED/VOIDED/unknown). Mirrors the real
+     * {@code anchor_installment_id} column on {@link PaymentSubmission}.
+     */
+    boolean existsByAnchorInstallmentIdIn(List<Long> installmentIds);
 }

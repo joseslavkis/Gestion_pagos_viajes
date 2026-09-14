@@ -40,6 +40,9 @@ CREATE INDEX IF NOT EXISTS idx_payment_submissions_scope
 CREATE INDEX IF NOT EXISTS idx_payment_submissions_user
     ON payment_submissions (user_id);
 
+CREATE INDEX IF NOT EXISTS idx_payment_submissions_anchor_installment
+    ON payment_submissions (anchor_installment_id);
+
 CREATE INDEX IF NOT EXISTS idx_payment_submissions_reported_date
     ON payment_submissions (reported_payment_date);
 
