@@ -119,6 +119,14 @@ public interface InstallmentRepository extends JpaRepository<Installment, Long> 
 
     boolean existsByTripIdAndUserId(Long tripId, Long userId);
 
+    /**
+     * Existence check used by {@code TripService.updateTrip} to refuse calendar changes
+     * (dueDay / firstDueDate) once the trip already has any generated installment.
+     * Returns whether at least one installment exists for the trip without loading
+     * the installment collection.
+     */
+    boolean existsByTripId(Long tripId);
+
     @Query("SELECT COUNT(DISTINCT i.student.id) FROM Installment i WHERE i.trip.id = :tripId AND i.student IS NOT NULL")
     long countDistinctStudentsByTripId(@Param("tripId") Long tripId);
 }
