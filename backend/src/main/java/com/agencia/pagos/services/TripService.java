@@ -160,13 +160,20 @@ public class TripService {
     }
 
     public TripDetailDTO updateTrip(Long id, TripUpdateDTO dto) {
-        Trip trip = tripRepository.findByIdWithUsers(id)
+        // Pessimistic-write lock on the Trip row so concurrent PATCH calls serialize on the
+        // calendar-integrity decision. The lock is acquired BEFORE the installment-existence
+        // check below.
+        Trip trip = tripRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + id));
 
-        // [A-3] Prevent firstDueDate changes once users are assigned — would invalidate all generated quotas
-        if (dto.firstDueDate() != null && !trip.getAssignedUsers().isEmpty()) {
+        // Calendar fields (dueDay / firstDueDate) cannot be modified once any installment has
+        // been generated — changing them would invalidate the dueDate stored on every existing
+        // quota. Detect real requested changes (nullable DTO fields mean "absent"; identical
+        // values are no-ops) and refuse only when an installment already exists. Assigned
+        // users or pending students are NOT the materialization signal.
+        if (hasCalendarChange(trip, dto) && installmentRepository.existsByTripId(trip.getId())) {
             throw new IllegalStateException(
-                "Cannot modify firstDueDate on a trip that already has assigned users.");
+                    "No se puede modificar el calendario de vencimientos porque el viaje ya tiene cuotas generadas.");
         }
 
         if (dto.name() != null) trip.setName(dto.name());
@@ -182,6 +189,22 @@ public class TripService {
 
         tripRepository.save(trip);
         return toDetailDTO(trip);
+    }
+
+    /**
+     * Returns {@code true} when the request carries at least one calendar field
+     * ({@code dueDay} or {@code firstDueDate}) that actually differs from the value currently
+     * stored on the Trip. A null DTO field is treated as "absent" and never counts as a
+     * change; identical values are no-ops.
+     */
+    private boolean hasCalendarChange(Trip trip, TripUpdateDTO dto) {
+        if (dto.dueDay() != null && !Objects.equals(dto.dueDay(), trip.getDueDay())) {
+            return true;
+        }
+        if (dto.firstDueDate() != null && !Objects.equals(dto.firstDueDate(), trip.getFirstDueDate())) {
+            return true;
+        }
+        return false;
     }
 
     public void deleteTrip(Long id) {

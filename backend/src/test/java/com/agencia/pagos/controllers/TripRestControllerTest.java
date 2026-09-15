@@ -48,6 +48,9 @@ import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.stream.Collectors;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -889,11 +892,10 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             }
 
             @Test
-            void updateTrip_cambiarFirstDueDate_conUsuariosAsignados_devuelve409() throws Exception {
+            void updateTrip_cambiarFirstDueDate_conCuotasGeneradas_devuelve409() throws Exception {
             TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-update-conflict"));
             UserCreateDTO userDto = buildValidUser("user-trip-update-conflict");
             signUp(userDto);
-            User u = userRepository.findByEmail(userDto.email()).orElseThrow();
 
             LocalDate originalFirstDueDate = LocalDate.now().plusMonths(2);
             Trip trip = buildTripForBulk(
@@ -905,8 +907,24 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 false,
                 originalFirstDueDate
             );
-            trip.getAssignedUsers().add(u);
-            tripRepository.save(trip);
+
+            // Materialize real installments so the calendar guard has something to detect.
+            // The previous "assignedUsers only" precondition is obsolete: assigned users
+            // without installments MUST NOT freeze the calendar.
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                    .header("Authorization", "Bearer " + adminTokens.accessToken())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(new UserAssignBulkDTO(List.of(userDto.students().get(0).dni())))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assignedCount").value(1));
+
+            Map<Integer, LocalDate> originalInstallmentsByNumber = installmentRepository.findByTripIdWithUsers(trip.getId()).stream()
+                .collect(Collectors.toMap(
+                        Installment::getInstallmentNumber,
+                        Installment::getDueDate,
+                        (a, b) -> a,
+                        TreeMap::new));
+            assertEquals(2, originalInstallmentsByNumber.size());
 
             TripUpdateDTO patchDto = new TripUpdateDTO(
                 null,
@@ -921,10 +939,481 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 .header("Authorization", "Bearer " + adminTokens.accessToken())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(patchDto)))
-                .andExpect(status().isConflict());
+                .andExpect(status().isConflict())
+                .andExpect(content().string(containsString(
+                        "No se puede modificar el calendario de vencimientos porque el viaje ya tiene cuotas generadas.")));
 
             Trip persistedTrip = tripRepository.findByIdWithUsers(trip.getId()).orElseThrow();
+            assertEquals(10, persistedTrip.getDueDay(),
+                    "the other calendar field (dueDay) must remain unchanged on 409");
             assertEquals(originalFirstDueDate, persistedTrip.getFirstDueDate());
+            Map<Integer, LocalDate> persistedInstallmentsByNumber = installmentRepository.findByTripIdWithUsers(trip.getId()).stream()
+                .collect(Collectors.toMap(
+                        Installment::getInstallmentNumber,
+                        Installment::getDueDate,
+                        (a, b) -> a,
+                        TreeMap::new));
+            assertEquals(originalInstallmentsByNumber, persistedInstallmentsByNumber,
+                    "every (installmentNumber, dueDate) pair must remain unchanged on 409");
+            }
+
+            @Test
+            void updateTrip_cambiarDueDay_sinCuotas_devuelve200() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-dueday-empty"));
+
+            LocalDate originalFirstDueDate = LocalDate.now().plusMonths(2);
+            Trip trip = buildTripForBulk(
+                "Trip DueDay Empty",
+                BigDecimal.valueOf(1000),
+                3,
+                5,
+                BigDecimal.valueOf(100),
+                false,
+                originalFirstDueDate
+            );
+            assertEquals(0, installmentRepository.count());
+
+            TripUpdateDTO patchDto = new TripUpdateDTO(null, 15, null, null, null, null);
+
+            mockMvc.perform(patch("/api/v1/trips/{id}", trip.getId())
+                    .header("Authorization", "Bearer " + adminTokens.accessToken())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(patchDto)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dueDay").value(15))
+                .andExpect(jsonPath("$.firstDueDate").value(originalFirstDueDate.toString()));
+
+            Trip persistedTrip = tripRepository.findById(trip.getId()).orElseThrow();
+            assertEquals(15, persistedTrip.getDueDay());
+            assertEquals(originalFirstDueDate, persistedTrip.getFirstDueDate());
+            assertEquals(0, installmentRepository.count());
+            }
+
+            @Test
+            void updateTrip_cambiarFirstDueDate_sinCuotas_devuelve200() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-firstduedate-empty"));
+
+            LocalDate originalFirstDueDate = LocalDate.now().plusMonths(2);
+            LocalDate newFirstDueDate = originalFirstDueDate.plusMonths(3);
+            Trip trip = buildTripForBulk(
+                "Trip FirstDueDate Empty",
+                BigDecimal.valueOf(1000),
+                3,
+                10,
+                BigDecimal.valueOf(100),
+                false,
+                originalFirstDueDate
+            );
+            assertEquals(0, installmentRepository.count());
+
+            TripUpdateDTO patchDto = new TripUpdateDTO(null, null, null, null, null, newFirstDueDate);
+
+            mockMvc.perform(patch("/api/v1/trips/{id}", trip.getId())
+                    .header("Authorization", "Bearer " + adminTokens.accessToken())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(patchDto)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.firstDueDate").value(newFirstDueDate.toString()))
+                .andExpect(jsonPath("$.dueDay").value(10));
+
+            Trip persistedTrip = tripRepository.findById(trip.getId()).orElseThrow();
+            assertEquals(newFirstDueDate, persistedTrip.getFirstDueDate());
+            assertEquals(0, installmentRepository.count());
+            }
+
+            @Test
+            void updateTrip_cambiarDueDay_conCuotas_devuelve409SinModificarInstalments() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-dueday-installed"));
+            UserCreateDTO userDto = buildValidUser("user-trip-dueday-installed");
+            signUp(userDto);
+
+            LocalDate originalFirstDueDate = LocalDate.now().plusMonths(2);
+            int originalDueDay = 10;
+            Trip trip = buildTripForBulk(
+                "Trip DueDay Installed",
+                BigDecimal.valueOf(1000),
+                3,
+                originalDueDay,
+                BigDecimal.valueOf(100),
+                false,
+                originalFirstDueDate
+            );
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                    .header("Authorization", "Bearer " + adminTokens.accessToken())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(new UserAssignBulkDTO(List.of(userDto.students().get(0).dni())))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assignedCount").value(1));
+
+            Map<Integer, LocalDate> originalInstallmentsByNumber = installmentRepository.findByTripIdWithUsers(trip.getId()).stream()
+                .collect(Collectors.toMap(
+                        Installment::getInstallmentNumber,
+                        Installment::getDueDate,
+                        (a, b) -> a,
+                        TreeMap::new));
+            assertEquals(3, originalInstallmentsByNumber.size());
+
+            TripUpdateDTO patchDto = new TripUpdateDTO(null, 20, null, null, null, null);
+
+            mockMvc.perform(patch("/api/v1/trips/{id}", trip.getId())
+                    .header("Authorization", "Bearer " + adminTokens.accessToken())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(patchDto)))
+                .andExpect(status().isConflict())
+                .andExpect(content().string(containsString(
+                        "No se puede modificar el calendario de vencimientos porque el viaje ya tiene cuotas generadas.")));
+
+            Trip persistedTrip = tripRepository.findById(trip.getId()).orElseThrow();
+            assertEquals(originalDueDay, persistedTrip.getDueDay());
+            assertEquals(originalFirstDueDate, persistedTrip.getFirstDueDate());
+            Map<Integer, LocalDate> persistedInstallmentsByNumber = installmentRepository.findByTripIdWithUsers(trip.getId()).stream()
+                .collect(Collectors.toMap(
+                        Installment::getInstallmentNumber,
+                        Installment::getDueDate,
+                        (a, b) -> a,
+                        TreeMap::new));
+            assertEquals(originalInstallmentsByNumber, persistedInstallmentsByNumber,
+                    "every (installmentNumber, dueDate) pair must remain unchanged on 409");
+            }
+
+            @Test
+            void updateTrip_cambiarFirstDueDate_conCuotas_devuelve409SinModificarInstalments() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-firstduedate-installed"));
+            UserCreateDTO userDto = buildValidUser("user-trip-firstduedate-installed");
+            signUp(userDto);
+
+            LocalDate originalFirstDueDate = LocalDate.now().plusMonths(2);
+            int originalDueDay = 10;
+            LocalDate newFirstDueDate = LocalDate.now().plusMonths(6);
+            Trip trip = buildTripForBulk(
+                "Trip FirstDueDate Installed",
+                BigDecimal.valueOf(1000),
+                3,
+                originalDueDay,
+                BigDecimal.valueOf(100),
+                false,
+                originalFirstDueDate
+            );
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                    .header("Authorization", "Bearer " + adminTokens.accessToken())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(new UserAssignBulkDTO(List.of(userDto.students().get(0).dni())))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assignedCount").value(1));
+
+            Map<Integer, LocalDate> originalInstallmentsByNumber = installmentRepository.findByTripIdWithUsers(trip.getId()).stream()
+                .collect(Collectors.toMap(
+                        Installment::getInstallmentNumber,
+                        Installment::getDueDate,
+                        (a, b) -> a,
+                        TreeMap::new));
+            assertEquals(3, originalInstallmentsByNumber.size());
+
+            TripUpdateDTO patchDto = new TripUpdateDTO(null, null, null, null, null, newFirstDueDate);
+
+            mockMvc.perform(patch("/api/v1/trips/{id}", trip.getId())
+                    .header("Authorization", "Bearer " + adminTokens.accessToken())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(patchDto)))
+                .andExpect(status().isConflict())
+                .andExpect(content().string(containsString(
+                        "No se puede modificar el calendario de vencimientos porque el viaje ya tiene cuotas generadas.")));
+
+            Trip persistedTrip = tripRepository.findById(trip.getId()).orElseThrow();
+            assertEquals(originalDueDay, persistedTrip.getDueDay(),
+                    "the other calendar field (dueDay) must remain unchanged on 409");
+            assertEquals(originalFirstDueDate, persistedTrip.getFirstDueDate());
+            Map<Integer, LocalDate> persistedInstallmentsByNumber = installmentRepository.findByTripIdWithUsers(trip.getId()).stream()
+                .collect(Collectors.toMap(
+                        Installment::getInstallmentNumber,
+                        Installment::getDueDate,
+                        (a, b) -> a,
+                        TreeMap::new));
+            assertEquals(originalInstallmentsByNumber, persistedInstallmentsByNumber,
+                    "every (installmentNumber, dueDate) pair must remain unchanged on 409");
+            }
+
+            @Test
+            void updateTrip_mismoDueDayConCuotas_yCambioDeNombre_devuelve200SinTocarFechas() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-same-dueday"));
+            UserCreateDTO userDto = buildValidUser("user-trip-same-dueday");
+            signUp(userDto);
+
+            LocalDate originalFirstDueDate = LocalDate.now().plusMonths(2);
+            int originalDueDay = 10;
+            Trip trip = buildTripForBulk(
+                "Trip Original SameDueDay",
+                BigDecimal.valueOf(1000),
+                3,
+                originalDueDay,
+                BigDecimal.valueOf(100),
+                false,
+                originalFirstDueDate
+            );
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                    .header("Authorization", "Bearer " + adminTokens.accessToken())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(new UserAssignBulkDTO(List.of(userDto.students().get(0).dni())))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assignedCount").value(1));
+
+            List<LocalDate> originalInstallmentDates = installmentRepository.findByTripIdWithUsers(trip.getId()).stream()
+                .map(Installment::getDueDate)
+                .sorted()
+                .toList();
+
+            TripUpdateDTO patchDto = new TripUpdateDTO(
+                "Trip Renamed SameDueDay",
+                originalDueDay,
+                null,
+                null,
+                null,
+                null
+            );
+
+            mockMvc.perform(patch("/api/v1/trips/{id}", trip.getId())
+                    .header("Authorization", "Bearer " + adminTokens.accessToken())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(patchDto)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Trip Renamed SameDueDay"))
+                .andExpect(jsonPath("$.dueDay").value(originalDueDay));
+
+            Trip persistedTrip = tripRepository.findById(trip.getId()).orElseThrow();
+            assertEquals("Trip Renamed SameDueDay", persistedTrip.getName());
+            assertEquals(originalDueDay, persistedTrip.getDueDay());
+            List<LocalDate> persistedInstallmentDates = installmentRepository.findByTripIdWithUsers(trip.getId()).stream()
+                .map(Installment::getDueDate)
+                .sorted()
+                .toList();
+            assertEquals(originalInstallmentDates, persistedInstallmentDates);
+            }
+
+            @Test
+            void updateTrip_mismoFirstDueDateConCuotas_yCambioDeNombre_devuelve200SinTocarFechas() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-same-firstduedate"));
+            UserCreateDTO userDto = buildValidUser("user-trip-same-firstduedate");
+            signUp(userDto);
+
+            LocalDate originalFirstDueDate = LocalDate.now().plusMonths(2);
+            Trip trip = buildTripForBulk(
+                "Trip Original SameFirstDueDate",
+                BigDecimal.valueOf(1000),
+                3,
+                10,
+                BigDecimal.valueOf(100),
+                false,
+                originalFirstDueDate
+            );
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                    .header("Authorization", "Bearer " + adminTokens.accessToken())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(new UserAssignBulkDTO(List.of(userDto.students().get(0).dni())))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assignedCount").value(1));
+
+            List<LocalDate> originalInstallmentDates = installmentRepository.findByTripIdWithUsers(trip.getId()).stream()
+                .map(Installment::getDueDate)
+                .sorted()
+                .toList();
+
+            TripUpdateDTO patchDto = new TripUpdateDTO(
+                "Trip Renamed SameFirstDueDate",
+                null,
+                null,
+                null,
+                null,
+                originalFirstDueDate
+            );
+
+            mockMvc.perform(patch("/api/v1/trips/{id}", trip.getId())
+                    .header("Authorization", "Bearer " + adminTokens.accessToken())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(patchDto)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Trip Renamed SameFirstDueDate"))
+                .andExpect(jsonPath("$.firstDueDate").value(originalFirstDueDate.toString()));
+
+            Trip persistedTrip = tripRepository.findById(trip.getId()).orElseThrow();
+            assertEquals("Trip Renamed SameFirstDueDate", persistedTrip.getName());
+            assertEquals(originalFirstDueDate, persistedTrip.getFirstDueDate());
+            List<LocalDate> persistedInstallmentDates = installmentRepository.findByTripIdWithUsers(trip.getId()).stream()
+                .map(Installment::getDueDate)
+                .sorted()
+                .toList();
+            assertEquals(originalInstallmentDates, persistedInstallmentDates);
+            }
+
+            @Test
+            void updateTrip_soloPending_sinCuotas_permiteCambioDeCalendario() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-pending-calendar"));
+
+            LocalDate originalFirstDueDate = LocalDate.now().plusMonths(2);
+            int originalDueDay = 10;
+            LocalDate newFirstDueDate = originalFirstDueDate.plusMonths(1);
+            int newDueDay = 20;
+            Trip trip = buildTripForBulk(
+                "Trip Pending Calendar",
+                BigDecimal.valueOf(1000),
+                3,
+                originalDueDay,
+                BigDecimal.valueOf(100),
+                false,
+                originalFirstDueDate
+            );
+
+            String pendingDni = uniqueDni();
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                    .header("Authorization", "Bearer " + adminTokens.accessToken())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(new UserAssignBulkDTO(List.of(pendingDni)))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.pendingCount").value(1));
+            assertEquals(0, installmentRepository.count());
+
+            TripUpdateDTO patchDto = new TripUpdateDTO(null, newDueDay, null, null, null, newFirstDueDate);
+
+            mockMvc.perform(patch("/api/v1/trips/{id}", trip.getId())
+                    .header("Authorization", "Bearer " + adminTokens.accessToken())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(patchDto)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dueDay").value(newDueDay))
+                .andExpect(jsonPath("$.firstDueDate").value(newFirstDueDate.toString()));
+
+            Trip persistedTrip = tripRepository.findById(trip.getId()).orElseThrow();
+            assertEquals(newDueDay, persistedTrip.getDueDay());
+            assertEquals(newFirstDueDate, persistedTrip.getFirstDueDate());
+            assertEquals(0, installmentRepository.count());
+
+            // Materialize the pending assignment and verify the new calendar is honored.
+            UserCreateDTO claimedDto = new UserCreateDTO(
+                uniqueEmail("user-pending-claim"),
+                "Password123!",
+                "Claim",
+                "Parent",
+                uniqueDni(),
+                "123456789",
+                List.of(new com.agencia.pagos.dtos.request.StudentCreateDTO("Claim", "Student", pendingDni))
+            );
+            mockMvc.perform(post("/api/v1/auth/signup")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(claimedDto)))
+                .andExpect(status().isCreated());
+
+            List<Installment> materialized = installmentRepository.findByTripIdWithUsers(trip.getId());
+            assertEquals(3, materialized.size());
+            for (Installment installment : materialized) {
+                // Installment #1 uses trip.firstDueDate verbatim; #2+ walk monthly from there
+                // snapping to dueDay (with the last-day-of-month fallback) — matches
+                // TripService.resolveInstallmentDueDate.
+                LocalDate expected;
+                if (installment.getInstallmentNumber() == 1) {
+                    expected = newFirstDueDate;
+                } else {
+                    LocalDate baseDate = newFirstDueDate.plusMonths(installment.getInstallmentNumber() - 1L);
+                    int validDay = Math.min(newDueDay, baseDate.lengthOfMonth());
+                    expected = baseDate.withDayOfMonth(validDay);
+                }
+                assertEquals(expected, installment.getDueDate());
+            }
+            }
+
+            @Test
+            void updateTrip_usuariosAsignadosSinCuotas_permiteCambioDeCalendario() throws Exception {
+            // Regression guard: the old implementation refused firstDueDate edits whenever any
+            // user was assigned, even before any installment was generated. The new rule is
+            // strictly based on the installment-existence signal, so assignedUsers without
+            // installments must NOT freeze the calendar. Both calendar fields (dueDay and
+            // firstDueDate) are changed in a single request to prove both are writable.
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-assigned-noinstall"));
+            UserCreateDTO userDto = buildValidUser("user-trip-assigned-noinstall");
+            signUp(userDto);
+            User u = userRepository.findByEmail(userDto.email()).orElseThrow();
+
+            LocalDate originalFirstDueDate = LocalDate.now().plusMonths(2);
+            int originalDueDay = 10;
+            LocalDate newFirstDueDate = originalFirstDueDate.plusMonths(4);
+            int newDueDay = 25;
+            Trip trip = buildTripForBulk(
+                "Trip AssignedNoInstall",
+                BigDecimal.valueOf(1000),
+                2,
+                originalDueDay,
+                BigDecimal.valueOf(100),
+                false,
+                originalFirstDueDate
+            );
+            trip.getAssignedUsers().add(u);
+            tripRepository.save(trip);
+            assertEquals(0, installmentRepository.count());
+
+            TripUpdateDTO patchDto = new TripUpdateDTO(null, newDueDay, null, null, null, newFirstDueDate);
+
+            mockMvc.perform(patch("/api/v1/trips/{id}", trip.getId())
+                    .header("Authorization", "Bearer " + adminTokens.accessToken())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(patchDto)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dueDay").value(newDueDay))
+                .andExpect(jsonPath("$.firstDueDate").value(newFirstDueDate.toString()));
+
+            Trip persistedTrip = tripRepository.findByIdWithUsers(trip.getId()).orElseThrow();
+            assertEquals(newDueDay, persistedTrip.getDueDay());
+            assertEquals(newFirstDueDate, persistedTrip.getFirstDueDate());
+            assertEquals(1, persistedTrip.getAssignedUsers().size());
+            assertEquals(0, installmentRepository.count());
+            }
+
+            @Test
+            void updateTrip_soloNombre_conCuotas_devuelve200() throws Exception {
+            TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-name-only"));
+            UserCreateDTO userDto = buildValidUser("user-trip-name-only");
+            signUp(userDto);
+
+            LocalDate originalFirstDueDate = LocalDate.now().plusMonths(2);
+            int originalDueDay = 10;
+            Trip trip = buildTripForBulk(
+                "Trip Original NameOnly",
+                BigDecimal.valueOf(1000),
+                2,
+                originalDueDay,
+                BigDecimal.valueOf(100),
+                false,
+                originalFirstDueDate
+            );
+            mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
+                    .header("Authorization", "Bearer " + adminTokens.accessToken())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(new UserAssignBulkDTO(List.of(userDto.students().get(0).dni())))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assignedCount").value(1));
+
+            List<LocalDate> originalInstallmentDates = installmentRepository.findByTripIdWithUsers(trip.getId()).stream()
+                .map(Installment::getDueDate)
+                .sorted()
+                .toList();
+
+            TripUpdateDTO patchDto = new TripUpdateDTO("Trip Renamed NameOnly", null, null, null, null, null);
+
+            mockMvc.perform(patch("/api/v1/trips/{id}", trip.getId())
+                    .header("Authorization", "Bearer " + adminTokens.accessToken())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(patchDto)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Trip Renamed NameOnly"))
+                .andExpect(jsonPath("$.dueDay").value(originalDueDay))
+                .andExpect(jsonPath("$.firstDueDate").value(originalFirstDueDate.toString()));
+
+            Trip persistedTrip = tripRepository.findById(trip.getId()).orElseThrow();
+            assertEquals("Trip Renamed NameOnly", persistedTrip.getName());
+            assertEquals(originalDueDay, persistedTrip.getDueDay());
+            assertEquals(originalFirstDueDate, persistedTrip.getFirstDueDate());
+            List<LocalDate> persistedInstallmentDates = installmentRepository.findByTripIdWithUsers(trip.getId()).stream()
+                .map(Installment::getDueDate)
+                .sorted()
+                .toList();
+            assertEquals(originalInstallmentDates, persistedInstallmentDates);
             }
 
             @Test

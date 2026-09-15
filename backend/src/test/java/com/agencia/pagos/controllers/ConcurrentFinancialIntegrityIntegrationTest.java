@@ -3,8 +3,10 @@ package com.agencia.pagos.controllers;
 import com.agencia.pagos.TestcontainersConfiguration;
 import com.agencia.pagos.dtos.request.ReviewPaymentDTO;
 import com.agencia.pagos.dtos.request.StudentCreateDTO;
+import com.agencia.pagos.dtos.request.TripUpdateDTO;
 import com.agencia.pagos.dtos.request.UserAssignBulkDTO;
 import com.agencia.pagos.dtos.request.UserCreateDTO;
+import com.agencia.pagos.dtos.response.BulkAssignResultDTO;
 import com.agencia.pagos.dtos.response.TokenDTO;
 import com.agencia.pagos.entities.Currency;
 import com.agencia.pagos.entities.Installment;
@@ -26,17 +28,20 @@ import jakarta.persistence.EntityNotFoundException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mail.javamail.JavaMailSender;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -46,12 +51,17 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.LockSupport;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -79,6 +89,9 @@ class ConcurrentFinancialIntegrityIntegrationTest extends ControllerIntegrationT
 
     @SpyBean
     private PaymentService paymentServiceSpy;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Test
     void claimPendingStudent_serializesConcurrentPendingRegistrationForSameDni() throws Exception {
@@ -247,6 +260,220 @@ class ConcurrentFinancialIntegrityIntegrationTest extends ControllerIntegrationT
         trip.setRetroactiveActive(false);
         trip.setFirstDueDate(LocalDate.now().plusMonths(1));
         return tripRepository.save(trip);
+    }
+
+    /**
+     * Calendar integrity under concurrent materialization. Thread A invokes the real
+     * {@code assignUsersInBulk} flow and is held open by the {@link TripService}
+     * {@code @SpyBean} after {@code callRealMethod()} returns — at that point the
+     * Trip FOR UPDATE has been acquired and installments have been persisted
+     * (uncommitted, inside A's still-open transaction). Thread B invokes the real
+     * PATCH {@code updateTrip} with a different {@code dueDay}; the spy captures
+     * B's PostgreSQL backend PID from the transaction-bound connection BEFORE
+     * {@code callRealMethod()} runs. The test thread then uses
+     * {@code pg_blocking_pids(?)} on a JDBC connection from the same pool to
+     * <em>observe</em> that B's session is genuinely blocked on A's lock before
+     * asserting anything else. This DB-state observation is the primary proof; the
+     * spy's {@code bCapturedPid} latch only signals that B's call has been entered,
+     * not that B has reached the lock attempt yet (which is a real race that
+     * {@code Future.isDone()} alone cannot exclude — a regression that drops
+     * {@code findByIdForUpdate} would let B finish without ever being a waiter).
+     * Once the waiter is observed, releasing A lets B acquire the lock, observe the
+     * freshly committed installment, and return HTTP 409.
+     *
+     * <p>Production-hook-free seam: the only test instrumentation is two
+     * {@code doAnswer} stubs on the pre-existing {@link TripService}
+     * {@code @SpyBean}. No new {@code @SpyBean} on a Spring Data repository, no
+     * mutable production code, no synchronization on a production field. The
+     * PostgreSQL {@code pg_backend_pid()} / {@code pg_blocking_pids(?)} queries are
+     * diagnostic reads on a Testcontainers-managed database.
+     */
+    @Test
+    void updateTrip_bloqueaEnTripForUpdate_hastaQueCommitDeCuotaTermine_yDevuelve409() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-update-concurrency"));
+        UserCreateDTO userDto = buildValidUser("user-update-concurrency");
+        signUp(userDto);
+        String studentDni = userDto.students().get(0).dni();
+
+        LocalDate originalFirstDueDate = LocalDate.now().plusMonths(2);
+        int originalDueDay = 10;
+        Trip created = createTrip("update-concurrency-trip");
+        created.setFirstDueDate(originalFirstDueDate);
+        created.setDueDay(originalDueDay);
+        final Long tripId = tripRepository.save(created).getId();
+        final int expectedInstallmentCount = created.getInstallmentsCount();
+
+        CountDownLatch tripLockAcquired = new CountDownLatch(1);
+        CountDownLatch releaseTripLock = new CountDownLatch(1);
+        AtomicLong bBackendPid = new AtomicLong(-1L);
+        CountDownLatch bCapturedPid = new CountDownLatch(1);
+
+        // Spy stub for A: hold the transaction open after callRealMethod until releaseTripLock.
+        // The safety timeout is set generously above B's bounded lock-observation window
+        // (10s) and the future-completion window (15s) so a slow CI cannot consume the
+        // margin before pg_blocking_pids is observed.
+        doAnswer(invocation -> {
+            BulkAssignResultDTO result = (BulkAssignResultDTO) invocation.callRealMethod();
+            tripLockAcquired.countDown();
+            try {
+                releaseTripLock.await(60, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(e);
+            }
+            return result;
+        }).when(tripServiceSpy).assignUsersInBulk(eq(tripId), any(UserAssignBulkDTO.class));
+
+        // Spy stub for B: capture B's backend PID from the transaction-bound connection
+        // BEFORE callRealMethod() runs. The CGLIB @Transactional proxy opens the
+        // transaction before delegating to the spy, so JdbcTemplate here uses the same
+        // connection that will run findByIdForUpdate and observe the lock wait.
+        doAnswer(invocation -> {
+            Long pid = jdbcTemplate.queryForObject("SELECT pg_backend_pid()", Long.class);
+            bBackendPid.set(pid);
+            bCapturedPid.countDown();
+            return invocation.callRealMethod();
+        }).when(tripServiceSpy).updateTrip(eq(tripId), any(TripUpdateDTO.class));
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        Future<Integer> assignResult = null;
+        Future<Integer> updateResult = null;
+        Throwable primaryException = null;
+        try {
+            // A: real POST /api/v1/trips/{id}/users/bulk. The endpoint goes through the
+            // CGLIB @Transactional proxy on TripService, which opens a transaction
+            // BEFORE the spy intercepts assignUsersInBulk — so the Trip FOR UPDATE is
+            // held inside an active transaction that the spy keeps open.
+            assignResult = executor.submit(() -> mockMvc.perform(
+                            post("/api/v1/trips/{id}/users/bulk", tripId)
+                                    .header("Authorization", "Bearer " + adminTokens.accessToken())
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(objectMapper.writeValueAsString(new UserAssignBulkDTO(List.of(studentDni)))))
+                    .andReturn()
+                    .getResponse()
+                    .getStatus());
+
+            assertTrue(tripLockAcquired.await(10, TimeUnit.SECONDS),
+                    "transaction A must acquire the Trip FOR UPDATE inside assignUsersInBulk and signal it");
+
+            // B: real PATCH /api/v1/trips/{id} with a different dueDay.
+            TripUpdateDTO patchDto = new TripUpdateDTO(null, 25, null, null, null, null);
+            updateResult = executor.submit(() -> mockMvc.perform(
+                            patch("/api/v1/trips/{id}", tripId)
+                                    .header("Authorization", "Bearer " + adminTokens.accessToken())
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(objectMapper.writeValueAsString(patchDto)))
+                    .andReturn()
+                    .getResponse()
+                    .getStatus());
+
+            assertTrue(bCapturedPid.await(10, TimeUnit.SECONDS),
+                    "transaction B must have entered TripService.updateTrip and captured its backend PID");
+            long bPid = bBackendPid.get();
+            assertTrue(bPid > 0L, "B's backend PID must be valid, got " + bPid);
+
+            // PRIMARY DB-STATE PROOF: poll pg_blocking_pids(?) for the bounded deadline.
+            // This catches a regression that removes findByIdForUpdate — B would finish
+            // without ever being a waiter and the observation would time out before any
+            // release. The small non-Thread.sleep backoff uses LockSupport.parkNanos so no
+            // thread suspension API is used as the primary synchronization.
+            int bPidInt = (int) bPid;
+            long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            boolean bObservedBlocked = false;
+            while (System.nanoTime() < deadlineNanos) {
+                Boolean blocked = jdbcTemplate.queryForObject(
+                        "SELECT cardinality(pg_blocking_pids(?)) > 0",
+                        Boolean.class,
+                        bPidInt
+                );
+                if (Boolean.TRUE.equals(blocked)) {
+                    bObservedBlocked = true;
+                    break;
+                }
+                LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(10));
+            }
+            assertTrue(bObservedBlocked,
+                    "PostgreSQL must observe B's PID " + bPid + " as blocked (waiting on A's Trip FOR UPDATE) within the bounded deadline");
+
+            assertFalse(updateResult.isDone(),
+                    "B's updateTrip PATCH must still be incomplete while blocked on A's lock");
+
+            releaseTripLock.countDown();
+
+            assertEquals(409, updateResult.get(15, TimeUnit.SECONDS),
+                    "after A commits, B must observe the new installment and return 409");
+            assertEquals(200, assignResult.get(15, TimeUnit.SECONDS),
+                    "A's bulk assignment must complete normally once the lock is released");
+        } catch (Throwable t) {
+            primaryException = t;
+            throw t;
+        } finally {
+            Throwable teardownFailure = null;
+            try {
+                releaseTripLock.countDown();
+                executor.shutdown();
+                boolean terminated = false;
+                try {
+                    if (executor.awaitTermination(3, TimeUnit.SECONDS)) {
+                        terminated = true;
+                    } else {
+                        executor.shutdownNow();
+                        if (executor.awaitTermination(3, TimeUnit.SECONDS)) {
+                            terminated = true;
+                        }
+                    }
+                } catch (InterruptedException e) {
+                    executor.shutdownNow();
+                    Thread.currentThread().interrupt();
+                }
+                if (!terminated) {
+                    teardownFailure = new IllegalStateException(
+                            "Executor failed to terminate after graceful + forced shutdown");
+                }
+            } catch (Throwable t) {
+                teardownFailure = t;
+            }
+            if (assignResult != null && !assignResult.isDone()) {
+                assignResult.cancel(true);
+            }
+            if (updateResult != null && !updateResult.isDone()) {
+                updateResult.cancel(true);
+            }
+            // Fail explicitly if the executor leaked live workers, but do not mask a
+            // primary assertion failure that is already in flight — attach as suppressed.
+            if (teardownFailure != null) {
+                if (primaryException != null) {
+                    primaryException.addSuppressed(teardownFailure);
+                } else if (teardownFailure instanceof RuntimeException) {
+                    throw (RuntimeException) teardownFailure;
+                } else {
+                    throw new RuntimeException(teardownFailure);
+                }
+            }
+        }
+
+        Trip persistedTrip = tripRepository.findById(tripId).orElseThrow();
+        assertEquals(originalDueDay, persistedTrip.getDueDay(),
+                "Trip dueDay must remain unchanged when updateTrip returns 409");
+        assertEquals(originalFirstDueDate, persistedTrip.getFirstDueDate(),
+                "Trip firstDueDate must remain unchanged when updateTrip returns 409");
+        List<Installment> installments = installmentRepository.findByTripIdWithUsers(tripId).stream()
+                .sorted(Comparator.comparingInt(Installment::getInstallmentNumber))
+                .toList();
+        assertEquals(expectedInstallmentCount, installments.size(),
+                "all " + expectedInstallmentCount + " installments must have been materialized by the concurrent assignUsersInBulk flow");
+        for (Installment inst : installments) {
+            LocalDate expected;
+            if (inst.getInstallmentNumber() == 1) {
+                expected = originalFirstDueDate;
+            } else {
+                LocalDate baseDate = originalFirstDueDate.plusMonths(inst.getInstallmentNumber() - 1L);
+                int validDay = Math.min(originalDueDay, baseDate.lengthOfMonth());
+                expected = baseDate.withDayOfMonth(validDay);
+            }
+            assertEquals(expected, inst.getDueDate(),
+                    "installment #" + inst.getInstallmentNumber() + " dueDate must remain unchanged against the original calendar");
+        }
     }
 
     private PaymentFixture createPaymentFixture(boolean approved) {
