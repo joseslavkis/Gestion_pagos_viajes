@@ -98,7 +98,6 @@ class TripServiceApprovedOutcomeAmountTest {
         trip.setInstallmentsCount(1);
         trip.setDueDay(10);
         trip.setYellowWarningDays(5);
-        trip.setFixedFineAmount(BigDecimal.ZERO);
         trip.setRetroactiveActive(false);
         trip.setFirstDueDate(LocalDate.of(2026, 5, 10));
 

@@ -60,9 +60,6 @@ public class Installment {
     private BigDecimal retroactiveAmount = BigDecimal.ZERO;
 
     @Column(nullable = false, precision = 10, scale = 2)
-    private BigDecimal fineAmount = BigDecimal.ZERO;
-
-    @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal totalDue = BigDecimal.ZERO;
 
     @Column(nullable = false, precision = 10, scale = 2)
@@ -79,12 +76,7 @@ public class Installment {
     }
 
     public void recalculateTotalDue() {
-        BigDecimal capital = capitalAmount == null ? BigDecimal.ZERO : capitalAmount;
-        BigDecimal fine = fineAmount == null ? BigDecimal.ZERO : fineAmount;
-        // retroactiveAmount NO se suma al totalDue — es solo informativo.
-        // Cada cuota RETROACTIVE tiene su propio totalDue = su capitalAmount.
-        // La cascada de pagos las cubre individualmente en orden.
-        totalDue = capital.add(fine);
+        totalDue = capitalAmount == null ? BigDecimal.ZERO : capitalAmount;
     }
 
     public Installment() {}
@@ -112,9 +104,6 @@ public class Installment {
 
     public BigDecimal getRetroactiveAmount() { return retroactiveAmount; }
     public void setRetroactiveAmount(BigDecimal retroactiveAmount) { this.retroactiveAmount = retroactiveAmount; }
-
-    public BigDecimal getFineAmount() { return fineAmount; }
-    public void setFineAmount(BigDecimal fineAmount) { this.fineAmount = fineAmount; }
 
     public BigDecimal getTotalDue() { return totalDue; }
     public void setTotalDue(BigDecimal totalDue) { this.totalDue = totalDue; }

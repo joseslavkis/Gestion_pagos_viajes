@@ -3,7 +3,7 @@
 Este documento contiene las reglas base y el contexto arquitectónico para cualquier agente o modelo de IA que asista en el desarrollo del frontend de la aplicación "Gestión de Pagos de Viajes".
 
 ## 1. Contexto del Negocio
-La aplicación es un gestor integral de cuotas (installments), viajes (trips) y alumnos (students). Permite vincular padres/tutores a alumnos, asociar a estos a diferentes viajes configurables con cuotas mensuales, recargos y notificaciones, y a su vez, permitir la carga o aviso de pagos (payment receipts) y su flujo de validación.
+La aplicación es un gestor integral de cuotas (installments), viajes (trips) y alumnos (students). Permite vincular padres/tutores a alumnos, asociar a estos a diferentes viajes configurables con cuotas mensuales y notificaciones, y a su vez, permitir la carga o aviso de pagos (payment receipts) y su flujo de validación.
 
 ## 2. Stack Tecnológico de Frontend
 - **Framework:** React + Vite

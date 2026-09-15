@@ -87,7 +87,6 @@ class PaymentAllocationPlannerTest {
         installment.setDueDate(LocalDate.now().plusDays(installmentNumber));
         installment.setCapitalAmount(new BigDecimal(totalDue));
         installment.setRetroactiveAmount(BigDecimal.ZERO);
-        installment.setFineAmount(BigDecimal.ZERO);
         installment.setTotalDue(new BigDecimal(totalDue));
         installment.setPaidAmount(new BigDecimal(paidAmount));
         installment.setStatus(InstallmentStatus.YELLOW);

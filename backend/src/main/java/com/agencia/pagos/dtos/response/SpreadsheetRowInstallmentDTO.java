@@ -12,7 +12,6 @@ public record SpreadsheetRowInstallmentDTO(
         LocalDate dueDate,
         BigDecimal capitalAmount,
         BigDecimal retroactiveAmount,
-        BigDecimal fineAmount,
         BigDecimal totalDue,
         BigDecimal paidAmount,
         InstallmentStatus status,

@@ -551,7 +551,6 @@ function TripModalCreate({ onClose }: TripModalCreateProps) {
     installmentsCount: 1,
     dueDay: 1,
     yellowWarningDays: 0,
-    fixedFineAmount: 0,
     retroactiveActive: false,
     firstDueDate: "",
   };
@@ -715,19 +714,6 @@ function TripModalCreate({ onClose }: TripModalCreateProps) {
               />
 
               <formData.AppField
-                name="fixedFineAmount"
-                children={(field) => (
-                  <field.NumberField
-                    label="Recargo fijo por mora"
-                    placeholder="Ej: 2000"
-                    autoComplete="off"
-                    min={0}
-                    step={0.01}
-                  />
-                )}
-              />
-
-              <formData.AppField
                 name="firstDueDate"
                 children={(field) => (
                   <field.TextField
@@ -750,10 +736,10 @@ function TripModalCreate({ onClose }: TripModalCreateProps) {
                       onChange={(event) => field.handleChange(event.target.checked)}
                     />
                     <label htmlFor="retroactiveActive">
-                      Activar retroactivo en recargos
+                      Marcar cuotas vencidas como deuda retroactiva
                       <span className={styles.checkboxHint}>
                         {" "}
-                        Aplica la lógica de multas a cuotas ya vencidas.
+                        Las cuotas que ya estén vencidas al asignar al alumno se identificarán como deuda retroactiva.
                       </span>
                     </label>
                   </div>

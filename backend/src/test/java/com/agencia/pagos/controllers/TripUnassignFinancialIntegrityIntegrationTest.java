@@ -452,7 +452,6 @@ class TripUnassignFinancialIntegrityIntegrationTest extends ControllerIntegratio
         trip.setInstallmentsCount(3);
         trip.setDueDay(10);
         trip.setYellowWarningDays(5);
-        trip.setFixedFineAmount(BigDecimal.ZERO);
         trip.setRetroactiveActive(false);
         trip.setFirstDueDate(LocalDate.now().plusMonths(1));
         trip.getAssignedUsers().add(parent);
@@ -466,7 +465,6 @@ class TripUnassignFinancialIntegrityIntegrationTest extends ControllerIntegratio
         installment.setDueDate(LocalDate.now().plusMonths(1));
         installment.setCapitalAmount(BigDecimal.valueOf(1000));
         installment.setRetroactiveAmount(BigDecimal.ZERO);
-        installment.setFineAmount(BigDecimal.ZERO);
         installment.setPaidAmount(BigDecimal.ZERO);
         installment.setStatus(InstallmentStatus.YELLOW);
         installment.recalculateTotalDue();
@@ -518,7 +516,6 @@ class TripUnassignFinancialIntegrityIntegrationTest extends ControllerIntegratio
         installment.setDueDate(LocalDate.now().plusMonths(installmentNumber));
         installment.setCapitalAmount(BigDecimal.valueOf(1000));
         installment.setRetroactiveAmount(BigDecimal.ZERO);
-        installment.setFineAmount(BigDecimal.ZERO);
         installment.setPaidAmount(BigDecimal.ZERO);
         installment.setStatus(InstallmentStatus.YELLOW);
         installment.recalculateTotalDue();

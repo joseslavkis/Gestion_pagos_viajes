@@ -353,7 +353,6 @@ class InstallmentReminderSchedulerTest {
         trip.setYellowWarningDays(yellowWarningDays);
         trip.setDueDay(10);
         trip.setInstallmentsCount(4);
-        trip.setFixedFineAmount(BigDecimal.ZERO);
         trip.setRetroactiveActive(false);
         trip.setFirstDueDate(LocalDate.now(BUSINESS_ZONE));
         trip.setTotalAmount(new BigDecimal("400.00"));
@@ -378,7 +377,6 @@ class InstallmentReminderSchedulerTest {
         installment.setInstallmentNumber(installmentNumber);
         installment.setDueDate(dueDate);
         installment.setCapitalAmount(new BigDecimal(totalDue));
-        installment.setFineAmount(BigDecimal.ZERO);
         installment.setTotalDue(new BigDecimal(totalDue));
         installment.setPaidAmount(new BigDecimal(paidAmount));
         installment.setStatus(status);

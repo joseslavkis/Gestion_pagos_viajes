@@ -25,7 +25,6 @@ describe("TripsAdminPage", () => {
             installmentsCount: 4,
             dueDay: 10,
             yellowWarningDays: 5,
-            fixedFineAmount: 0,
             retroactiveActive: false,
             firstDueDate: "2027-01-10",
             assignedUsersCount: 0,
@@ -45,7 +44,7 @@ describe("TripsAdminPage", () => {
     fireEvent.change(screen.getByLabelText("Cantidad de cuotas"), { target: { value: "4" } });
     fireEvent.change(screen.getByLabelText("Día de vencimiento"), { target: { value: "10" } });
     fireEvent.change(screen.getByLabelText("Días de aviso amarillo"), { target: { value: "5" } });
-    fireEvent.change(screen.getByLabelText("Recargo fijo por mora"), { target: { value: "0" } });
+    expect(screen.queryByLabelText("Recargo fijo por mora")).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Primera fecha de vencimiento"), { target: { value: "2027-01-10" } });
 
     expect(await screen.findByText(/Las demás cuotas serán de/i)).toHaveTextContent("$ 234,00");

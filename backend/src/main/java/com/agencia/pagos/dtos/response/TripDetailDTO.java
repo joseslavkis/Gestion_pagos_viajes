@@ -13,7 +13,6 @@ public record TripDetailDTO(
         Integer installmentsCount,
         Integer dueDay,
         Integer yellowWarningDays,
-        BigDecimal fixedFineAmount,
         Boolean retroactiveActive,
         Currency currency,
         LocalDate firstDueDate,

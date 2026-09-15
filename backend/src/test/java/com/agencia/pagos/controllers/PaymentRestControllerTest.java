@@ -330,7 +330,6 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
         trip.setInstallmentsCount(12);
         trip.setDueDay(10);
         trip.setYellowWarningDays(5);
-        trip.setFixedFineAmount(BigDecimal.valueOf(5000));
         trip.setRetroactiveActive(false);
         trip.setFirstDueDate(LocalDate.now().plusMonths(1));
         trip.getAssignedUsers().add(user);
@@ -353,7 +352,6 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
         installment.setDueDate(LocalDate.now().plusDays(installmentNumber));
         installment.setCapitalAmount(new BigDecimal(capitalAmount));
         installment.setRetroactiveAmount(BigDecimal.ZERO);
-        installment.setFineAmount(BigDecimal.ZERO);
         installment.setPaidAmount(BigDecimal.ZERO);
         installment.setStatus(status);
         installment.recalculateTotalDue();

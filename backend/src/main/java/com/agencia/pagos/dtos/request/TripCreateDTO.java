@@ -12,7 +12,6 @@ public record TripCreateDTO(
         @NotNull @Min(1) @Max(60) Integer installmentsCount,
         @NotNull @Min(1) @Max(31) Integer dueDay,
         @NotNull @Min(0) @Max(30) Integer yellowWarningDays,
-        @NotNull @PositiveOrZero BigDecimal fixedFineAmount,
         @NotNull Boolean retroactiveActive,
         @NotNull Currency currency,
         @NotNull LocalDate firstDueDate
@@ -23,11 +22,10 @@ public record TripCreateDTO(
                         Integer installmentsCount,
                         Integer dueDay,
                         Integer yellowWarningDays,
-                        BigDecimal fixedFineAmount,
                         Boolean retroactiveActive,
                         LocalDate firstDueDate
         ) {
-                this(name, totalAmount, defaultFirstInstallmentAmount(totalAmount, installmentsCount), installmentsCount, dueDay, yellowWarningDays, fixedFineAmount, retroactiveActive, Currency.ARS, firstDueDate);
+                this(name, totalAmount, defaultFirstInstallmentAmount(totalAmount, installmentsCount), installmentsCount, dueDay, yellowWarningDays, retroactiveActive, Currency.ARS, firstDueDate);
         }
 
         private static BigDecimal defaultFirstInstallmentAmount(BigDecimal totalAmount, Integer installmentsCount) {

@@ -48,7 +48,6 @@ export const TripDetailDTOSchema = z.object({
   installmentsCount: z.number(),
   dueDay: z.number(),
   yellowWarningDays: z.number(),
-  fixedFineAmount: MoneySchema,
   retroactiveActive: z.boolean(),
   firstDueDate: z.string(), // LocalDate serialized as "YYYY-MM-DD"
   assignedUsersCount: z.number(),
@@ -107,7 +106,6 @@ export const TripCreateDTOSchema = z
     installmentsCount: z.number().int().min(1).max(60),
     dueDay: z.number().int().min(1).max(31),
     yellowWarningDays: z.number().int().min(0).max(30),
-    fixedFineAmount: z.number().min(0).max(Number.MAX_SAFE_INTEGER),
     retroactiveActive: z.boolean(),
     firstDueDate: FutureOrPresentDateSchema,
   })
@@ -133,7 +131,6 @@ export const TripUpdateDTOSchema = z.object({
   name: z.string().min(2).max(100).optional(),
   dueDay: z.number().min(1).max(31).optional(),
   yellowWarningDays: z.number().min(0).max(30).optional(),
-  fixedFineAmount: z.number().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
   retroactiveActive: z.boolean().optional(),
   firstDueDate: FutureOrPresentDateSchema.optional(),
 });
@@ -165,7 +162,6 @@ export const SpreadsheetRowInstallmentDTOSchema = z.object({
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   capitalAmount: MoneySchema,
   retroactiveAmount: MoneySchema,
-  fineAmount: MoneySchema,
   totalDue: MoneySchema,
   paidAmount: MoneySchema,
   status: z.enum(["GREEN", "YELLOW", "RED", "RETROACTIVE"]),

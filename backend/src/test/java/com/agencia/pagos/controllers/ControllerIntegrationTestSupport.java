@@ -179,7 +179,6 @@ abstract class ControllerIntegrationTestSupport {
         trip.setInstallmentsCount(3);
         trip.setDueDay(10);
         trip.setYellowWarningDays(5);
-        trip.setFixedFineAmount(new BigDecimal("1500.00"));
         trip.setRetroactiveActive(false);
         trip.setFirstDueDate(LocalDate.now().plusMonths(2));
         Trip savedTrip = tripRepository.save(trip);
