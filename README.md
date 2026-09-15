@@ -55,7 +55,7 @@ La operación diaria se realiza dentro de la app y, adicionalmente, se puede exp
 * Por cada viaje, visualizar **cada cuota individualmente** con su estado representado por color:
   * <span style="color:green">**Verde**</span>: cuota pagada y validada por administración, o con mucho tiempo hasta el vencimiento.
   * <span style="color:orange">**Amarillo**</span>: cuota próxima al vencimiento, o con comprobante pendiente de aprobación por el administrador.
-* <span style="color:red">**Rojo**</span>: cuota vencida sin regularizar, o comprobante rechazado por el administrador.
+  * <span style="color:red">**Rojo**</span>: cuota vencida sin regularizar, o comprobante rechazado por el administrador.
 * Ver su estado de cuenta:
   * deuda actual,
   * cuotas pagadas y pendientes,

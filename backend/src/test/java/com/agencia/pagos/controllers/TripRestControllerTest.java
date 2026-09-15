@@ -155,7 +155,134 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 .andExpect(jsonPath("$.id").exists())
                 .andExpect(jsonPath("$.name").value("Viaje a Bariloche"))
                 .andExpect(jsonPath("$.firstInstallmentAmount").value(83333.34))
-                .andExpect(jsonPath("$.fixedFineAmount").doesNotExist());
+                .andExpect(jsonPath("$.fixedFineAmount").value(0));
+    }
+
+    @Test
+    void createTrip_conLegacyFixedFineAmount_devuelve201IgnoraValorYNoAlteraCuotas() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-legacy-create"));
+        UserCreateDTO userDto = buildValidUser("user-trip-legacy-create");
+        signUp(userDto);
+        TripCreateDTO dto = buildValidTrip();
+
+        // Inject the legacy key on top of a valid DTO to simulate an old client.
+        java.util.Map<String, Object> legacyBody = objectMapper.convertValue(dto, java.util.Map.class);
+        legacyBody.put("fixedFineAmount", 12345);
+
+        MvcResult result = mockMvc.perform(post("/api/v1/trips")
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(legacyBody)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").exists())
+                .andExpect(jsonPath("$.fixedFineAmount").value(0))
+                .andReturn();
+
+        long tripId = objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asLong();
+
+        // Assign a user so installments get generated and persisted.
+        mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", tripId)
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(
+                        new UserAssignBulkDTO(List.of(userDto.students().get(0).dni())))))
+                .andExpect(status().isOk());
+
+        List<Installment> installments = installmentRepository.findByTripIdWithUsers(tripId);
+        assertTrue(installments.size() > 0, "Trip should still generate installments after legacy field is dropped");
+        for (Installment inst : installments) {
+            assertEquals(
+                    inst.getCapitalAmount(),
+                    inst.getTotalDue(),
+                    "totalDue must equal capitalAmount after legacy fixedFineAmount is ignored");
+        }
+    }
+
+    @Test
+    void getTrip_detalleDevuelveFixedFineAmountCeroPorShim() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-detail-shim"));
+        TripCreateDTO dto = buildValidTrip();
+
+        MvcResult createResult = mockMvc.perform(post("/api/v1/trips")
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        long tripId = objectMapper.readTree(createResult.getResponse().getContentAsString()).get("id").asLong();
+
+        mockMvc.perform(get("/api/v1/trips/{id}", tripId)
+                .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.fixedFineAmount").value(0));
+    }
+
+    @Test
+    void getSpreadsheet_installmentDevuelveFineAmountCeroYTotalDueIgualCapitalPorShim() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-spreadsheet-shim"));
+        UserCreateDTO userDto = buildValidUser("user-spreadsheet-shim");
+        signUp(userDto);
+
+        TripCreateDTO dto = buildValidTrip();
+        MvcResult createResult = mockMvc.perform(post("/api/v1/trips")
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        long tripId = objectMapper.readTree(createResult.getResponse().getContentAsString()).get("id").asLong();
+
+        mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", tripId)
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(
+                        new UserAssignBulkDTO(List.of(userDto.students().get(0).dni())))))
+                .andExpect(status().isOk());
+
+        BigDecimal expectedCapital = dto.totalAmount()
+                .divide(BigDecimal.valueOf(dto.installmentsCount()), 2, java.math.RoundingMode.CEILING);
+        double expectedCapitalDouble = expectedCapital.doubleValue();
+
+        mockMvc.perform(get("/api/v1/trips/{id}/spreadsheet", tripId)
+                .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rows[0].installments[0].fineAmount").value(0))
+                .andExpect(jsonPath("$.rows[0].installments[0].capitalAmount").value(expectedCapitalDouble))
+                .andExpect(jsonPath("$.rows[0].installments[0].totalDue").value(expectedCapitalDouble));
+    }
+
+    @Test
+    void updateTrip_conLegacyFixedFineAmount_aplicaCambiosSinAlterarComportamiento() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-legacy-update"));
+
+        Trip trip = new Trip();
+        trip.setName("Original Name");
+        trip.setTotalAmount(BigDecimal.valueOf(100));
+        trip.setFirstInstallmentAmount(BigDecimal.valueOf(100));
+        trip.setInstallmentsCount(1);
+        trip.setDueDay(1);
+        trip.setYellowWarningDays(1);
+        trip.setRetroactiveActive(false);
+        trip.setFirstDueDate(LocalDate.now());
+        trip = tripRepository.save(trip);
+
+        TripUpdateDTO patchDto = new TripUpdateDTO("Renombrado", null, null, null, null);
+        java.util.Map<String, Object> legacyPatch = objectMapper.convertValue(patchDto, java.util.Map.class);
+        legacyPatch.put("fixedFineAmount", 9999);
+
+        mockMvc.perform(patch("/api/v1/trips/{id}", trip.getId())
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(legacyPatch)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Renombrado"))
+                .andExpect(jsonPath("$.fixedFineAmount").value(0));
+
+        // Verify the entity was not modified by the legacy field.
+        Trip reloaded = tripRepository.findById(trip.getId()).orElseThrow();
+        assertEquals("Renombrado", reloaded.getName());
     }
 
     @Test
@@ -1452,7 +1579,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             .andExpect(jsonPath("$.rows[0].installments[0].capitalAmount").value(3000.00))
             .andExpect(jsonPath("$.rows[0].installments[0].totalDue").value(3000.00))
             .andExpect(jsonPath("$.rows[0].installments[0].paidAmount").value(0.00))
-            .andExpect(jsonPath("$.rows[0].installments[0].fineAmount").doesNotExist())
+            .andExpect(jsonPath("$.rows[0].installments[0].fineAmount").value(0))
             .andExpect(jsonPath("$.rows[0].installments[0].uiStatusCode").value("UP_TO_DATE"))
             .andExpect(jsonPath("$.rows[0].installments[0].uiStatusLabel").value("Al día"))
             .andExpect(jsonPath("$.rows[0].installments[0].uiStatusTone").value("green"))
@@ -1489,7 +1616,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 .andExpect(jsonPath("$.rows[0].installments[0].capitalAmount").value(2000.00))
                 .andExpect(jsonPath("$.rows[0].installments[0].totalDue").value(2000.00))
                 .andExpect(jsonPath("$.rows[0].installments[0].paidAmount").value(0.00))
-                .andExpect(jsonPath("$.rows[0].installments[0].fineAmount").doesNotExist())
+                .andExpect(jsonPath("$.rows[0].installments[0].fineAmount").value(0))
                 .andExpect(jsonPath("$.rows[0].installments[0].uiStatusCode").value("OVERDUE"))
                 .andExpect(jsonPath("$.rows[0].installments[0].uiStatusLabel").value("Vencida"))
                 .andExpect(jsonPath("$.rows[0].installments[0].uiStatusTone").value("red"));

@@ -1,10 +1,16 @@
 package com.agencia.pagos.dtos.request;
 
 import com.agencia.pagos.entities.Currency;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.validation.constraints.*;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
+// Rollout compatibility shim (temporary):
+// legacy clients may still send `fixedFineAmount` in the request body.
+// We explicitly whitelist only that key and do not broaden DTO-level
+// unknown-property suppression with ignoreUnknown=true.
+@JsonIgnoreProperties(value = {"fixedFineAmount"})
 public record TripCreateDTO(
         @NotNull @Size(min = 2, max = 100) String name,
         @NotNull @Positive BigDecimal totalAmount,
