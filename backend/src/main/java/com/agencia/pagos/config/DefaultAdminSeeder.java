@@ -5,9 +5,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
-import com.agencia.pagos.entities.Role;
-import com.agencia.pagos.entities.user.User;
-import com.agencia.pagos.repositories.UserRepository;
+import com.agencia.pagos.user.Role;
+import com.agencia.pagos.user.User;
+import com.agencia.pagos.user.UserRepository;
 
 @Configuration
 public class DefaultAdminSeeder {

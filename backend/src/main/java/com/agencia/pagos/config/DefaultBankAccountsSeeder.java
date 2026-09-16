@@ -1,8 +1,8 @@
 package com.agencia.pagos.config;
 
-import com.agencia.pagos.entities.BankAccount;
-import com.agencia.pagos.entities.Currency;
-import com.agencia.pagos.repositories.BankAccountRepository;
+import com.agencia.pagos.payment.BankAccount;
+import com.agencia.pagos.shared.money.Currency;
+import com.agencia.pagos.payment.BankAccountRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
