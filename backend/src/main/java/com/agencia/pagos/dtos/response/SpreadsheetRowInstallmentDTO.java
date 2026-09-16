@@ -2,6 +2,7 @@ package com.agencia.pagos.dtos.response;
 
 import com.agencia.pagos.entities.InstallmentStatus;
 import com.agencia.pagos.entities.InstallmentUiStatusCode;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -12,7 +13,6 @@ public record SpreadsheetRowInstallmentDTO(
         LocalDate dueDate,
         BigDecimal capitalAmount,
         BigDecimal retroactiveAmount,
-        BigDecimal fineAmount,
         BigDecimal totalDue,
         BigDecimal paidAmount,
         InstallmentStatus status,
@@ -20,4 +20,14 @@ public record SpreadsheetRowInstallmentDTO(
         String uiStatusLabel,
         String uiStatusTone
 ) {
+        // Rollout compatibility shim (temporary):
+        // legacy clients expect this property on the response even though the
+        // fine logic has been retired. Exposed only for transport compatibility;
+        // it must never be used by the new business code. The persisted
+        // `totalDue` remains the capital amount. Remove once all clients are
+        // upgraded.
+        @JsonProperty("fineAmount")
+        public BigDecimal legacyFineAmount() {
+                return BigDecimal.ZERO;
+        }
 }

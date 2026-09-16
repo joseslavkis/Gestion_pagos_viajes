@@ -232,7 +232,6 @@ class TripServiceSpreadsheetTest {
         trip.setInstallmentsCount(1);
         trip.setDueDay(10);
         trip.setYellowWarningDays(5);
-        trip.setFixedFineAmount(BigDecimal.ZERO);
         trip.setRetroactiveActive(false);
         trip.setFirstDueDate(LocalDate.of(2026, 5, 10));
         return trip;
@@ -271,7 +270,6 @@ class TripServiceSpreadsheetTest {
         installment.setDueDate(dueDate);
         installment.setCapitalAmount(new BigDecimal("1000.00"));
         installment.setRetroactiveAmount(BigDecimal.ZERO.setScale(2));
-        installment.setFineAmount(BigDecimal.ZERO.setScale(2));
         installment.setTotalDue(new BigDecimal("1000.00"));
         installment.setPaidAmount(BigDecimal.ZERO.setScale(2));
         installment.setStatus(InstallmentStatus.YELLOW);

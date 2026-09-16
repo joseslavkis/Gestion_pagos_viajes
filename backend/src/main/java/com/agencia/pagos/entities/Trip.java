@@ -47,9 +47,6 @@ public class Trip {
 	@Column(nullable = false)
 	private Integer yellowWarningDays;
 
-	@Column(nullable = false, precision = 10, scale = 2)
-	private BigDecimal fixedFineAmount;
-
 	@Column(name = "is_retroactive_active", nullable = false)
 	private Boolean retroactiveActive = true;
 
@@ -128,14 +125,6 @@ public class Trip {
 
 	public void setYellowWarningDays(Integer yellowWarningDays) {
 		this.yellowWarningDays = yellowWarningDays;
-	}
-
-	public BigDecimal getFixedFineAmount() {
-		return fixedFineAmount;
-	}
-
-	public void setFixedFineAmount(BigDecimal fixedFineAmount) {
-		this.fixedFineAmount = fixedFineAmount;
 	}
 
 	public Boolean getRetroactiveActive() {

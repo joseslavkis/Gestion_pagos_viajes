@@ -296,7 +296,7 @@ user_password="Concurrency-${stamp}-${RANDOM}!"
 student_dni="$(printf '%08d' $((RANDOM * 100 + RANDOM)))"
 
 trip_body="$(jq -nc --arg name "Concurrency trip $stamp" \
-  '{name:$name,totalAmount:1000,firstInstallmentAmount:1000,installmentsCount:1,dueDay:10,yellowWarningDays:5,fixedFineAmount:0,retroactiveActive:false,currency:"ARS",firstDueDate:(now|strftime("%Y-%m-%d"))}')"
+  '{name:$name,totalAmount:1000,firstInstallmentAmount:1000,installmentsCount:1,dueDay:10,yellowWarningDays:5,retroactiveActive:false,currency:"ARS",firstDueDate:(now|strftime("%Y-%m-%d"))}')"
 trip_status="$(request trip POST /api/v1/trips "$admin_token" "$trip_body")"
 assert_status trip 201 "$trip_status"
 trip_id="$(jq -er '.id' "$TMP_DIR/trip.body")"

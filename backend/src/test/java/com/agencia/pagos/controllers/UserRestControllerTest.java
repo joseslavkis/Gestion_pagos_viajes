@@ -476,7 +476,6 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
         trip.setInstallmentsCount(3);
         trip.setDueDay(10);
         trip.setYellowWarningDays(5);
-        trip.setFixedFineAmount(BigDecimal.valueOf(1000));
         trip.setRetroactiveActive(true);
         trip.setFirstDueDate(LocalDate.now().plusDays(10));
         trip.setCurrency(Currency.ARS);
@@ -489,7 +488,6 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
         installment.setInstallmentNumber(1);
         installment.setDueDate(LocalDate.now().plusDays(12));
         installment.setCapitalAmount(BigDecimal.valueOf(40000));
-        installment.setFineAmount(BigDecimal.ZERO);
         installment.setRetroactiveAmount(BigDecimal.ZERO);
         installment.setPaidAmount(BigDecimal.valueOf(15000));
         installment.setStatus(InstallmentStatus.YELLOW);

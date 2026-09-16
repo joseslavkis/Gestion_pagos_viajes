@@ -117,7 +117,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 12,
                 10,
                 5,
-                BigDecimal.valueOf(5000),
                 true,
                 LocalDate.now().plusMonths(1)
         );
@@ -128,7 +127,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             BigDecimal totalAmount,
             int installmentsCount,
             int dueDay,
-            BigDecimal fixedFineAmount,
             boolean retroactiveActive,
             LocalDate firstDueDate
     ) {
@@ -139,7 +137,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
         trip.setInstallmentsCount(installmentsCount);
         trip.setDueDay(dueDay);
         trip.setYellowWarningDays(5);
-        trip.setFixedFineAmount(fixedFineAmount);
         trip.setRetroactiveActive(retroactiveActive);
         trip.setFirstDueDate(firstDueDate);
         return tripRepository.save(trip);
@@ -157,7 +154,135 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").exists())
                 .andExpect(jsonPath("$.name").value("Viaje a Bariloche"))
-                .andExpect(jsonPath("$.firstInstallmentAmount").value(83333.34));
+                .andExpect(jsonPath("$.firstInstallmentAmount").value(83333.34))
+                .andExpect(jsonPath("$.fixedFineAmount").value(0));
+    }
+
+    @Test
+    void createTrip_conLegacyFixedFineAmount_devuelve201IgnoraValorYNoAlteraCuotas() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-legacy-create"));
+        UserCreateDTO userDto = buildValidUser("user-trip-legacy-create");
+        signUp(userDto);
+        TripCreateDTO dto = buildValidTrip();
+
+        // Inject the legacy key on top of a valid DTO to simulate an old client.
+        java.util.Map<String, Object> legacyBody = objectMapper.convertValue(dto, java.util.Map.class);
+        legacyBody.put("fixedFineAmount", 12345);
+
+        MvcResult result = mockMvc.perform(post("/api/v1/trips")
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(legacyBody)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").exists())
+                .andExpect(jsonPath("$.fixedFineAmount").value(0))
+                .andReturn();
+
+        long tripId = objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asLong();
+
+        // Assign a user so installments get generated and persisted.
+        mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", tripId)
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(
+                        new UserAssignBulkDTO(List.of(userDto.students().get(0).dni())))))
+                .andExpect(status().isOk());
+
+        List<Installment> installments = installmentRepository.findByTripIdWithUsers(tripId);
+        assertTrue(installments.size() > 0, "Trip should still generate installments after legacy field is dropped");
+        for (Installment inst : installments) {
+            assertEquals(
+                    inst.getCapitalAmount(),
+                    inst.getTotalDue(),
+                    "totalDue must equal capitalAmount after legacy fixedFineAmount is ignored");
+        }
+    }
+
+    @Test
+    void getTrip_detalleDevuelveFixedFineAmountCeroPorShim() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-detail-shim"));
+        TripCreateDTO dto = buildValidTrip();
+
+        MvcResult createResult = mockMvc.perform(post("/api/v1/trips")
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        long tripId = objectMapper.readTree(createResult.getResponse().getContentAsString()).get("id").asLong();
+
+        mockMvc.perform(get("/api/v1/trips/{id}", tripId)
+                .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.fixedFineAmount").value(0));
+    }
+
+    @Test
+    void getSpreadsheet_installmentDevuelveFineAmountCeroYTotalDueIgualCapitalPorShim() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-spreadsheet-shim"));
+        UserCreateDTO userDto = buildValidUser("user-spreadsheet-shim");
+        signUp(userDto);
+
+        TripCreateDTO dto = buildValidTrip();
+        MvcResult createResult = mockMvc.perform(post("/api/v1/trips")
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(dto)))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        long tripId = objectMapper.readTree(createResult.getResponse().getContentAsString()).get("id").asLong();
+
+        mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", tripId)
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(
+                        new UserAssignBulkDTO(List.of(userDto.students().get(0).dni())))))
+                .andExpect(status().isOk());
+
+        BigDecimal expectedCapital = dto.totalAmount()
+                .divide(BigDecimal.valueOf(dto.installmentsCount()), 2, java.math.RoundingMode.CEILING);
+        double expectedCapitalDouble = expectedCapital.doubleValue();
+
+        mockMvc.perform(get("/api/v1/trips/{id}/spreadsheet", tripId)
+                .header("Authorization", "Bearer " + adminTokens.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rows[0].installments[0].fineAmount").value(0))
+                .andExpect(jsonPath("$.rows[0].installments[0].capitalAmount").value(expectedCapitalDouble))
+                .andExpect(jsonPath("$.rows[0].installments[0].totalDue").value(expectedCapitalDouble));
+    }
+
+    @Test
+    void updateTrip_conLegacyFixedFineAmount_aplicaCambiosSinAlterarComportamiento() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-trip-legacy-update"));
+
+        Trip trip = new Trip();
+        trip.setName("Original Name");
+        trip.setTotalAmount(BigDecimal.valueOf(100));
+        trip.setFirstInstallmentAmount(BigDecimal.valueOf(100));
+        trip.setInstallmentsCount(1);
+        trip.setDueDay(1);
+        trip.setYellowWarningDays(1);
+        trip.setRetroactiveActive(false);
+        trip.setFirstDueDate(LocalDate.now());
+        trip = tripRepository.save(trip);
+
+        TripUpdateDTO patchDto = new TripUpdateDTO("Renombrado", null, null, null, null);
+        java.util.Map<String, Object> legacyPatch = objectMapper.convertValue(patchDto, java.util.Map.class);
+        legacyPatch.put("fixedFineAmount", 9999);
+
+        mockMvc.perform(patch("/api/v1/trips/{id}", trip.getId())
+                .header("Authorization", "Bearer " + adminTokens.accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(legacyPatch)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.name").value("Renombrado"))
+                .andExpect(jsonPath("$.fixedFineAmount").value(0));
+
+        // Verify the entity was not modified by the legacy field.
+        Trip reloaded = tripRepository.findById(trip.getId()).orElseThrow();
+        assertEquals("Renombrado", reloaded.getName());
     }
 
     @Test
@@ -170,7 +295,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 1,
                 10,
                 5,
-                BigDecimal.ZERO,
                 false,
                 com.agencia.pagos.entities.Currency.ARS,
                 LocalDate.now().plusMonths(1)
@@ -225,7 +349,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
         trip.setInstallmentsCount(6);
         trip.setDueDay(15);
         trip.setYellowWarningDays(3);
-        trip.setFixedFineAmount(BigDecimal.valueOf(2000));
         trip.setRetroactiveActive(true);
         trip.setFirstDueDate(LocalDate.now().plusMonths(1));
         trip = tripRepository.save(trip);
@@ -257,12 +380,11 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
         trip.setInstallmentsCount(1);
         trip.setDueDay(1);
         trip.setYellowWarningDays(1);
-        trip.setFixedFineAmount(BigDecimal.ZERO);
         trip.setRetroactiveActive(false);
         trip.setFirstDueDate(LocalDate.now());
         trip = tripRepository.save(trip);
 
-        TripUpdateDTO patchDto = new TripUpdateDTO("Updated Name", 10, 5, BigDecimal.valueOf(100), true, LocalDate.now().plusMonths(2));
+        TripUpdateDTO patchDto = new TripUpdateDTO("Updated Name", 10, 5, true, LocalDate.now().plusMonths(2));
 
         mockMvc.perform(patch("/api/v1/trips/{id}", trip.getId())
                 .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -284,7 +406,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
         trip.setInstallmentsCount(1);
         trip.setDueDay(1);
         trip.setYellowWarningDays(1);
-        trip.setFixedFineAmount(BigDecimal.ZERO);
         trip.setRetroactiveActive(false);
         trip.setFirstDueDate(LocalDate.now());
         trip = tripRepository.save(trip);
@@ -312,7 +433,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
         trip.setInstallmentsCount(12); // Base capital = 10000
         trip.setDueDay(10);
         trip.setYellowWarningDays(5);
-        trip.setFixedFineAmount(BigDecimal.valueOf(1000));
         trip.setRetroactiveActive(true);
         // Start date 2 months ago -> 2 quotas overdue
         trip.setFirstDueDate(LocalDate.now().minusMonths(2).withDayOfMonth(10));
@@ -348,7 +468,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                     .findFirst().orElseThrow();
             assertEquals(BigDecimal.valueOf(10000).setScale(2), firstPast.getCapitalAmount());
             assertEquals(BigDecimal.ZERO.setScale(2), firstPast.getRetroactiveAmount());
-            assertEquals(BigDecimal.ZERO.setScale(2), firstPast.getFineAmount());
+            assertEquals(BigDecimal.valueOf(10000).setScale(2), firstPast.getTotalDue());
             assertEquals(InstallmentStatus.RETROACTIVE, firstPast.getStatus());
         }
 
@@ -378,7 +498,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
         trip.setInstallmentsCount(12); // Base capital = 10000
         trip.setDueDay(10);
         trip.setYellowWarningDays(5);
-        trip.setFixedFineAmount(BigDecimal.valueOf(1000));
         trip.setRetroactiveActive(false); // No retroactive tracking!
         // Start date 2 months ago -> 2 quotas overdue
         trip.setFirstDueDate(LocalDate.now().minusMonths(2).withDayOfMonth(10));
@@ -408,7 +527,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             Installment quota1 = installments.stream().filter(i -> i.getInstallmentNumber() == 1).findFirst().orElseThrow();
             assertEquals(BigDecimal.valueOf(10000).setScale(2), quota1.getCapitalAmount());
             assertEquals(BigDecimal.ZERO.setScale(2), quota1.getRetroactiveAmount());
-            assertEquals(BigDecimal.valueOf(1000).setScale(2), quota1.getFineAmount());
+            assertEquals(BigDecimal.valueOf(10000).setScale(2), quota1.getTotalDue());
             assertEquals(InstallmentStatus.RED, quota1.getStatus());
         }
 
@@ -417,7 +536,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             Installment firstFuture = installments.stream().filter(i -> i.getInstallmentNumber() == targetFutureNum).findFirst().orElseThrow();
             assertEquals(BigDecimal.valueOf(10000).setScale(2), firstFuture.getCapitalAmount());
             assertEquals(BigDecimal.ZERO.setScale(2), firstFuture.getRetroactiveAmount());
-            assertEquals(BigDecimal.ZERO.setScale(2), firstFuture.getFineAmount());
+            assertEquals(BigDecimal.valueOf(10000).setScale(2), firstFuture.getTotalDue());
             assertEquals(InstallmentStatus.YELLOW, firstFuture.getStatus());
         }
     }
@@ -433,7 +552,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(1000),
                 2,
                 10,
-                BigDecimal.valueOf(100),
                 false,
                 LocalDate.now().plusMonths(2)
             );
@@ -470,7 +588,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(3000),
                 3,
                 10,
-                BigDecimal.valueOf(100),
                 false,
                 LocalDate.now().plusMonths(3)
             );
@@ -496,7 +613,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(2000),
                 2,
                 10,
-                BigDecimal.valueOf(100),
                 false,
                 LocalDate.now().plusMonths(2)
             );
@@ -522,7 +638,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(2000),
                 2,
                 10,
-                BigDecimal.valueOf(100),
                 false,
                 LocalDate.now().plusMonths(2)
             );
@@ -549,7 +664,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(1200),
                 3,
                 10,
-                BigDecimal.valueOf(100),
                 false,
                 LocalDate.now().plusMonths(2)
             );
@@ -587,7 +701,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(1200),
                 3,
                 10,
-                BigDecimal.valueOf(100),
                 false,
                 LocalDate.now().plusMonths(2)
             );
@@ -623,7 +736,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(1200),
                 3,
                 10,
-                BigDecimal.valueOf(100),
                 false,
                 LocalDate.now().plusMonths(2)
             );
@@ -668,7 +780,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(1800),
                 3,
                 10,
-                BigDecimal.valueOf(100),
                 false,
                 LocalDate.now().plusMonths(2)
             );
@@ -704,7 +815,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 new BigDecimal("100.00"),
                 3,
                 10,
-                BigDecimal.ZERO,
                 false,
                 LocalDate.now().plusMonths(2)
             );
@@ -741,7 +851,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 4,
                 10,
                 5,
-                BigDecimal.ZERO,
                 false,
                 com.agencia.pagos.entities.Currency.ARS,
                 LocalDate.now().plusMonths(2)
@@ -783,7 +892,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(3100),
                 3,
                 31,
-                BigDecimal.ZERO,
                 false,
                 LocalDate.of(2027, 1, 1)
             );
@@ -817,7 +925,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(1000),
                 2,
                 10,
-                BigDecimal.valueOf(100),
                 false,
                 LocalDate.now().plusMonths(2)
             );
@@ -831,7 +938,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             installment.setDueDate(LocalDate.now().plusDays(10));
             installment.setCapitalAmount(BigDecimal.valueOf(500));
             installment.setRetroactiveAmount(BigDecimal.ZERO);
-            installment.setFineAmount(BigDecimal.ZERO);
             installment.setStatus(InstallmentStatus.YELLOW);
             installment.recalculateTotalDue();
             installment = installmentRepository.save(installment);
@@ -869,7 +975,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(1000),
                 2,
                 10,
-                BigDecimal.valueOf(100),
                 false,
                 LocalDate.now().plusMonths(2)
             );
@@ -903,7 +1008,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(1000),
                 2,
                 10,
-                BigDecimal.valueOf(100),
                 false,
                 originalFirstDueDate
             );
@@ -927,7 +1031,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             assertEquals(2, originalInstallmentsByNumber.size());
 
             TripUpdateDTO patchDto = new TripUpdateDTO(
-                null,
                 null,
                 null,
                 null,
@@ -967,13 +1070,12 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(1000),
                 3,
                 5,
-                BigDecimal.valueOf(100),
                 false,
                 originalFirstDueDate
             );
             assertEquals(0, installmentRepository.count());
 
-            TripUpdateDTO patchDto = new TripUpdateDTO(null, 15, null, null, null, null);
+            TripUpdateDTO patchDto = new TripUpdateDTO(null, 15, null, null, null);
 
             mockMvc.perform(patch("/api/v1/trips/{id}", trip.getId())
                     .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -1000,13 +1102,12 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(1000),
                 3,
                 10,
-                BigDecimal.valueOf(100),
                 false,
                 originalFirstDueDate
             );
             assertEquals(0, installmentRepository.count());
 
-            TripUpdateDTO patchDto = new TripUpdateDTO(null, null, null, null, null, newFirstDueDate);
+            TripUpdateDTO patchDto = new TripUpdateDTO(null, null, null, null, newFirstDueDate);
 
             mockMvc.perform(patch("/api/v1/trips/{id}", trip.getId())
                     .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -1034,7 +1135,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(1000),
                 3,
                 originalDueDay,
-                BigDecimal.valueOf(100),
                 false,
                 originalFirstDueDate
             );
@@ -1053,7 +1153,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                         TreeMap::new));
             assertEquals(3, originalInstallmentsByNumber.size());
 
-            TripUpdateDTO patchDto = new TripUpdateDTO(null, 20, null, null, null, null);
+            TripUpdateDTO patchDto = new TripUpdateDTO(null, 20, null, null, null);
 
             mockMvc.perform(patch("/api/v1/trips/{id}", trip.getId())
                     .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -1090,7 +1190,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(1000),
                 3,
                 originalDueDay,
-                BigDecimal.valueOf(100),
                 false,
                 originalFirstDueDate
             );
@@ -1109,7 +1208,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                         TreeMap::new));
             assertEquals(3, originalInstallmentsByNumber.size());
 
-            TripUpdateDTO patchDto = new TripUpdateDTO(null, null, null, null, null, newFirstDueDate);
+            TripUpdateDTO patchDto = new TripUpdateDTO(null, null, null, null, newFirstDueDate);
 
             mockMvc.perform(patch("/api/v1/trips/{id}", trip.getId())
                     .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -1146,7 +1245,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(1000),
                 3,
                 originalDueDay,
-                BigDecimal.valueOf(100),
                 false,
                 originalFirstDueDate
             );
@@ -1165,7 +1263,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             TripUpdateDTO patchDto = new TripUpdateDTO(
                 "Trip Renamed SameDueDay",
                 originalDueDay,
-                null,
                 null,
                 null,
                 null
@@ -1201,7 +1298,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(1000),
                 3,
                 10,
-                BigDecimal.valueOf(100),
                 false,
                 originalFirstDueDate
             );
@@ -1219,7 +1315,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
 
             TripUpdateDTO patchDto = new TripUpdateDTO(
                 "Trip Renamed SameFirstDueDate",
-                null,
                 null,
                 null,
                 null,
@@ -1257,7 +1352,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(1000),
                 3,
                 originalDueDay,
-                BigDecimal.valueOf(100),
                 false,
                 originalFirstDueDate
             );
@@ -1271,7 +1365,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 .andExpect(jsonPath("$.pendingCount").value(1));
             assertEquals(0, installmentRepository.count());
 
-            TripUpdateDTO patchDto = new TripUpdateDTO(null, newDueDay, null, null, null, newFirstDueDate);
+            TripUpdateDTO patchDto = new TripUpdateDTO(null, newDueDay, null, null, newFirstDueDate);
 
             mockMvc.perform(patch("/api/v1/trips/{id}", trip.getId())
                     .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -1340,7 +1434,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(1000),
                 2,
                 originalDueDay,
-                BigDecimal.valueOf(100),
                 false,
                 originalFirstDueDate
             );
@@ -1348,7 +1441,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             tripRepository.save(trip);
             assertEquals(0, installmentRepository.count());
 
-            TripUpdateDTO patchDto = new TripUpdateDTO(null, newDueDay, null, null, null, newFirstDueDate);
+            TripUpdateDTO patchDto = new TripUpdateDTO(null, newDueDay, null, null, newFirstDueDate);
 
             mockMvc.perform(patch("/api/v1/trips/{id}", trip.getId())
                     .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -1378,7 +1471,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(1000),
                 2,
                 originalDueDay,
-                BigDecimal.valueOf(100),
                 false,
                 originalFirstDueDate
             );
@@ -1394,7 +1486,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 .sorted()
                 .toList();
 
-            TripUpdateDTO patchDto = new TripUpdateDTO("Trip Renamed NameOnly", null, null, null, null, null);
+            TripUpdateDTO patchDto = new TripUpdateDTO("Trip Renamed NameOnly", null, null, null, null);
 
             mockMvc.perform(patch("/api/v1/trips/{id}", trip.getId())
                     .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -1429,7 +1521,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(8000),
                 4,
                 10,
-                BigDecimal.valueOf(100),
                 false,
                 LocalDate.now().plusMonths(2)
             );
@@ -1468,7 +1559,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(9000),
                 3,
                 10,
-                BigDecimal.valueOf(100),
                 false,
                 LocalDate.now().plusMonths(3)
             );
@@ -1486,6 +1576,10 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                     .header("Authorization", "Bearer " + adminTokens.accessToken()))
                 .andExpect(status().isOk())
             .andExpect(jsonPath("$.rows[0].installments[0].status").value("YELLOW"))
+            .andExpect(jsonPath("$.rows[0].installments[0].capitalAmount").value(3000.00))
+            .andExpect(jsonPath("$.rows[0].installments[0].totalDue").value(3000.00))
+            .andExpect(jsonPath("$.rows[0].installments[0].paidAmount").value(0.00))
+            .andExpect(jsonPath("$.rows[0].installments[0].fineAmount").value(0))
             .andExpect(jsonPath("$.rows[0].installments[0].uiStatusCode").value("UP_TO_DATE"))
             .andExpect(jsonPath("$.rows[0].installments[0].uiStatusLabel").value("Al día"))
             .andExpect(jsonPath("$.rows[0].installments[0].uiStatusTone").value("green"))
@@ -1502,7 +1596,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(4000),
                 2,
                 10,
-                BigDecimal.valueOf(100),
                 false,
                 LocalDate.now().minusMonths(2)
             );
@@ -1520,6 +1613,10 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                     .header("Authorization", "Bearer " + adminTokens.accessToken()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.rows[0].installments[0].status").value("RED"))
+                .andExpect(jsonPath("$.rows[0].installments[0].capitalAmount").value(2000.00))
+                .andExpect(jsonPath("$.rows[0].installments[0].totalDue").value(2000.00))
+                .andExpect(jsonPath("$.rows[0].installments[0].paidAmount").value(0.00))
+                .andExpect(jsonPath("$.rows[0].installments[0].fineAmount").value(0))
                 .andExpect(jsonPath("$.rows[0].installments[0].uiStatusCode").value("OVERDUE"))
                 .andExpect(jsonPath("$.rows[0].installments[0].uiStatusLabel").value("Vencida"))
                 .andExpect(jsonPath("$.rows[0].installments[0].uiStatusTone").value("red"));
@@ -1536,7 +1633,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(4000),
                 1,
                 10,
-                BigDecimal.valueOf(100),
                 false,
                 LocalDate.now().plusDays(2)
             );
@@ -1582,7 +1678,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(6000),
                 3,
                 10,
-                BigDecimal.valueOf(100),
                 false,
                 LocalDate.now().minusMonths(2)
             );
@@ -1628,7 +1723,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(4500),
                 2,
                 10,
-                BigDecimal.valueOf(100),
                 false,
                 LocalDate.now().plusMonths(1)
         );
@@ -1673,7 +1767,6 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
                 BigDecimal.valueOf(9000),
                 3,
                 10,
-                BigDecimal.valueOf(100),
                 false,
                 LocalDate.now().plusMonths(1)
         );
@@ -1715,7 +1808,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
         TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-export-legacy"));
         UserCreateDTO userDto = buildValidUser("user-export-legacy");
         signUp(userDto);
-        Trip trip = buildTripForBulk("Trip Export Legacy", BigDecimal.valueOf(5000), 2, 10, BigDecimal.valueOf(100), false, LocalDate.now().plusMonths(1));
+        Trip trip = buildTripForBulk("Trip Export Legacy", BigDecimal.valueOf(5000), 2, 10, false, LocalDate.now().plusMonths(1));
 
         mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
                         .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -1756,7 +1849,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
         TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-export-submission"));
         UserCreateDTO userDto = buildValidUser("user-export-submission");
         signUp(userDto);
-        Trip trip = buildTripForBulk("Trip Export Submission", BigDecimal.valueOf(8000), 2, 10, BigDecimal.valueOf(100), false, LocalDate.now().plusMonths(1));
+        Trip trip = buildTripForBulk("Trip Export Submission", BigDecimal.valueOf(8000), 2, 10, false, LocalDate.now().plusMonths(1));
 
         mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
                         .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -1823,7 +1916,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
         UserCreateDTO userDto = buildValidUser("user-export-multi-inst");
         signUp(userDto);
         Trip trip = buildTripForBulk("Trip Export Multi Inst", BigDecimal.valueOf(9000), 3, 10,
-                BigDecimal.valueOf(100), false, LocalDate.now().plusMonths(1));
+                false, LocalDate.now().plusMonths(1));
 
         mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
                         .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -1908,7 +2001,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
         TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-export-empty"));
         UserCreateDTO userDto = buildValidUser("user-export-empty");
         signUp(userDto);
-        Trip trip = buildTripForBulk("Trip Export Empty", BigDecimal.valueOf(5000), 2, 10, BigDecimal.valueOf(100), false, LocalDate.now().plusMonths(1));
+        Trip trip = buildTripForBulk("Trip Export Empty", BigDecimal.valueOf(5000), 2, 10, false, LocalDate.now().plusMonths(1));
 
         mockMvc.perform(post("/api/v1/trips/{id}/users/bulk", trip.getId())
                         .header("Authorization", "Bearer " + adminTokens.accessToken())

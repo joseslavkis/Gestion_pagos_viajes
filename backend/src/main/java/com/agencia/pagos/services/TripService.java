@@ -137,7 +137,6 @@ public class TripService {
         trip.setInstallmentsCount(dto.installmentsCount());
         trip.setDueDay(dto.dueDay());
         trip.setYellowWarningDays(dto.yellowWarningDays());
-        trip.setFixedFineAmount(dto.fixedFineAmount());
         trip.setRetroactiveActive(dto.retroactiveActive());
         trip.setCurrency(dto.currency() == null ? Currency.ARS : dto.currency());
         trip.setFirstDueDate(dto.firstDueDate());
@@ -181,11 +180,6 @@ public class TripService {
         if (dto.yellowWarningDays() != null) trip.setYellowWarningDays(dto.yellowWarningDays());
         if (dto.retroactiveActive() != null) trip.setRetroactiveActive(dto.retroactiveActive());
         if (dto.firstDueDate() != null) trip.setFirstDueDate(dto.firstDueDate());
-
-        if (dto.fixedFineAmount() != null) {
-            trip.setFixedFineAmount(dto.fixedFineAmount());
-            // La lógica de recálculo de multas en cuotas RED se agrega en el Paso 5
-        }
 
         tripRepository.save(trip);
         return toDetailDTO(trip);
@@ -882,13 +876,10 @@ public class TripService {
             installment.setRetroactiveAmount(BigDecimal.ZERO);
 
             if (!currentDueDate.isBefore(now)) {
-                installment.setFineAmount(BigDecimal.ZERO);
                 installment.setStatus(InstallmentStatus.YELLOW);
             } else if (trip.getRetroactiveActive()) {
-                installment.setFineAmount(BigDecimal.ZERO);
                 installment.setStatus(InstallmentStatus.RETROACTIVE);
             } else {
-                installment.setFineAmount(trip.getFixedFineAmount());
                 installment.setStatus(InstallmentStatus.RED);
             }
 
@@ -975,7 +966,6 @@ public class TripService {
                 trip.getInstallmentsCount(),
                 trip.getDueDay(),
                 trip.getYellowWarningDays(),
-                trip.getFixedFineAmount(),
                 trip.getRetroactiveActive(),
                 trip.getCurrency(),
                 trip.getFirstDueDate(),
@@ -1013,7 +1003,6 @@ public class TripService {
                 installment.getDueDate(),
                 installment.getCapitalAmount(),
                 installment.getRetroactiveAmount(),
-                installment.getFineAmount(),
                 installment.getTotalDue(),
                 installment.getPaidAmount(),
                 effectiveStatus,

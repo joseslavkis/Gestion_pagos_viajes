@@ -215,7 +215,7 @@ class TripServicePendingAssignmentsTest {
         assertTrue(savedInstallments.stream().allMatch(installment -> installment.getStudent() == student));
         assertTrue(savedInstallments.stream().allMatch(installment -> installment.getUser() == parent));
         assertTrue(savedInstallments.stream().allMatch(installment -> installment.getStatus() == InstallmentStatus.RED));
-        assertTrue(savedInstallments.stream().allMatch(installment -> installment.getFineAmount().compareTo(new BigDecimal("1500.00")) == 0));
+        assertTrue(savedInstallments.stream().allMatch(installment -> installment.getTotalDue().compareTo(installment.getCapitalAmount()) == 0));
         assertEquals(1, trip.getAssignedUsers().size());
     }
 
@@ -957,7 +957,6 @@ class TripServicePendingAssignmentsTest {
         installment.setDueDate(LocalDate.now().plusMonths(number));
         installment.setCapitalAmount(BigDecimal.valueOf(1000));
         installment.setRetroactiveAmount(BigDecimal.ZERO);
-        installment.setFineAmount(BigDecimal.ZERO);
         installment.setPaidAmount(paidAmount == null ? BigDecimal.ZERO : paidAmount);
         installment.setStatus(InstallmentStatus.YELLOW);
         installment.recalculateTotalDue();
@@ -974,7 +973,6 @@ class TripServicePendingAssignmentsTest {
         trip.setInstallmentsCount(3);
         trip.setDueDay(1);
         trip.setYellowWarningDays(5);
-        trip.setFixedFineAmount(new BigDecimal("1500.00"));
         trip.setRetroactiveActive(retroactiveActive);
         trip.setFirstDueDate(firstDueDate);
         return trip;

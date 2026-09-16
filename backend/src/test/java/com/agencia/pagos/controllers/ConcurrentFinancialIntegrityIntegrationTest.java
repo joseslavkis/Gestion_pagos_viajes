@@ -256,7 +256,6 @@ class ConcurrentFinancialIntegrityIntegrationTest extends ControllerIntegrationT
         trip.setInstallmentsCount(3);
         trip.setDueDay(10);
         trip.setYellowWarningDays(5);
-        trip.setFixedFineAmount(BigDecimal.ZERO);
         trip.setRetroactiveActive(false);
         trip.setFirstDueDate(LocalDate.now().plusMonths(1));
         return tripRepository.save(trip);
@@ -357,7 +356,7 @@ class ConcurrentFinancialIntegrityIntegrationTest extends ControllerIntegrationT
                     "transaction A must acquire the Trip FOR UPDATE inside assignUsersInBulk and signal it");
 
             // B: real PATCH /api/v1/trips/{id} with a different dueDay.
-            TripUpdateDTO patchDto = new TripUpdateDTO(null, 25, null, null, null, null);
+            TripUpdateDTO patchDto = new TripUpdateDTO(null, 25, null, null, null);
             updateResult = executor.submit(() -> mockMvc.perform(
                             patch("/api/v1/trips/{id}", tripId)
                                     .header("Authorization", "Bearer " + adminTokens.accessToken())
@@ -501,7 +500,6 @@ class ConcurrentFinancialIntegrityIntegrationTest extends ControllerIntegrationT
         installment.setDueDate(LocalDate.now().plusMonths(1));
         installment.setCapitalAmount(new BigDecimal("100.00"));
         installment.setRetroactiveAmount(BigDecimal.ZERO);
-        installment.setFineAmount(BigDecimal.ZERO);
         installment.setPaidAmount(approved ? new BigDecimal("100.00") : BigDecimal.ZERO);
         installment.setStatus(InstallmentStatus.YELLOW);
         installment.recalculateTotalDue();

@@ -34,3 +34,9 @@ secrets/
 # Local OpenCode/CodeGraph artifacts
 .atl/
 .codegraph/
+
+# Local development tools and generated dependencies
+.codex
+.idea/
+.vscode/
+node_modules/

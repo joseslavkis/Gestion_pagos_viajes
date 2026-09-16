@@ -41,7 +41,6 @@ describe("PaymentDrawer", () => {
           dueDate: "2026-05-10",
           capitalAmount: 1000,
           retroactiveAmount: 0,
-          fineAmount: 0,
           totalDue: 1000,
           paidAmount: 0,
           status: "YELLOW",

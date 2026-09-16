@@ -117,7 +117,6 @@ describe("trips-service hooks", () => {
       installmentsCount: 10,
       dueDay: 5,
       yellowWarningDays: 3,
-      fixedFineAmount: 0,
       retroactiveActive: false,
       firstDueDate: "2026-01-01",
     };
@@ -147,6 +146,40 @@ describe("trips-service hooks", () => {
 
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["trips"] });
+    });
+
+    it("envía fixedFineAmount: 0 en el body para el shim de compatibilidad temporal", async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              ...baseTrip,
+              currency: "ARS",
+              id: 1,
+              assignedUsersCount: 0,
+              assignedParticipantsCount: 0,
+            }),
+            {
+              status: 201,
+              headers: { "Content-Type": "application/json" },
+            },
+          ),
+        );
+
+      const { result } = renderHook(() => useCreateTrip(), { wrapper });
+
+      result.current.mutate(baseTrip);
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(init.method).toBe("POST");
+      const parsedBody = JSON.parse(init.body as string) as Record<string, unknown>;
+      expect(parsedBody.fixedFineAmount).toBe(0);
+      // And no other legacy keys leak in.
+      expect(parsedBody.fineAmount).toBeUndefined();
     });
 
     it("en caso de 409 lanza ApiError con status 409", async () => {
@@ -201,7 +234,6 @@ describe("trips-service hooks", () => {
             installmentsCount: 5,
             dueDay: 10,
             yellowWarningDays: 3,
-            fixedFineAmount: 100,
             retroactiveActive: false,
             firstDueDate: "2027-01-01",
             assignedUsersCount: 2,
@@ -251,7 +283,6 @@ describe("trips-service hooks", () => {
             installmentsCount: 5,
             dueDay: 10,
             yellowWarningDays: 3,
-            fixedFineAmount: 100,
             retroactiveActive: false,
             firstDueDate: "2027-01-01",
             assignedUsersCount: 2,
@@ -271,6 +302,47 @@ describe("trips-service hooks", () => {
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
       expect(result.current.data?.name).toBe("Nombre actualizado");
       expect(result.current.data?.id).toBe(3);
+    });
+
+    it("PATCH no envía campos de multa legacy en el body", async () => {
+      // Rollout compatibility contract: PATCH stays free of fixedFineAmount
+      // and fineAmount. Only POST injects fixedFineAmount: 0.
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              id: 3,
+              name: "Nombre actualizado",
+              totalAmount: 500,
+              currency: "ARS",
+              installmentsCount: 5,
+              dueDay: 10,
+              yellowWarningDays: 3,
+              retroactiveActive: false,
+              firstDueDate: "2027-01-01",
+              assignedUsersCount: 2,
+              assignedParticipantsCount: 2,
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          ),
+        );
+
+      const { result } = renderHook(() => useUpdateTrip(), { wrapper });
+
+      result.current.mutate({ id: 3, data: { name: "Nombre actualizado" } });
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(init.method).toBe("PATCH");
+      const parsedBody = JSON.parse(init.body as string) as Record<string, unknown>;
+      expect(parsedBody.fixedFineAmount).toBeUndefined();
+      expect(parsedBody.fineAmount).toBeUndefined();
     });
   });
 
@@ -480,7 +552,6 @@ describe("trips-service hooks", () => {
                 dueDate: "2026-01-01",
                 capitalAmount: 100,
                 retroactiveAmount: 0,
-                fineAmount: 0,
                 totalDue: 100,
                 paidAmount: 100,
                 status: "GREEN",

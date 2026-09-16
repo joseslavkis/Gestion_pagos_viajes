@@ -64,15 +64,22 @@ export function useCreateTrip() {
   const queryClient = useQueryClient();
 
   return useMutation<TripDetailDTO, ApiError, TripCreateDTO>({
-    mutationFn: async (payload: TripCreateDTO) =>
-      apiPost("/api/v1/trips", payload, (json) => TripDetailDTOSchema.parse(json), {
+    mutationFn: async (payload: TripCreateDTO) => {
+      // Rollout compatibility shim (temporary):
+      // legacy backends ignore `fixedFineAmount` and new backends interpret 0
+      // as the retired default. We send it explicitly only at the HTTP
+      // boundary here so that DTO schemas, forms, defaults, UI, and PATCH
+      // stay free of the legacy field. Remove once the rollout window closes.
+      const body = { ...payload, fixedFineAmount: 0 };
+      return apiPost("/api/v1/trips", body, (json) => TripDetailDTOSchema.parse(json), {
         headers:
           tokenState.state === "LOGGED_IN"
             ? {
                 Authorization: `Bearer ${tokenState.accessToken}`,
               }
             : undefined,
-      }),
+      });
+    },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["trips"] });
     },
