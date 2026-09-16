@@ -1,0 +1,18 @@
+package com.agencia.pagos.trip.dto;
+
+import java.util.List;
+
+public record SpreadsheetRowDTO(
+        Long userId,
+        Long studentId,
+        String name,
+        String lastname,
+        String phone,
+        String email,
+        String studentLastname,
+        String studentName,
+        String studentDni,
+        Boolean userCompleted,
+        List<SpreadsheetRowInstallmentDTO> installments
+) {
+}

@@ -1,0 +1,151 @@
+package com.agencia.pagos.trip;
+
+import com.agencia.pagos.trip.dto.TripCreateDTO;
+import com.agencia.pagos.trip.dto.TripUpdateDTO;
+import com.agencia.pagos.trip.dto.UserAssignBulkDTO;
+import com.agencia.pagos.trip.dto.BulkAssignResultDTO;
+import com.agencia.pagos.trip.dto.SpreadsheetDTO;
+import com.agencia.pagos.shared.api.StatusResponseDTO;
+import com.agencia.pagos.trip.dto.TripDetailDTO;
+import com.agencia.pagos.trip.dto.TripStudentAdminDTO;
+import com.agencia.pagos.trip.dto.TripSummaryDTO;
+import com.agencia.pagos.trip.InstallmentStatus;
+import com.agencia.pagos.trip.TripService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/v1/trips")
+@Tag(name = "2 - Trips")
+class TripRestController {
+
+    private final TripService tripService;
+
+    @Autowired
+    TripRestController(TripService tripService) {
+        this.tripService = tripService;
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @PostMapping(produces = "application/json")
+    @Operation(summary = "Create a trip (admin only)")
+    @ResponseStatus(HttpStatus.CREATED)
+    ResponseEntity<TripDetailDTO> createTrip(@Valid @RequestBody TripCreateDTO dto) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(tripService.createTrip(dto));
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @GetMapping(produces = "application/json")
+    @Operation(summary = "List all trips (admin only)")
+    List<TripSummaryDTO> getAllTrips() {
+        return tripService.getAllTrips();
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @GetMapping(value = "/{id}", produces = "application/json")
+    @Operation(summary = "Get trip details (admin only)")
+    @ApiResponse(responseCode = "404", description = "Trip not found", content = @Content)
+    ResponseEntity<TripDetailDTO> getTripById(@PathVariable Long id) {
+        return ResponseEntity.ok(tripService.getTripById(id));
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @PatchMapping(value = "/{id}", produces = "application/json")
+    @Operation(summary = "Update a trip (admin only)")
+    @ApiResponse(responseCode = "404", description = "Trip not found", content = @Content)
+    ResponseEntity<TripDetailDTO> updateTrip(
+            @PathVariable Long id,
+            @Valid @RequestBody TripUpdateDTO dto
+    ) {
+        return ResponseEntity.ok(tripService.updateTrip(id, dto));
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @DeleteMapping(value = "/{id}", produces = "application/json")
+    @Operation(summary = "Delete a trip and all its assigned installments (admin only)")
+    @ApiResponse(responseCode = "404", description = "Trip not found", content = @Content)
+    ResponseEntity<StatusResponseDTO> deleteTrip(@PathVariable Long id) {
+        tripService.deleteTrip(id);
+        return ResponseEntity.ok(new StatusResponseDTO("success", "Trip deleted"));
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @PostMapping(value = "/{id}/users/bulk", produces = "application/json", consumes = "application/json")
+    @Operation(summary = "Assign users in bulk to a trip and generate quotas (admin only)")
+    @ApiResponse(responseCode = "200", description = "Users assigned", content = @Content)
+    @ApiResponse(responseCode = "404", description = "Trip or User not found", content = @Content)
+    ResponseEntity<BulkAssignResultDTO> assignUsersInBulk(
+            @PathVariable Long id,
+            @Valid @RequestBody UserAssignBulkDTO dto
+    ) {
+        return ResponseEntity.ok(tripService.assignUsersInBulk(id, dto));
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @GetMapping(value = "/{id}/students", produces = "application/json")
+    @Operation(summary = "List all students or pending DNIs for a trip (admin only)")
+    ResponseEntity<List<TripStudentAdminDTO>> getTripStudents(@PathVariable Long id) {
+        return ResponseEntity.ok(tripService.getTripStudentsAdmin(id));
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @DeleteMapping(value = "/{id}/students/{studentDni}", produces = "application/json")
+    @Operation(summary = "Unassign a student or pending DNI from a trip (admin only)")
+    ResponseEntity<StatusResponseDTO> unassignStudentFromTrip(
+            @PathVariable Long id,
+            @PathVariable String studentDni
+    ) {
+        tripService.unassignStudentByDni(id, studentDni);
+        return ResponseEntity.ok(new StatusResponseDTO("success", "Asignación eliminada"));
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @GetMapping(value = "/{id}/spreadsheet", produces = "application/json")
+    @Operation(summary = "Get paginated trip spreadsheet (admin only)")
+    @ApiResponse(responseCode = "404", description = "Trip not found", content = @Content)
+    ResponseEntity<SpreadsheetDTO> getSpreadsheet(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "0") Integer page,
+            @RequestParam(defaultValue = "20") Integer size,
+            @RequestParam(required = false) String search,
+            @RequestParam(defaultValue = "student") String sortBy,
+            @RequestParam(defaultValue = "asc") String order,
+            @RequestParam(required = false) InstallmentStatus status
+    ) {
+        return ResponseEntity.ok(
+                tripService.getSpreadsheet(
+                        id,
+                        page,
+                        size,
+                        search,
+                        sortBy,
+                        order,
+                        status
+                )
+        );
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @GetMapping(value = "/{id}/spreadsheet/export", produces = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    @Operation(summary = "Export trip spreadsheet as Excel file (admin only)")
+    @ApiResponse(responseCode = "404", description = "Trip not found", content = @Content)
+    ResponseEntity<byte[]> exportSpreadsheet(@PathVariable Long id) {
+        byte[] excelBytes = tripService.exportSpreadsheetAsExcel(id);
+        String filename = "planilla-viaje-" + id + ".xlsx";
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .header(HttpHeaders.CONTENT_TYPE, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                .body(excelBytes);
+    }
+}
