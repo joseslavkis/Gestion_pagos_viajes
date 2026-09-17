@@ -45,6 +45,9 @@ jobs:
   deploy-backend-vps:
     name: Deploy Backend to VPS
     runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-backend-main
+      cancel-in-progress: false
     needs:
       - backend-tests
       - frontend-build
@@ -59,8 +62,20 @@ jobs:
           port: ${{ secrets.VPS_PORT || '22' }}
           command_timeout: 30m
           script: |
-            set -e
+            set -eu
+            DEPLOY_SHA="${{ github.sha }}"
+            test -n "$DEPLOY_SHA"
             cd /opt/apps/Gestion_pagos_viajes
             git fetch origin
-            git reset --hard origin/main
+            git cat-file -e "$DEPLOY_SHA^{commit}"
+            CURRENT_MAIN_SHA="$(git rev-parse origin/main^{commit})"
+            if [ "$CURRENT_MAIN_SHA" != "$DEPLOY_SHA" ]; then
+              echo "Skipping stale deploy: origin/main is at $CURRENT_MAIN_SHA, target is $DEPLOY_SHA"
+              exit 0
+            fi
+            git reset --hard "$DEPLOY_SHA"
+            ACTUAL_SHA="$(git rev-parse HEAD)"
+            echo "Deploy target SHA: $DEPLOY_SHA"
+            echo "Checked out SHA:   $ACTUAL_SHA"
+            test "$ACTUAL_SHA" = "$DEPLOY_SHA"
             docker compose up -d --build backend
