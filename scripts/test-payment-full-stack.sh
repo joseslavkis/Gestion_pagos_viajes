@@ -34,7 +34,10 @@ trap cleanup EXIT
 command -v docker >/dev/null
 command -v curl >/dev/null
 command -v python3 >/dev/null
-node -e "require.resolve('@playwright/test/package.json')" >/dev/null 2>&1 || {
+(
+  cd "$ROOT_DIR/frontend"
+  node -e "require.resolve('@playwright/test/package.json')"
+) >/dev/null 2>&1 || {
   printf 'Playwright test dependency is unavailable. Install the pinned @playwright/test version before running this local harness.\n' >&2
   exit 2
 }

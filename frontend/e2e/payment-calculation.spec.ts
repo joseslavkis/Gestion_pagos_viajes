@@ -50,13 +50,13 @@ test("CASE F keeps 20000 ARS through a fast ARS to USD to ARS toggle with one qu
 
   const amount = page.getByLabel("Monto a reportar");
   const currency = page.getByLabel("Moneda en que pagaste");
-  await expect(amount).toHaveValue("20000");
+  await expect(amount).toHaveJSProperty("valueAsNumber", 20000);
 
   await currency.selectOption("USD");
-  await expect(amount).not.toHaveValue("20000");
+  await expect(amount).not.toHaveJSProperty("valueAsNumber", 20000);
   await currency.selectOption("ARS");
 
-  await expect(amount).toHaveValue("20000");
+  await expect(amount).toHaveJSProperty("valueAsNumber", 20000);
   await expect.poll(readFxCalls).toEqual([CASE_F_FAST_DATE]);
 });
 
@@ -66,15 +66,15 @@ test("CASE F ignores the delayed USD response after returning to ARS", async ({ 
 
   const amount = page.getByLabel("Monto a reportar");
   const currency = page.getByLabel("Moneda en que pagaste");
-  await expect(amount).toHaveValue("20000");
+  await expect(amount).toHaveJSProperty("valueAsNumber", 20000);
 
   await currency.selectOption("USD");
   await currency.selectOption("ARS");
 
-  await expect(amount).toHaveValue("20000");
+  await expect(amount).toHaveJSProperty("valueAsNumber", 20000);
   await expect.poll(readFxCalls).toEqual([CASE_F_SLOW_DATE]);
   await page.waitForTimeout(600);
-  await expect(amount).toHaveValue("20000");
+  await expect(amount).toHaveJSProperty("valueAsNumber", 20000);
 });
 
 test("CASE G displays authoritative 10.16 and preserves a valid 99.29 balance without probes", async ({ page }) => {
@@ -82,19 +82,25 @@ test("CASE G displays authoritative 10.16 and preserves a valid 99.29 balance wi
   await page.getByLabel("Fecha de pago").fill(CASE_G_DATE);
 
   const amount = page.getByLabel("Monto a reportar");
-  await expect(amount).toHaveValue("0.01");
+  await expect(amount).toHaveJSProperty("valueAsNumber", 0.01);
   await page.getByLabel("Moneda en que pagaste").selectOption("ARS");
-  await expect(amount).toHaveValue("10.16");
+  await expect(amount).toHaveJSProperty("valueAsNumber", 10.16);
   await expect.poll(readFxCalls).toEqual([CASE_G_DATE]);
 
   await selectTrip(page, seeded.validCentsTripName);
-  await expect(amount).toHaveValue("99.29");
+  await expect(amount).toHaveJSProperty("valueAsNumber", 99.29);
   await expect.poll(readFxCalls).toEqual([CASE_G_DATE]);
 });
 
 async function selectTrip(page: import("@playwright/test").Page, tripName: string) {
-  await page.getByLabel("Seleccioná el viaje").selectOption({ label: tripName });
-  await expect(page.getByLabel("Seleccioná el viaje")).toHaveValue(/.+/);
+  const select = page.getByLabel("Seleccioná el viaje");
+  const option = select.locator("option").filter({ hasText: tripName });
+  await expect(option).toHaveCount(1);
+
+  const optionValue = await option.getAttribute("value");
+  expect(optionValue).toBeTruthy();
+  await select.selectOption(optionValue!);
+  await expect(select).toHaveValue(/.+/);
 }
 
 async function readFxCalls() {
