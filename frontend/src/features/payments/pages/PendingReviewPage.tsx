@@ -7,7 +7,12 @@ import {
   useReviewPayment,
 } from "@/features/payments/services/payments-service";
 import { isImageAttachment } from "@/features/payments/lib/attachment-preview";
+import {
+  compareNonNegativeDecimalStrings,
+  normalizePaymentDecimalInput,
+} from "@/features/payments/types/decimal-strings";
 import type {
+  DecimalString,
   PaymentBatchInstallmentDTO,
   PendingPaymentReviewDTO,
 } from "@/features/payments/types/payments-dtos";
@@ -28,11 +33,11 @@ const paymentMethodLabels: Record<string, string> = {
   OTHER: "Otro",
 };
 
-function formatMoneyByCurrency(amount: number, currency: "ARS" | "USD"): string {
+function formatMoneyByCurrency(amount: DecimalString, currency: "ARS" | "USD"): string {
   return new Intl.NumberFormat("es-AR", {
     style: "currency",
     currency,
-  }).format(amount);
+  }).format(Number.parseFloat(amount));
 }
 
 function formatDate(isoDate: string): string {
@@ -42,16 +47,6 @@ function formatDate(isoDate: string): string {
 
 function formatInstallmentList(allocations: PaymentBatchInstallmentDTO[]): string {
   return allocations.map((allocation) => `#${allocation.installmentNumber}`).join(", ");
-}
-
-function parseAmount(value: string, fallback: number): number {
-  const normalized = value.replace(",", ".").trim();
-  if (normalized.length === 0) {
-    return fallback;
-  }
-
-  const parsed = Number.parseFloat(normalized);
-  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 export function PendingReviewPage() {
@@ -98,13 +93,12 @@ export function PendingReviewPage() {
     );
   };
 
-  const submitDecision = async (item: PendingPaymentReviewDTO, approvedAmount: number) => {
+  const submitDecision = async (item: PendingPaymentReviewDTO, approvedAmount: DecimalString) => {
     setActionError(null);
 
-    const safeApprovedAmount = Math.max(0, approvedAmount);
     const observation = observations[item.submissionId]?.trim() ?? "";
 
-    if (safeApprovedAmount < item.reportedAmount && observation.length === 0) {
+    if (compareNonNegativeDecimalStrings(approvedAmount, item.reportedAmount) < 0 && observation.length === 0) {
       setActionError("La observación es obligatoria cuando no se aprueba el monto completo.");
       return;
     }
@@ -113,7 +107,7 @@ export function PendingReviewPage() {
       await reviewPayment.mutateAsync({
         id: item.submissionId,
         data: {
-          approvedAmount: safeApprovedAmount,
+          approvedAmount,
           adminObservation: observation.length > 0 ? observation : undefined,
         },
       });
@@ -148,8 +142,8 @@ export function PendingReviewPage() {
             <div className={styles.list}>
               {items.map((item) => {
                 const isExpanded = expandedSubmissionIds.includes(item.submissionId);
-                const approvedAmountInput = approvedAmounts[item.submissionId] ?? String(item.reportedAmount);
-                const approvedAmountValue = parseAmount(approvedAmountInput, item.reportedAmount);
+                const approvedAmountInput = approvedAmounts[item.submissionId] ?? item.reportedAmount;
+                const approvedAmountValue = normalizePaymentDecimalInput(approvedAmountInput) ?? item.reportedAmount;
                 const observation = observations[item.submissionId] ?? "";
 
                 return (
@@ -305,7 +299,7 @@ export function PendingReviewPage() {
                               type="button"
                               className={styles.secondaryButton}
                               disabled={reviewPayment.isPending}
-                              onClick={() => submitDecision(item, 0)}
+                              onClick={() => submitDecision(item, "0")}
                             >
                               Rechazar total
                             </button>

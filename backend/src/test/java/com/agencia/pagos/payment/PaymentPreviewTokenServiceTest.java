@@ -6,6 +6,13 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Optional;
+import java.util.Arrays;
+import java.time.Instant;
+import java.util.Date;
+
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.io.Decoders;
+import io.jsonwebtoken.security.Keys;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -29,8 +36,10 @@ class PaymentPreviewTokenServiceTest {
                 new BigDecimal("1180.00"),
                 LocalDate.of(2026, 5, 6),
                 LocalDate.of(2026, 5, 5),
+                "official",
                 "argentinadatos.com",
-                ""
+                "2026-05-05T12:30:00Z",
+                PaymentPreviewTokenService.CURRENT_CALCULATION_VERSION
         );
     }
 
@@ -50,7 +59,10 @@ class PaymentPreviewTokenServiceTest {
         assertEquals(LocalDate.of(2026, 5, 6), s.reportedPaymentDate());
         assertEquals(0, s.quoteSellRate().compareTo(new BigDecimal("1180.00")));
         assertEquals(LocalDate.of(2026, 5, 5), s.quoteEffectiveDate());
-        assertEquals("argentinadatos.com", s.quoteSource());
+        assertEquals("official", s.quoteSource());
+        assertEquals("argentinadatos.com", s.quoteProvider());
+        assertEquals("2026-05-05T12:30:00Z", s.quoteProviderTimestamp());
+        assertEquals("2", s.calculationVersion());
     }
 
     @Test
@@ -75,5 +87,90 @@ class PaymentPreviewTokenServiceTest {
         PaymentPreviewTokenService service = newService();
         assertTrue(service.parseAndValidate(null, 42L).isEmpty());
         assertTrue(service.parseAndValidate("   ", 42L).isEmpty());
+    }
+
+    @Test
+    void snapshotContractCarriesProviderAndCalculationVersion() {
+        var componentNames = Arrays.stream(PaymentPreviewTokenService.PreviewSnapshot.class.getRecordComponents())
+                .map(java.lang.reflect.RecordComponent::getName)
+                .toList();
+
+        assertTrue(componentNames.contains("quoteProvider"));
+        assertTrue(componentNames.contains("calculationVersion"));
+    }
+
+    @Test
+    void issuedTokenDeclaresCalculationVersionTwo() throws Exception {
+        PaymentPreviewTokenService service = newService();
+        String token = service.issueToken(sampleSnapshot(42L));
+
+        String payload = new String(
+                java.util.Base64.getUrlDecoder().decode(token.split("\\.")[1]),
+                java.nio.charset.StandardCharsets.UTF_8
+        );
+
+        assertTrue(payload.contains("\"cv\":\"2\""));
+        assertTrue(payload.contains("\"quoteProvider\""));
+    }
+
+    @Test
+    void missingAndVersionOneTokensAreRejectedAcrossDeployWindow() {
+        PaymentPreviewTokenService service = newService();
+
+        assertTrue(service.parseAndValidate(legacyToken(null), 42L).isEmpty());
+        assertTrue(service.parseAndValidate(legacyToken("1"), 42L).isEmpty());
+        assertTrue(service.parseAndValidate(legacyToken("3"), 42L).isEmpty());
+    }
+
+    @Test
+    void authenticExpiredVersionTwoTokenIsDistinguishedWithoutBecomingValid() {
+        PaymentPreviewTokenService service = newService();
+        String expired = tokenWithVersionAndWindow("2", Instant.now().minusSeconds(600), Instant.now().minusSeconds(300));
+
+        PaymentPreviewTokenService.TokenValidation validation = service.validateToken(expired, 42L);
+
+        assertEquals(PaymentPreviewTokenService.TokenValidationStatus.EXPIRED, validation.status());
+        assertTrue(validation.snapshot().isEmpty());
+        assertTrue(service.parseAndValidate(expired, 42L).isEmpty());
+    }
+
+    @Test
+    void expiredTokenForAnotherIdentityRemainsInvalid() {
+        PaymentPreviewTokenService service = newService();
+        String expired = tokenWithVersionAndWindow("2", Instant.now().minusSeconds(600), Instant.now().minusSeconds(300));
+
+        PaymentPreviewTokenService.TokenValidation validation = service.validateToken(expired, 99L);
+
+        assertEquals(PaymentPreviewTokenService.TokenValidationStatus.INVALID, validation.status());
+        assertTrue(validation.snapshot().isEmpty());
+    }
+
+    private String legacyToken(String calculationVersion) {
+        Instant now = Instant.now();
+        return tokenWithVersionAndWindow(calculationVersion, now, now.plusSeconds(300));
+    }
+
+    private String tokenWithVersionAndWindow(String calculationVersion, Instant issuedAt, Instant expiresAt) {
+        var builder = Jwts.builder()
+                .claim("type", "payment-preview")
+                .subject("42")
+                .claim("userId", 42L)
+                .claim("anchorInstallmentId", 501L)
+                .claim("paymentCurrency", "ARS")
+                .claim("reportedAmount", "1500.00")
+                .claim("reportedPaymentDate", "2026-05-06")
+                .claim("quoteSellRate", "1180.00")
+                .claim("quoteRequestedDate", "2026-05-06")
+                .claim("quoteEffectiveDate", "2026-05-05")
+                .claim("quoteSource", "official")
+                .claim("quoteProvider", "provider-a")
+                .issuedAt(Date.from(issuedAt))
+                .expiration(Date.from(expiresAt));
+        if (calculationVersion != null) {
+            builder.claim("cv", calculationVersion);
+        }
+        return builder
+                .signWith(Keys.hmacShaKeyFor(Decoders.BASE64.decode(SECRET)), Jwts.SIG.HS256)
+                .compact();
     }
 }

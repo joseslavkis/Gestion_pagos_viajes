@@ -10,10 +10,10 @@ function makePendingSubmission() {
   return {
     submissionId: 91,
     status: "PENDING",
-    reportedAmount: 400,
+    reportedAmount: "400.00",
     paymentCurrency: "ARS",
     exchangeRate: null,
-    amountInTripCurrency: 400,
+    amountInTripCurrency: "400.00",
     reportedPaymentDate: "2026-03-23",
     paymentMethod: "BANK_TRANSFER",
     fileKey: "",
@@ -35,11 +35,11 @@ function makePendingSubmission() {
         installmentId: 12,
         installmentNumber: 4,
         dueDate: "2026-03-25",
-        totalDue: 200,
-        paidAmount: 0,
-        remainingAmount: 200,
-        reportedAmount: 200,
-        amountInTripCurrency: 200,
+        totalDue: "200.00",
+        paidAmount: "0.00",
+        remainingAmount: "200.00",
+        reportedAmount: "200.00",
+        amountInTripCurrency: "200.00",
         status: "PENDING",
       },
       {
@@ -47,11 +47,11 @@ function makePendingSubmission() {
         installmentId: 13,
         installmentNumber: 5,
         dueDate: "2026-04-25",
-        totalDue: 200,
-        paidAmount: 0,
-        remainingAmount: 200,
-        reportedAmount: 200,
-        amountInTripCurrency: 200,
+        totalDue: "200.00",
+        paidAmount: "0.00",
+        remainingAmount: "200.00",
+        reportedAmount: "200.00",
+        amountInTripCurrency: "200.00",
         status: "PENDING",
       },
     ],
@@ -71,13 +71,13 @@ describe("PendingReviewPage", () => {
         return HttpResponse.json({
           submissionId: 91,
           status: "PARTIALLY_APPROVED",
-          reportedAmount: 400,
-          approvedAmount: 250,
-          rejectedAmount: 150,
+          reportedAmount: "400.00",
+          approvedAmount: "250.00",
+          rejectedAmount: "150.00",
           paymentCurrency: "ARS",
           exchangeRate: null,
-          amountInTripCurrency: 400,
-          approvedAmountInTripCurrency: 250,
+          amountInTripCurrency: "400.00",
+          approvedAmountInTripCurrency: "250.00",
           reportedPaymentDate: "2026-03-23",
           paymentMethod: "BANK_TRANSFER",
           fileKey: "",
@@ -116,7 +116,7 @@ describe("PendingReviewPage", () => {
 
     await waitFor(() => {
       expect(decisionBody).toEqual({
-        approvedAmount: 250,
+        approvedAmount: "250",
         adminObservation: "Se aprobó el monto verificado.",
       });
     });
@@ -135,13 +135,13 @@ describe("PendingReviewPage", () => {
         return HttpResponse.json({
           submissionId: 91,
           status: "REJECTED",
-          reportedAmount: 400,
-          approvedAmount: 0,
-          rejectedAmount: 400,
+          reportedAmount: "400.00",
+          approvedAmount: "0.00",
+          rejectedAmount: "400.00",
           paymentCurrency: "ARS",
           exchangeRate: null,
-          amountInTripCurrency: 400,
-          approvedAmountInTripCurrency: 0,
+          amountInTripCurrency: "400.00",
+          approvedAmountInTripCurrency: "0.00",
           reportedPaymentDate: "2026-03-23",
           paymentMethod: "BANK_TRANSFER",
           fileKey: "",
@@ -172,7 +172,7 @@ describe("PendingReviewPage", () => {
 
     await waitFor(() => {
       expect(decisionBody).toEqual({
-        approvedAmount: 0,
+        approvedAmount: "0",
         adminObservation: "Comprobante borroso",
       });
     });

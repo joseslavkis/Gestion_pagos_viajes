@@ -2,15 +2,29 @@ package com.agencia.pagos.payment;
 
 import com.agencia.pagos.shared.money.Currency;
 import com.agencia.pagos.trip.Installment;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 @Component
 public class PaymentAllocationPlanner {
+
+    private record TripAllocation(
+            Installment installment,
+            int allocationOrder,
+            BigDecimal remainingAmount,
+            BigDecimal amountInTripCurrency
+    ) {
+    }
+
+    private record ReportedShare(int index, BigInteger remainder) {
+    }
 
     public record PlannedAllocation(
             Installment installment,
@@ -33,6 +47,17 @@ public class PaymentAllocationPlanner {
     ) {
     }
 
+    private final PaymentMoneyPolicy moneyPolicy;
+
+    public PaymentAllocationPlanner() {
+        this(new PaymentMoneyPolicy());
+    }
+
+    @Autowired
+    public PaymentAllocationPlanner(PaymentMoneyPolicy moneyPolicy) {
+        this.moneyPolicy = moneyPolicy;
+    }
+
     public PlanResult plan(
             List<Installment> installments,
             BigDecimal reportedAmount,
@@ -42,90 +67,157 @@ public class PaymentAllocationPlanner {
         if (installments == null || installments.isEmpty()) {
             throw new IllegalArgumentException("Debe haber al menos una cuota seleccionada");
         }
-        if (reportedAmount == null || reportedAmount.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new IllegalArgumentException("El monto informado debe ser mayor a 0");
-        }
+        BigDecimal normalizedReportedAmount = moneyPolicy.requirePositiveMoney(
+                reportedAmount, "reportedAmount");
 
-        Currency tripCurrency = installments.get(0).getTrip().getCurrency();
+        Currency tripCurrency = installments.getFirst().getTrip().getCurrency();
         BigDecimal totalPendingAmountInTripCurrency = installments.stream()
                 .map(this::getRemainingAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
-                .setScale(2, RoundingMode.HALF_UP);
-
-        BigDecimal maxAllowedAmount = convertTripToPaymentCurrency(
+                .setScale(PaymentMoneyPolicy.MONEY_SCALE, RoundingMode.UNNECESSARY);
+        BigDecimal amountInTripCurrency = moneyPolicy.convertPaymentToTripCurrency(
+                normalizedReportedAmount,
+                tripCurrency,
+                paymentCurrency,
+                exchangeRate
+        );
+        BigDecimal maxAllowedAmount = moneyPolicy.maxAllowedPaymentAmount(
                 totalPendingAmountInTripCurrency,
                 tripCurrency,
                 paymentCurrency,
                 exchangeRate
         );
 
-        if (reportedAmount.compareTo(maxAllowedAmount) > 0) {
-            throw new IllegalStateException("El monto informado supera el saldo pendiente total de esta inscripción");
+        if (amountInTripCurrency.compareTo(totalPendingAmountInTripCurrency) > 0) {
+            throw new PaymentBalanceExceededException(
+                    maxAllowedAmount,
+                    amountInTripCurrency.subtract(totalPendingAmountInTripCurrency)
+                            .setScale(PaymentMoneyPolicy.MONEY_SCALE, RoundingMode.UNNECESSARY)
+            );
         }
-
-        BigDecimal amountInTripCurrency = convertPaymentToTripCurrency(
-                reportedAmount,
-                tripCurrency,
-                paymentCurrency,
-                exchangeRate
-        );
-
-        if (amountInTripCurrency.compareTo(BigDecimal.ZERO) <= 0) {
+        if (amountInTripCurrency.signum() <= 0) {
             throw new IllegalArgumentException("El monto informado es demasiado bajo para imputarse");
         }
 
-        List<PlannedAllocation> allocations = new ArrayList<>();
-        BigDecimal remainingTripAmount = amountInTripCurrency;
-        BigDecimal accumulatedReported = BigDecimal.ZERO;
-        int allocationOrder = 1;
-        for (Installment installment : installments) {
-            if (remainingTripAmount.compareTo(BigDecimal.ZERO) <= 0) {
-                break;
-            }
-
-            BigDecimal installmentRemainingAmount = getRemainingAmount(installment);
-            if (installmentRemainingAmount.compareTo(BigDecimal.ZERO) <= 0) {
-                continue;
-            }
-
-            BigDecimal allocatedTripAmount = installmentRemainingAmount.min(remainingTripAmount)
-                    .setScale(2, RoundingMode.HALF_UP);
-
-            BigDecimal allocatedReportedAmount;
-            if (paymentCurrency == tripCurrency) {
-                allocatedReportedAmount = allocatedTripAmount;
-            } else if (remainingTripAmount.compareTo(allocatedTripAmount) == 0) {
-                allocatedReportedAmount = reportedAmount.subtract(accumulatedReported).setScale(2, RoundingMode.HALF_UP);
-            } else {
-                allocatedReportedAmount = convertTripToPaymentCurrency(
-                        allocatedTripAmount,
-                        tripCurrency,
-                        paymentCurrency,
-                        exchangeRate
-                );
-                accumulatedReported = accumulatedReported.add(allocatedReportedAmount);
-            }
-
-            allocations.add(new PlannedAllocation(
-                    installment,
-                    allocationOrder++,
-                    installmentRemainingAmount,
-                    allocatedReportedAmount,
-                    allocatedTripAmount
-            ));
-            remainingTripAmount = remainingTripAmount.subtract(allocatedTripAmount).setScale(2, RoundingMode.HALF_UP);
-        }
-
-        return new PlanResult(
+        List<TripAllocation> tripAllocations = allocateTripCurrency(
+                installments, amountInTripCurrency);
+        List<PlannedAllocation> allocations = distributeReportedAmount(
+                tripAllocations, normalizedReportedAmount, amountInTripCurrency);
+        PlanResult result = new PlanResult(
                 tripCurrency,
                 paymentCurrency,
-                reportedAmount.setScale(2, RoundingMode.HALF_UP),
+                normalizedReportedAmount,
                 maxAllowedAmount,
                 exchangeRate,
                 totalPendingAmountInTripCurrency,
                 amountInTripCurrency,
-                allocations
+                List.copyOf(allocations)
         );
+        assertConservation(result);
+        return result;
+    }
+
+    private List<TripAllocation> allocateTripCurrency(
+            List<Installment> installments,
+            BigDecimal amountInTripCurrency
+    ) {
+        List<TripAllocation> allocations = new ArrayList<>();
+        BigDecimal remainingTripAmount = amountInTripCurrency;
+        int allocationOrder = 1;
+        for (Installment installment : installments) {
+            if (remainingTripAmount.signum() <= 0) {
+                break;
+            }
+            BigDecimal installmentRemainingAmount = getRemainingAmount(installment);
+            if (installmentRemainingAmount.signum() <= 0) {
+                continue;
+            }
+
+            BigDecimal allocatedTripAmount = remainingTripAmount.compareTo(installmentRemainingAmount) <= 0
+                    ? remainingTripAmount
+                    : installmentRemainingAmount;
+            allocations.add(new TripAllocation(
+                    installment,
+                    allocationOrder++,
+                    installmentRemainingAmount,
+                    allocatedTripAmount
+            ));
+            remainingTripAmount = remainingTripAmount.subtract(allocatedTripAmount)
+                    .setScale(PaymentMoneyPolicy.MONEY_SCALE, RoundingMode.UNNECESSARY);
+        }
+        if (remainingTripAmount.signum() != 0) {
+            throw new IllegalStateException("FIN-001: no se pudo imputar el monto convertido completo");
+        }
+        return allocations;
+    }
+
+    private List<PlannedAllocation> distributeReportedAmount(
+            List<TripAllocation> tripAllocations,
+            BigDecimal reportedAmount,
+            BigDecimal amountInTripCurrency
+    ) {
+        BigInteger reportedCents = toCents(reportedAmount);
+        BigInteger tripCents = toCents(amountInTripCurrency);
+        List<BigInteger> allocatedReportedCents = new ArrayList<>();
+        List<ReportedShare> shares = new ArrayList<>();
+        BigInteger distributedCents = BigInteger.ZERO;
+
+        for (int index = 0; index < tripAllocations.size(); index++) {
+            BigInteger allocationTripCents = toCents(tripAllocations.get(index).amountInTripCurrency());
+            BigInteger[] quotientAndRemainder = reportedCents.multiply(allocationTripCents)
+                    .divideAndRemainder(tripCents);
+            allocatedReportedCents.add(quotientAndRemainder[0]);
+            distributedCents = distributedCents.add(quotientAndRemainder[0]);
+            shares.add(new ReportedShare(index, quotientAndRemainder[1]));
+        }
+
+        BigInteger residualCents = reportedCents.subtract(distributedCents);
+        shares.sort(Comparator
+                .comparing(ReportedShare::remainder, Comparator.reverseOrder())
+                .thenComparing(ReportedShare::index));
+        for (int offset = 0; offset < residualCents.intValueExact(); offset++) {
+            int allocationIndex = shares.get(offset).index();
+            allocatedReportedCents.set(
+                    allocationIndex,
+                    allocatedReportedCents.get(allocationIndex).add(BigInteger.ONE)
+            );
+        }
+
+        List<PlannedAllocation> allocations = new ArrayList<>();
+        for (int index = 0; index < tripAllocations.size(); index++) {
+            TripAllocation tripAllocation = tripAllocations.get(index);
+            allocations.add(new PlannedAllocation(
+                    tripAllocation.installment(),
+                    tripAllocation.allocationOrder(),
+                    tripAllocation.remainingAmount(),
+                    new BigDecimal(allocatedReportedCents.get(index), PaymentMoneyPolicy.MONEY_SCALE),
+                    tripAllocation.amountInTripCurrency()
+            ));
+        }
+        return allocations;
+    }
+
+    public void assertConservation(PlanResult plan) {
+        BigDecimal reportedTotal = plan.allocations().stream()
+                .map(PlannedAllocation::reportedAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .setScale(PaymentMoneyPolicy.MONEY_SCALE, RoundingMode.UNNECESSARY);
+        BigDecimal tripTotal = plan.allocations().stream()
+                .map(PlannedAllocation::amountInTripCurrency)
+                .reduce(BigDecimal.ZERO, BigDecimal::add)
+                .setScale(PaymentMoneyPolicy.MONEY_SCALE, RoundingMode.UNNECESSARY);
+
+        if (reportedTotal.compareTo(plan.reportedAmount()) != 0
+                || tripTotal.compareTo(plan.amountInTripCurrency()) != 0) {
+            throw new IllegalStateException("FIN-001: el plan no conserva ambos totales monetarios");
+        }
+        for (PlannedAllocation allocation : plan.allocations()) {
+            if (allocation.reportedAmount().signum() < 0
+                    || allocation.amountInTripCurrency().signum() < 0
+                    || allocation.amountInTripCurrency().compareTo(allocation.remainingAmount()) > 0) {
+                throw new IllegalStateException("FIN-001: el plan contiene una imputación inválida");
+            }
+        }
     }
 
     public BigDecimal convertTripToPaymentCurrency(
@@ -134,23 +226,8 @@ public class PaymentAllocationPlanner {
             Currency paymentCurrency,
             BigDecimal exchangeRate
     ) {
-        if (tripCurrency == paymentCurrency) {
-            return amountInTripCurrency.setScale(2, RoundingMode.HALF_UP);
-        }
-
-        if (exchangeRate == null || exchangeRate.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new IllegalArgumentException("Debe informarse un tipo de cambio válido");
-        }
-
-        if (tripCurrency == Currency.USD && paymentCurrency == Currency.ARS) {
-            return amountInTripCurrency.multiply(exchangeRate).setScale(2, RoundingMode.HALF_UP);
-        }
-
-        if (tripCurrency == Currency.ARS && paymentCurrency == Currency.USD) {
-            return amountInTripCurrency.divide(exchangeRate, 2, RoundingMode.HALF_UP);
-        }
-
-        throw new IllegalStateException("Conversión de moneda no soportada");
+        return moneyPolicy.convertTripToPaymentCurrency(
+                amountInTripCurrency, tripCurrency, paymentCurrency, exchangeRate);
     }
 
     public BigDecimal convertPaymentToTripCurrency(
@@ -159,28 +236,20 @@ public class PaymentAllocationPlanner {
             Currency paymentCurrency,
             BigDecimal exchangeRate
     ) {
-        if (tripCurrency == paymentCurrency) {
-            return reportedAmount.setScale(2, RoundingMode.HALF_UP);
-        }
-
-        if (exchangeRate == null || exchangeRate.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new IllegalArgumentException("Debe informarse un tipo de cambio válido");
-        }
-
-        if (tripCurrency == Currency.USD && paymentCurrency == Currency.ARS) {
-            return reportedAmount.divide(exchangeRate, 2, RoundingMode.HALF_UP);
-        }
-
-        if (tripCurrency == Currency.ARS && paymentCurrency == Currency.USD) {
-            return reportedAmount.multiply(exchangeRate).setScale(2, RoundingMode.HALF_UP);
-        }
-
-        throw new IllegalStateException("Conversión de moneda no soportada");
+        return moneyPolicy.convertPaymentToTripCurrency(
+                reportedAmount, tripCurrency, paymentCurrency, exchangeRate);
     }
 
     public BigDecimal getRemainingAmount(Installment installment) {
         BigDecimal totalDue = installment.getTotalDue() == null ? BigDecimal.ZERO : installment.getTotalDue();
         BigDecimal paidAmount = installment.getPaidAmount() == null ? BigDecimal.ZERO : installment.getPaidAmount();
-        return totalDue.subtract(paidAmount).max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal remainingAmount = totalDue.subtract(paidAmount);
+        return remainingAmount.signum() < 0
+                ? BigDecimal.ZERO.setScale(PaymentMoneyPolicy.MONEY_SCALE)
+                : remainingAmount.setScale(PaymentMoneyPolicy.MONEY_SCALE, RoundingMode.HALF_UP);
+    }
+
+    private BigInteger toCents(BigDecimal amount) {
+        return amount.movePointRight(PaymentMoneyPolicy.MONEY_SCALE).toBigIntegerExact();
     }
 }

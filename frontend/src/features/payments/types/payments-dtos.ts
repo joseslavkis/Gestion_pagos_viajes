@@ -1,6 +1,25 @@
 import { z } from "zod";
 
-const MoneySchema = z.union([z.string(), z.number()]).transform((value) => Number(value));
+const canonicalDecimalPattern = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/;
+
+export const DecimalStringSchema = z.string().regex(
+  canonicalDecimalPattern,
+  "El valor debe ser un decimal canónico.",
+);
+export type DecimalString = z.infer<typeof DecimalStringSchema>;
+
+const NonNegativeDecimalStringSchema = DecimalStringSchema.refine(
+  (value) => !value.startsWith("-"),
+  "El monto no puede ser negativo.",
+);
+const PositiveDecimalStringSchema = NonNegativeDecimalStringSchema.refine(
+  (value) => /[1-9]/.test(value),
+  "El monto debe ser mayor a cero.",
+);
+
+// Installment summaries still come from the legacy display endpoint as JSON numbers.
+// Authoritative payment calculation and persistence contracts use DecimalStringSchema.
+const InstallmentDisplayMoneySchema = z.number().finite();
 
 export const CurrencySchema = z.enum(["ARS", "USD"]);
 export type Currency = z.infer<typeof CurrencySchema>;
@@ -39,11 +58,11 @@ export const PaymentBatchInstallmentDTOSchema = z.object({
   installmentId: z.number(),
   installmentNumber: z.number(),
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  totalDue: MoneySchema,
-  paidAmount: MoneySchema,
-  remainingAmount: MoneySchema,
-  reportedAmount: MoneySchema,
-  amountInTripCurrency: MoneySchema,
+  totalDue: DecimalStringSchema,
+  paidAmount: DecimalStringSchema,
+  remainingAmount: DecimalStringSchema,
+  reportedAmount: DecimalStringSchema,
+  amountInTripCurrency: DecimalStringSchema,
   status: ReceiptStatusSchema.nullable(),
 });
 export type PaymentBatchInstallmentDTO = z.infer<typeof PaymentBatchInstallmentDTOSchema>;
@@ -52,16 +71,18 @@ export const PaymentBatchPreviewDTOSchema = z.object({
   anchorInstallmentId: z.number(),
   tripCurrency: CurrencySchema,
   paymentCurrency: CurrencySchema,
-  reportedAmount: MoneySchema,
-  maxAllowedAmount: MoneySchema,
-  exchangeRate: MoneySchema.nullable(),
-  totalPendingAmountInTripCurrency: MoneySchema,
-  amountInTripCurrency: MoneySchema,
+  reportedAmount: DecimalStringSchema,
+  maxAllowedAmount: DecimalStringSchema,
+  exchangeRate: DecimalStringSchema.nullable(),
+  totalPendingAmountInTripCurrency: DecimalStringSchema,
+  amountInTripCurrency: DecimalStringSchema,
   reportedPaymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   quoteRequestedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
   quoteEffectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
   quoteSource: z.string().nullish(),
+  quoteProvider: z.string().nullish(),
   quoteProviderTimestamp: z.string().nullish(),
+  calculationVersion: z.string().nullish(),
   previewToken: z.string().nullish(),
   installments: PaymentBatchInstallmentDTOSchema.array(),
 });
@@ -70,18 +91,20 @@ export type PaymentBatchPreviewDTO = z.infer<typeof PaymentBatchPreviewDTOSchema
 export const PaymentSubmissionDTOSchema = z.object({
   submissionId: z.number(),
   status: PaymentHistoryStatusSchema,
-  reportedAmount: MoneySchema,
-  approvedAmount: MoneySchema,
-  rejectedAmount: MoneySchema,
+  reportedAmount: DecimalStringSchema,
+  approvedAmount: DecimalStringSchema,
+  rejectedAmount: DecimalStringSchema,
   paymentCurrency: CurrencySchema,
-  exchangeRate: MoneySchema.nullable(),
-  amountInTripCurrency: MoneySchema,
-  approvedAmountInTripCurrency: MoneySchema,
+  exchangeRate: DecimalStringSchema.nullable(),
+  amountInTripCurrency: DecimalStringSchema,
+  approvedAmountInTripCurrency: DecimalStringSchema,
   reportedPaymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   quoteRequestedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
   quoteEffectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
   quoteSource: z.string().nullish(),
+  quoteProvider: z.string().nullish(),
   quoteProviderTimestamp: z.string().nullish(),
+  calculationVersion: z.string().nullish(),
   paymentMethod: PaymentMethodSchema,
   fileKey: z.string(),
   adminObservation: z.string().nullable(),
@@ -107,11 +130,17 @@ export const PaymentInstallmentHistoryDTOSchema = z.object({
   submissionId: z.number().nullable(),
   installmentId: z.number(),
   installmentNumber: z.number(),
-  reportedAmount: MoneySchema,
+  reportedAmount: DecimalStringSchema,
   paymentCurrency: CurrencySchema,
-  exchangeRate: MoneySchema.nullable(),
-  amountInTripCurrency: MoneySchema,
+  exchangeRate: DecimalStringSchema.nullable(),
+  amountInTripCurrency: DecimalStringSchema,
   reportedPaymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  quoteRequestedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
+  quoteEffectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
+  quoteSource: z.string().nullish(),
+  quoteProvider: z.string().nullish(),
+  quoteProviderTimestamp: z.string().nullish(),
+  calculationVersion: z.string().nullish(),
   paymentMethod: PaymentMethodSchema,
   status: PaymentHistoryStatusSchema,
   fileKey: z.string(),
@@ -134,8 +163,8 @@ export const UserInstallmentDTOSchema = z.object({
   installmentId: z.number(),
   installmentNumber: z.number(),
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  totalDue: MoneySchema,
-  paidAmount: MoneySchema,
+  totalDue: InstallmentDisplayMoneySchema,
+  paidAmount: InstallmentDisplayMoneySchema,
   yellowWarningDays: z.number().int().nonnegative(),
   tripCurrency: CurrencySchema,
   installmentStatus: z.enum(["GREEN", "YELLOW", "RED", "RETROACTIVE"]),
@@ -150,7 +179,7 @@ export type UserInstallmentDTO = z.infer<typeof UserInstallmentDTOSchema>;
 
 export const RegisterPaymentDTOSchema = z.object({
   anchorInstallmentId: z.number().int().positive(),
-  reportedAmount: MoneySchema.refine((value) => value > 0, "El monto debe ser mayor a cero."),
+  reportedAmount: PositiveDecimalStringSchema,
   reportedPaymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   paymentCurrency: CurrencySchema,
   paymentMethod: PaymentMethodSchema,
@@ -160,7 +189,7 @@ export type RegisterPaymentDTO = z.infer<typeof RegisterPaymentDTOSchema>;
 
 export type RegisterPaymentFormData = {
   anchorInstallmentId: number;
-  reportedAmount: number;
+  reportedAmount: DecimalString;
   reportedPaymentDate: string;
   paymentCurrency: Currency;
   paymentMethod: PaymentMethod;
@@ -171,14 +200,14 @@ export type RegisterPaymentFormData = {
 
 export const PaymentPreviewRequestDTOSchema = z.object({
   anchorInstallmentId: z.number().int().positive(),
-  reportedAmount: MoneySchema.refine((value) => value > 0, "El monto debe ser mayor a cero."),
+  reportedAmount: PositiveDecimalStringSchema,
   reportedPaymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   paymentCurrency: CurrencySchema,
 });
 export type PaymentPreviewRequestDTO = z.infer<typeof PaymentPreviewRequestDTOSchema>;
 
 export const ReviewPaymentDTOSchema = z.object({
-  approvedAmount: MoneySchema.refine((value) => value >= 0, "El monto aprobado no puede ser negativo."),
+  approvedAmount: NonNegativeDecimalStringSchema,
   adminObservation: z.string().optional(),
 });
 export type ReviewPaymentDTO = z.infer<typeof ReviewPaymentDTOSchema>;
@@ -186,11 +215,17 @@ export type ReviewPaymentDTO = z.infer<typeof ReviewPaymentDTOSchema>;
 export const PendingPaymentReviewDTOSchema = z.object({
   submissionId: z.number(),
   status: PaymentHistoryStatusSchema,
-  reportedAmount: MoneySchema,
+  reportedAmount: DecimalStringSchema,
   paymentCurrency: CurrencySchema,
-  exchangeRate: MoneySchema.nullable(),
-  amountInTripCurrency: MoneySchema,
+  exchangeRate: DecimalStringSchema.nullable(),
+  amountInTripCurrency: DecimalStringSchema,
   reportedPaymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  quoteRequestedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
+  quoteEffectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
+  quoteSource: z.string().nullish(),
+  quoteProvider: z.string().nullish(),
+  quoteProviderTimestamp: z.string().nullish(),
+  calculationVersion: z.string().nullish(),
   paymentMethod: PaymentMethodSchema,
   fileKey: z.string(),
   bankAccountId: z.number().nullable(),
@@ -208,3 +243,59 @@ export const PendingPaymentReviewDTOSchema = z.object({
   allocations: PaymentBatchInstallmentDTOSchema.array(),
 });
 export type PendingPaymentReviewDTO = z.infer<typeof PendingPaymentReviewDTOSchema>;
+
+export const PaymentCalculationIntentSchema = z.enum(["REMAINING", "MANUAL"]);
+export type PaymentCalculationIntent = z.infer<typeof PaymentCalculationIntentSchema>;
+
+export const PaymentCalculationStatusSchema = z.enum([
+  "READY",
+  "AMOUNT_EXCEEDS_BALANCE",
+  "UNPAYABLE",
+  "QUOTE_UNAVAILABLE",
+  "EXPIRED",
+]);
+export type PaymentCalculationStatus = z.infer<typeof PaymentCalculationStatusSchema>;
+
+const PaymentCalculationRequestBaseSchema = z.object({
+  anchorInstallmentId: z.number().int().positive(),
+  paymentCurrency: CurrencySchema,
+  reportedPaymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  previewToken: z.string().nullish(),
+});
+
+export const PaymentCalculationRequestDTOSchema = z.discriminatedUnion("intent", [
+  PaymentCalculationRequestBaseSchema.extend({
+    intent: z.literal("REMAINING"),
+    reportedAmount: z.undefined().optional(),
+  }),
+  PaymentCalculationRequestBaseSchema.extend({
+    intent: z.literal("MANUAL"),
+    reportedAmount: PositiveDecimalStringSchema,
+  }),
+]);
+export type PaymentCalculationRequestDTO = z.infer<typeof PaymentCalculationRequestDTOSchema>;
+
+export const PaymentCalculationResponseDTOSchema = z.object({
+  status: PaymentCalculationStatusSchema,
+  intent: PaymentCalculationIntentSchema,
+  anchorInstallmentId: z.number().int().positive(),
+  tripCurrency: CurrencySchema,
+  paymentCurrency: CurrencySchema,
+  reportedAmount: DecimalStringSchema.nullable(),
+  amountInTripCurrency: DecimalStringSchema.nullable(),
+  remainingAmount: DecimalStringSchema,
+  maxAllowedAmount: DecimalStringSchema.nullable(),
+  tripCurrencyResidual: DecimalStringSchema.nullable(),
+  exchangeRate: DecimalStringSchema.nullable(),
+  reportedPaymentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  quoteRequestedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
+  quoteEffectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
+  quoteSource: z.string().nullish(),
+  quoteProvider: z.string().nullish(),
+  quoteProviderTimestamp: z.string().nullish(),
+  calculationVersion: z.string().nullish(),
+  previewToken: z.string().nullish(),
+  installments: PaymentBatchInstallmentDTOSchema.array(),
+  message: z.string().nullish(),
+});
+export type PaymentCalculationResponseDTO = z.infer<typeof PaymentCalculationResponseDTOSchema>;

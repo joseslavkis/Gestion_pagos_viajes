@@ -226,6 +226,34 @@ class ExchangeRateServiceTest {
         assertTrue(ex.getMessage().toLowerCase().contains("cotización"));
     }
 
+    @Test
+    void preservesThreeDecimalProviderRateWithoutRounding() {
+        LocalDate requested = today.minusDays(3);
+        server.expect(requestTo("https://api.argentinadatos.com/v1/cotizaciones/dolares/oficial/"
+                + requested.format(java.time.format.DateTimeFormatter.ofPattern("yyyy/MM/dd"))))
+                .andRespond(withSuccess("{\"venta\":1234.567,\"fecha\":\"2026-06-05\"}", MediaType.APPLICATION_JSON));
+
+        ExchangeRateQuote quote = service.getOfficialQuoteForDate(requested);
+
+        assertEquals(new BigDecimal("1234.567"), quote.sellRate());
+        assertEquals(3, quote.sellRate().scale());
+    }
+
+    @Test
+    void rejectsProviderRateWhoseLexicalScaleExceedsEightDigits() {
+        LocalDate requested = today.minusDays(3);
+        server.expect(requestTo("https://api.argentinadatos.com/v1/cotizaciones/dolares/oficial/"
+                + requested.format(java.time.format.DateTimeFormatter.ofPattern("yyyy/MM/dd"))))
+                .andRespond(withSuccess("{\"venta\":\"1234.123456789\",\"fecha\":\"2026-06-05\"}", MediaType.APPLICATION_JSON));
+
+        IllegalStateException error = assertThrows(
+                IllegalStateException.class,
+                () -> service.getOfficialQuoteForDate(requested)
+        );
+
+        assertTrue(error.getMessage().toLowerCase().contains("contrato"));
+    }
+
     private static LocalDate previousExpectedCandidate(LocalDate date) {
         LocalDate candidate = date.minusDays(1);
         if (candidate.getDayOfWeek() == java.time.DayOfWeek.SATURDAY) {

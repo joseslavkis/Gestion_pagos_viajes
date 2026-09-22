@@ -11,7 +11,9 @@ import com.agencia.pagos.user.dto.TokenDTO;
 import com.agencia.pagos.shared.money.Currency;
 import com.agencia.pagos.trip.Installment;
 import com.agencia.pagos.trip.InstallmentStatus;
+import com.agencia.pagos.payment.BankAccount;
 import com.agencia.pagos.payment.PaymentAllocation;
+import com.agencia.pagos.payment.PaymentSubmissionRepository;
 import com.agencia.pagos.payment.PaymentMethod;
 import com.agencia.pagos.payment.PaymentOutcome;
 import com.agencia.pagos.payment.PaymentOutcomeStatus;
@@ -38,6 +40,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -46,6 +49,7 @@ import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -61,7 +65,10 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.nullable;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.inOrder;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -91,8 +98,118 @@ class ConcurrentFinancialIntegrityIntegrationTest extends ControllerIntegrationT
     @SpyBean
     private PaymentService paymentServiceSpy;
 
+    @SpyBean
+    private TripRepository tripRepositorySpy;
+
+    @SpyBean
+    private InstallmentRepository installmentRepositorySpy;
+
+    @SpyBean
+    private PaymentSubmissionRepository paymentSubmissionRepositorySpy;
+
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Test
+    void registration_preservesTripThenScopedInstallmentsLockOrderAgainstUnassign() {
+        RegistrationFixture fixture = createRegistrationFixture();
+        org.mockito.Mockito.when(paymentAttachmentStorageService.storeReceipt(
+                        nullable(MultipartFile.class), any(Long.class), any(Long.class), any()))
+                .thenReturn("lock-order-registration.png");
+        clearInvocations(tripRepositorySpy, installmentRepositorySpy, paymentSubmissionRepositorySpy);
+
+        paymentServiceSpy.registerPayment(
+                fixture.installment().getId(),
+                new BigDecimal("50.00"),
+                LocalDate.now(),
+                Currency.ARS,
+                PaymentMethod.BANK_TRANSFER,
+                fixture.bankAccount().getId(),
+                null,
+                null,
+                fixture.user().getEmail());
+
+        org.mockito.InOrder lockOrder = inOrder(
+                tripRepositorySpy, installmentRepositorySpy, paymentSubmissionRepositorySpy);
+        lockOrder.verify(tripRepositorySpy).findByIdForUpdate(fixture.trip().getId());
+        lockOrder.verify(installmentRepositorySpy).findByTripIdAndUserIdAndStudentIdForUpdate(
+                fixture.trip().getId(), fixture.user().getId(), fixture.student().getId());
+        lockOrder.verify(paymentSubmissionRepositorySpy).save(any(PaymentSubmission.class));
+    }
+
+    @Test
+    void review_preservesSubmissionThenScopedInstallmentsLockOrder() {
+        PaymentFixture fixture = createPaymentFixture(false);
+        PaymentSubmission submission = fixture.submission();
+        clearInvocations(paymentSubmissionRepositorySpy, installmentRepositorySpy);
+
+        paymentServiceSpy.reviewPayment(
+                submission.getId(),
+                new ReviewPaymentDTO(new BigDecimal("100.00"), null),
+                "admin@test.com");
+
+        org.mockito.InOrder lockOrder = inOrder(paymentSubmissionRepositorySpy, installmentRepositorySpy);
+        lockOrder.verify(paymentSubmissionRepositorySpy).findByIdForUpdate(submission.getId());
+        lockOrder.verify(installmentRepositorySpy).findByTripIdAndUserIdAndStudentIdForUpdate(
+                submission.getTrip().getId(),
+                submission.getUser().getId(),
+                submission.getStudent().getId());
+    }
+
+    @Test
+    void void_preservesSubmissionThenScopedInstallmentsLockOrder() {
+        PaymentFixture fixture = createPaymentFixture(true);
+        PaymentSubmission submission = fixture.submission();
+        clearInvocations(paymentSubmissionRepositorySpy, installmentRepositorySpy);
+
+        paymentServiceSpy.voidPayment(submission.getId(), "admin@test.com");
+
+        org.mockito.InOrder lockOrder = inOrder(paymentSubmissionRepositorySpy, installmentRepositorySpy);
+        lockOrder.verify(paymentSubmissionRepositorySpy).findByIdForUpdate(submission.getId());
+        lockOrder.verify(installmentRepositorySpy).findByTripIdAndUserIdAndStudentIdForUpdate(
+                submission.getTrip().getId(),
+                submission.getUser().getId(),
+                submission.getStudent().getId());
+    }
+
+    @Test
+    void crossCurrencyConcurrentReview_conservesAmountsAndOnlyApprovesOnce() throws Exception {
+        PaymentFixture fixture = createCrossCurrencyPaymentFixture(false);
+
+        ConcurrentOperationResult result = runConcurrently(() -> paymentServiceSpy.reviewPayment(
+                fixture.submission().getId(),
+                new ReviewPaymentDTO(new BigDecimal("1.00"), null),
+                "admin@test.com"
+        ));
+
+        assertEquals(1, result.successes());
+        assertEquals(1, result.failures().size());
+        assertInstanceOf(IllegalStateException.class, result.failures().getFirst());
+        assertEquals(new BigDecimal("100.00"), installmentRepository.findById(
+                fixture.submission().getAnchorInstallment().getId()).orElseThrow().getPaidAmount());
+        assertEquals(new BigDecimal("1.00"), allocationSum(fixture.submission().getId(), "reported_amount"));
+        assertEquals(new BigDecimal("100.00"), allocationSum(
+                fixture.submission().getId(), "amount_in_trip_currency"));
+    }
+
+    @Test
+    void crossCurrencyConcurrentVoid_reversesPersistedAllocationAndOnlyVoidsOnce() throws Exception {
+        PaymentFixture fixture = createCrossCurrencyPaymentFixture(true);
+
+        ConcurrentOperationResult result = runConcurrently(() -> paymentServiceSpy.voidPayment(
+                fixture.submission().getId(), "admin@test.com"));
+
+        assertEquals(1, result.successes());
+        assertEquals(1, result.failures().size());
+        assertInstanceOf(IllegalStateException.class, result.failures().getFirst());
+        assertEquals(new BigDecimal("0.00"), installmentRepository.findById(
+                fixture.submission().getAnchorInstallment().getId()).orElseThrow().getPaidAmount());
+        assertEquals(1, jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM payment_outcomes WHERE submission_id = ? AND status = 'VOIDED'",
+                Integer.class,
+                fixture.submission().getId()
+        ));
+    }
 
     @Test
     void claimPendingStudent_serializesConcurrentPendingRegistrationForSameDni() throws Exception {
@@ -476,6 +593,52 @@ class ConcurrentFinancialIntegrityIntegrationTest extends ControllerIntegrationT
         }
     }
 
+    private RegistrationFixture createRegistrationFixture() {
+        User user = new User("Registration", "secret", uniqueEmail("payment-registration-order"), "User", Role.USER);
+        user.setDni(uniqueDni());
+        user = userRepository.save(user);
+
+        Student student = Student.builder()
+                .parent(user)
+                .name("Registration")
+                .lastname("Student")
+                .dni(uniqueDni())
+                .build();
+        student = studentRepository.save(student);
+
+        Trip trip = createTrip("payment-registration-order-trip");
+        trip.getAssignedUsers().add(user);
+        trip = tripRepository.save(trip);
+
+        Installment installment = new Installment();
+        installment.setTrip(trip);
+        installment.setUser(user);
+        installment.setStudent(student);
+        installment.setInstallmentNumber(1);
+        installment.setDueDate(LocalDate.now().plusMonths(1));
+        installment.setCapitalAmount(new BigDecimal("100.00"));
+        installment.setRetroactiveAmount(BigDecimal.ZERO);
+        installment.setPaidAmount(BigDecimal.ZERO);
+        installment.setStatus(InstallmentStatus.YELLOW);
+        installment.recalculateTotalDue();
+        installment = installmentRepository.save(installment);
+
+        BankAccount bankAccount = bankAccountRepository.save(BankAccount.builder()
+                .bankName("Lock Order Bank")
+                .accountLabel("ARS account")
+                .accountHolder("Payment Tests")
+                .accountNumber("LOCK-ORDER-001")
+                .taxId("30-00000000-0")
+                .cbu("0000000000000000000001")
+                .alias("LOCK.ORDER.ARS")
+                .currency(Currency.ARS)
+                .active(true)
+                .displayOrder(1)
+                .build());
+
+        return new RegistrationFixture(user, student, trip, installment, bankAccount);
+    }
+
     private PaymentFixture createPaymentFixture(boolean approved) {
         User user = new User("Payment", "secret", uniqueEmail("payment-race"), "User", Role.USER);
         user.setDni(uniqueDni());
@@ -547,6 +710,74 @@ class ConcurrentFinancialIntegrityIntegrationTest extends ControllerIntegrationT
         return new PaymentFixture(trip, submission, outcome);
     }
 
+    private PaymentFixture createCrossCurrencyPaymentFixture(boolean approved) {
+        PaymentFixture fixture = createPaymentFixture(approved);
+        PaymentSubmission submission = fixture.submission();
+        submission.setReportedAmount(new BigDecimal("1.00"));
+        submission.setPaymentCurrency(Currency.USD);
+        submission.setExchangeRate(new BigDecimal("100.00"));
+        submission.setExchangeRateScale(2);
+        submission.setAmountInTripCurrency(new BigDecimal("100.00"));
+        submission.setExchangeRateRequestedDate(LocalDate.now());
+        submission.setExchangeRateEffectiveDate(LocalDate.now());
+        submission.setExchangeRateSource("payment-concurrency-test");
+        submission.setExchangeRateProvider("deterministic-local-provider");
+        submission.setExchangeRateProviderTimestamp(LocalDate.now() + "T12:00:00Z");
+        submission.setCalculationVersion("2");
+        paymentSubmissionRepository.save(submission);
+
+        if (fixture.outcome() != null) {
+            fixture.outcome().setReportedAmount(new BigDecimal("1.00"));
+            paymentOutcomeRepository.save(fixture.outcome());
+            fixture.outcome().getAllocations().forEach(allocation -> {
+                allocation.setReportedAmount(new BigDecimal("1.00"));
+                paymentAllocationRepository.save(allocation);
+            });
+        }
+        return fixture;
+    }
+
+    private ConcurrentOperationResult runConcurrently(Callable<?> operation) throws Exception {
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Callable<Throwable> worker = () -> {
+                ready.countDown();
+                await(start, "concurrent payment start");
+                try {
+                    operation.call();
+                    return null;
+                } catch (Throwable failure) {
+                    return failure;
+                }
+            };
+            Future<Throwable> first = executor.submit(worker);
+            Future<Throwable> second = executor.submit(worker);
+            assertTrue(ready.await(10, TimeUnit.SECONDS));
+            start.countDown();
+
+            List<Throwable> failures = java.util.stream.Stream.of(
+                            first.get(15, TimeUnit.SECONDS),
+                            second.get(15, TimeUnit.SECONDS))
+                    .filter(java.util.Objects::nonNull)
+                    .toList();
+            return new ConcurrentOperationResult(2 - failures.size(), failures);
+        } finally {
+            start.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    private BigDecimal allocationSum(Long submissionId, String column) {
+        return jdbcTemplate.queryForObject("""
+                SELECT COALESCE(SUM(pa.%s), 0)
+                FROM payment_allocations pa
+                JOIN payment_outcomes po ON po.id = pa.outcome_id
+                WHERE po.submission_id = ? AND po.status = 'APPROVED'
+                """.formatted(column), BigDecimal.class, submissionId);
+    }
+
     private static void await(CountDownLatch latch, String name) {
         try {
             if (!latch.await(15, TimeUnit.SECONDS)) {
@@ -559,5 +790,17 @@ class ConcurrentFinancialIntegrityIntegrationTest extends ControllerIntegrationT
     }
 
     private record PaymentFixture(Trip trip, PaymentSubmission submission, PaymentOutcome outcome) {
+    }
+
+    private record ConcurrentOperationResult(int successes, List<Throwable> failures) {
+    }
+
+    private record RegistrationFixture(
+            User user,
+            Student student,
+            Trip trip,
+            Installment installment,
+            BankAccount bankAccount
+    ) {
     }
 }

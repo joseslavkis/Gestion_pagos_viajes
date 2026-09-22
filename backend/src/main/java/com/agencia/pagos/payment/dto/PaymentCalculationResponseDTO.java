@@ -7,15 +7,18 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
-public record PaymentBatchPreviewDTO(
+public record PaymentCalculationResponseDTO(
+        PaymentCalculationStatus status,
+        PaymentCalculationIntent intent,
         Long anchorInstallmentId,
         Currency tripCurrency,
         Currency paymentCurrency,
         @JsonSerialize(using = CanonicalDecimalSerializer.class) BigDecimal reportedAmount,
-        @JsonSerialize(using = CanonicalDecimalSerializer.class) BigDecimal maxAllowedAmount,
-        @JsonSerialize(using = CanonicalDecimalSerializer.class) BigDecimal exchangeRate,
-        @JsonSerialize(using = CanonicalDecimalSerializer.class) BigDecimal totalPendingAmountInTripCurrency,
         @JsonSerialize(using = CanonicalDecimalSerializer.class) BigDecimal amountInTripCurrency,
+        @JsonSerialize(using = CanonicalDecimalSerializer.class) BigDecimal remainingAmount,
+        @JsonSerialize(using = CanonicalDecimalSerializer.class) BigDecimal maxAllowedAmount,
+        @JsonSerialize(using = CanonicalDecimalSerializer.class) BigDecimal tripCurrencyResidual,
+        @JsonSerialize(using = CanonicalDecimalSerializer.class) BigDecimal exchangeRate,
         LocalDate reportedPaymentDate,
         LocalDate quoteRequestedDate,
         LocalDate quoteEffectiveDate,
@@ -24,6 +27,7 @@ public record PaymentBatchPreviewDTO(
         String quoteProviderTimestamp,
         String calculationVersion,
         String previewToken,
-        List<PaymentBatchInstallmentDTO> installments
+        List<PaymentBatchInstallmentDTO> installments,
+        String message
 ) {
 }

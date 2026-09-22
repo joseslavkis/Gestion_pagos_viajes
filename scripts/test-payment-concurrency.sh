@@ -4,22 +4,18 @@
 # test for the payment-locking fix.
 #
 # Behavior:
-#   * Forcibly resets every isolation-critical variable inside the script
+#   * Generates test-only credentials and resets every isolation-critical variable inside the script
 #     (storage path, bind hosts, published ports, Compose project name) so
 #     the caller's environment cannot redirect the run to dev/VPS storage
 #     or to a public interface.
-#   * Avoids host-port races by publishing backend/frontend/adminer/db on
-#     127.0.0.1:0 (Docker assigns a free port). The backend endpoint is
+#   * Avoids host-port races by publishing the backend on 127.0.0.1:0
+#     (Docker assigns a free port). The backend endpoint is
 #     discovered through `docker compose port backend 8080`; the result is
 #     parsed defensively for macOS ([::]:PORT) and Ubuntu (0.0.0.0:PORT
 #     / 127.0.0.1:PORT) output formats.
-#   * PostgreSQL storage is a project-scoped Docker-managed named volume
-#     declared by an ephemeral Compose override (NO `!override` / `!reset`
-#     custom tags). The override replaces the db service's bind mount at
-#     the SAME container target so the runtime never touches a host bind
-#     path (Linux postgres-owned 0700 directories cannot be cleaned up by
-#     the host process). The named volume is project-prefixed by Compose
-#     and removed automatically by `docker compose down --volumes`.
+#   * PostgreSQL storage is a project-scoped Docker-managed named volume in an
+#     ephemeral test-only Compose file. The runtime never reads the repository
+#     .env or root Compose file and never touches a host database path.
 #   * DB readiness is checked via `docker compose exec db pg_isready`, NOT
 #     via a host-side port (no Postgres connect to the host needed).
 #   * Removes only the built ${PROJECT}-backend image on exit; never prunes
@@ -68,19 +64,41 @@ BACKEND_EXTERNAL_PORT="0"
 FRONTEND_EXTERNAL_PORT="0"
 ADMINER_EXTERNAL_PORT="0"
 
-# EPHEMERAL Compose override: replaces the db service's bind mount at
-# /var/lib/postgresql/data with a project-scoped Docker-managed named volume.
-# Storage path & volume name are NOT caller-controlled: the override is
-# static YAML written by this script and never references VOLUME_DIR.
+# EPHEMERAL test-only Compose file. Storage path & volume name are NOT
+# caller-controlled and no production/development service is targeted.
 # The volume short name is hardcoded; Compose prepends "${PROJECT}_" so
 # the realized full name is e.g.
 #   payment-concurrency-e2e-foo-pid1234_payment-concurrency-pgdata
 # `docker compose down --volumes` removes it automatically.
-cat >"$COMPOSE_OVERRIDE_FILE" <<'OVERRIDE'
+cat >"$COMPOSE_OVERRIDE_FILE" <<OVERRIDE
 services:
   db:
+    image: "postgres:17.4"
+    environment:
+      POSTGRES_DB: "payment_concurrency"
+      POSTGRES_USER: "payment_concurrency"
+      POSTGRES_PASSWORD: "payment-concurrency-only"
     volumes:
       - "payment-concurrency-pgdata:/var/lib/postgresql/data"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payment_concurrency -d payment_concurrency"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  backend:
+    build: "$ROOT_DIR/backend"
+    env_file:
+      - "$ENV_FILE"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://db:5432/payment_concurrency"
+      SPRING_DATASOURCE_USERNAME: "payment_concurrency"
+      SPRING_DATASOURCE_PASSWORD: "payment-concurrency-only"
+      SPRING_PROFILES_ACTIVE: "local"
+    ports:
+      - "127.0.0.1::8080"
 volumes:
   payment-concurrency-pgdata:
 OVERRIDE
@@ -106,24 +124,19 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ ! -f "$ROOT_DIR/.env" ]]; then
-  printf 'Missing %s/.env; copy .env.example and configure local credentials first.\n' "$ROOT_DIR" >&2
-  exit 1
-fi
-
-cp "$ROOT_DIR/.env" "$ENV_FILE"
-# Ensure the heredoc below starts on a fresh line even if $ROOT_DIR/.env has
-# no trailing newline, so we never silently merge a key with the last .env
-# value above the heredoc.
-if [[ -s "$ENV_FILE" && "$(tail -c 1 "$ENV_FILE" | wc -l)" -eq 0 ]]; then
-  printf '\n' >>"$ENV_FILE"
-fi
 # Note: VOLUME_DIR is intentionally NOT written here. The base compose file
 # references ${VOLUME_DIR}/data/postgres for production / VPS use; the E2E
 # override above REPLACES that volume entirely with a project-scoped named
 # volume, so a caller-provided VOLUME_DIR is irrelevant and cannot redirect
 # storage.
 {
+  printf 'DB_NAME=payment_concurrency\n'
+  printf 'DB_USERNAME=payment_concurrency\n'
+  printf 'DB_PASSWORD=payment-concurrency-only\n'
+  printf 'VOLUME_DIR=%s/unused\n' "$TMP_DIR"
+  printf 'JWT_ACCESS_SECRET=dGVzdC1zZWNyZXQtcGFyYS1jaS1vbmx5LXF1ZS1zZWEtbG8tc3VmaWNpZW50ZW1lbnRlLWxhcmdvLXBhcmEtaG1hYw==\n'
+  printf 'DEFAULT_ADMIN_EMAIL=payment-concurrency-admin@example.com\n'
+  printf 'DEFAULT_ADMIN_PASSWORD=Payment-Concurrency-Admin-2026!\n'
   printf 'DB_EXTERNAL_PORT=%s\n' "$DB_EXTERNAL_PORT"
   printf 'BACKEND_EXTERNAL_PORT=%s\n' "$BACKEND_EXTERNAL_PORT"
   printf 'FRONTEND_EXTERNAL_PORT=%s\n' "$FRONTEND_EXTERNAL_PORT"
@@ -131,6 +144,8 @@ fi
   printf 'BACKEND_BIND_HOST=%s\n' "$BACKEND_BIND_HOST"
   printf 'FRONTEND_BIND_HOST=%s\n' "$FRONTEND_BIND_HOST"
   printf 'INSTALLMENT_NOTIFICATIONS_ENABLED=false\n'
+  printf 'INSTALLMENT_NOTIFICATIONS_CRON=0 0 9 * * *\n'
+  printf 'INSTALLMENT_NOTIFICATIONS_ZONE=America/Argentina/Buenos_Aires\n'
   printf 'RECEIPTS_CLEANUP_ENABLED=false\n'
   printf 'SMTP_HOST=\n'
   printf 'SMTP_PORT=587\n'
@@ -143,11 +158,16 @@ fi
   printf 'SMTP_KEY=\n'
   printf 'QUERY_MAIL=\n'
   printf 'APP_MAIL_TO=\n'
+  printf 'BREVO_FROM_NAME=Payment Concurrency Test\n'
+  printf 'FRONTEND_URL=http://127.0.0.1\n'
+  printf 'BACKEND_EXTERNAL_URL=http://127.0.0.1\n'
+  printf 'CORS_ALLOWED_ORIGINS=http://127.0.0.1\n'
+  printf 'RECEIPTS_STORAGE_PROVIDER=inline\n'
 } >>"$ENV_FILE"
 chmod 600 "$ENV_FILE"
 
 COMPOSE=(docker compose --project-name "$PROJECT" --env-file "$ENV_FILE" \
-  --file "$ROOT_DIR/docker-compose.yml" --file "$COMPOSE_OVERRIDE_FILE")
+  --file "$COMPOSE_OVERRIDE_FILE")
 
 # Discover the assigned host port for the backend. Docker Compose's `port`
 # command prints formats that vary by host: `127.0.0.1:32768` (Ubuntu /
@@ -425,3 +445,14 @@ reversal="$(printf '%s' "$paid_json" | jq -er --argjson installment "$installmen
 reversal_is_expected="$(jq -nr --arg value "$reversal" '$value | tonumber == 0')"
 [[ "$void_success" == 1 && "$void_conflict" == 1 && "$reversal_is_expected" == true ]] || { printf 'VOID failed: success=%s conflict=%s paid=%s\n' "$void_success" "$void_conflict" "$reversal"; exit 1; }
 printf 'VOID: exactly one success and one already-voided conflict; paid=%s (reversed once)\n' "$reversal"
+
+printf 'Stopping isolated Compose stack before Testcontainers cross-currency checks...\n'
+"${COMPOSE[@]}" down --volumes --remove-orphans >/dev/null
+docker image rm "${PROJECT}-backend:latest" >/dev/null 2>&1 || true
+COMPOSE=()
+
+printf 'Running cross-currency concurrent review/void checks against disposable PostgreSQL...\n'
+(
+  cd "$ROOT_DIR/backend"
+  ./mvnw -Dtest='ConcurrentFinancialIntegrityIntegrationTest#crossCurrencyConcurrentReview_conservesAmountsAndOnlyApprovesOnce+crossCurrencyConcurrentVoid_reversesPersistedAllocationAndOnlyVoidsOnce' test
+)
