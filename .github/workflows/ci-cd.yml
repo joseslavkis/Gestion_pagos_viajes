@@ -64,7 +64,6 @@ jobs:
         working-directory: frontend
         run: |
           npm ci
-          npm install --no-save --package-lock=false @playwright/test@1.63.0
           npx playwright install --with-deps chromium
       - name: Verify payment invariants
         run: ./scripts/test-payment-money-invariants.sh
