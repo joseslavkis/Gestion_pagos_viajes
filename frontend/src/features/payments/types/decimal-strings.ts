@@ -12,6 +12,14 @@ export function normalizePaymentDecimalInput(value: string): DecimalString | nul
   return result.data;
 }
 
+export function normalizePaymentMoneyInput(value: string): DecimalString | null {
+  const normalized = normalizePaymentDecimalInput(value);
+  if (normalized == null || (normalized.split(".")[1]?.length ?? 0) > 2) {
+    return null;
+  }
+  return normalized;
+}
+
 export function compareNonNegativeDecimalStrings(
   left: DecimalString,
   right: DecimalString,

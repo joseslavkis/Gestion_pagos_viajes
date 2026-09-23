@@ -12,13 +12,13 @@ Close the verified payment-money correctness and rollout gaps on PR #47 while pr
 | Review candidate | PR #47; head `efbbe1c746f2e3162600f0cf11e7ec9a1c08fa17` (verified in task authorization) |
 | Base | `main@cb3d8f4ec8d51e460c548154e35bd51efb4ceb7b` |
 | Tracking issue | #46, approved and linked to PR #47 |
-| Delivery boundary | Keep the existing PR branch and single PR. Local work-unit commits are authorized for implementation; push to the existing PR is intended after the work, not during this document-only edit. |
+| Delivery boundary | Keep the existing PR branch and single PR. Local work-unit commits are authorized for implementation; do not push in this task. |
 
-**Current phase authorization:** refine this ODD task document only. Do not edit application code, tests, migrations, deployment files, or other documentation in this phase. Do not run tests or SQL, create commits, push, or perform remote writes. After this document is accepted, the implementation scope and local work-unit commits below are authorized on the existing branch; any later push is limited to the existing PR #47.
+**Implementation status:** delegated direct implementation is underway on the existing branch, with local work-unit commits authorized. Do not push or perform production operations.
 
 ## Task-document persistence
 
-The local task file is canonical. The prior Engram mirror write was rejected twice because multiple active project sessions made the target ambiguous; no session ID will be invented. The mirror remains pending and should be resynchronized when Engram has a unique active session. No Engram write is part of this document-only task.
+The local task file is canonical. Prior Engram mirror writes and the latest resume attempt were rejected because multiple active project sessions made the target ambiguous; no session ID will be invented. The mirror remains pending and should be resynchronized when Engram has a unique active session.
 
 ## Problem and why
 
@@ -43,8 +43,8 @@ Do not broaden this scope into new payment products or unrelated cleanup. Keep A
 - Do not add over-approval, overpayment, credit, or “saldo a favor” capabilities. A rounded amount that exceeds the balance must be rejected or capped to a safe payable suggestion, not credited.
 - Do not rewrite, revalue, or recalculate approved historical financial records. Any schema change must be additive and preserve existing values.
 - No production access, live-database access, production SQL execution, secrets, or real FX dependencies. Migration verification may use only disposable test infrastructure in the later implementation; this document-authoring phase executes no SQL.
-- Preserve the existing untracked root `AGENTS.md` and `openspec/` contents byte-for-byte. Do not create or update SDD artifacts.
-- In this phase, the only permitted edit is `odd/tasks/pr47-payment-money-remediation.md`.
+- Preserve root `AGENTS.md` and `openspec/` byte-for-byte. Local commit `7519c991084463462201d17de5b6a52b955e8fe8` (`add agents.md`) was present when implementation resumed; this writer did not create or modify it. `openspec/` remains untracked. Do not create or update SDD artifacts.
+- During initial task-document refinement, the only permitted edit was this file; implementation is now authorized only within PMR-01 through PMR-04.
 - Preserve the repository's exact-SHA deployment, stale-deploy protection, serialization, CI prerequisites, and lock/concurrency safeguards. Do not deploy or weaken any existing gate.
 
 ## Resolved TDD mode and applicable checks
@@ -73,7 +73,7 @@ Applicable additional checks during implementation:
 - Run the existing payment concurrency harness if payment locking/concurrency paths change; keep it isolated and never point it at production.
 - Verify migration behavior only against disposable PostgreSQL/Testcontainers infrastructure. Do not connect to a live database or execute SQL in this document-authoring phase.
 - Validate Compose with `docker compose config` only if Compose configuration changes.
-- Record exact commands and results; do not claim a check passed unless it was run. No tests or checks are run as part of creating this task document.
+- Record exact commands and results; do not claim a check passed unless it was run. The initial task-document authoring phase ran no tests; implementation evidence is recorded per work unit.
 
 ## Work units
 
@@ -87,7 +87,7 @@ All work-unit statuses begin **pending**. Each unit follows strict TDD, includes
 
 ### PMR-01 — Enforce backend payment amount rules
 
-**Status:** implemented; focused verification passed; work-unit commit pending
+**Status:** implemented and committed; parent verification pending
 
 **Intent:** make payment suggestions and submissions safe at monetary rounding boundaries and reject invalid conversions before persistence.
 
@@ -109,13 +109,13 @@ All work-unit statuses begin **pending**. Each unit follows strict TDD, includes
 
 **Verification evidence:** record the actual risk tier and writer profile, the parent's post-completion risk assessment and one spot-check result, and any independent verifier required by the tier rule above. If no separate verifier is required, record `N/A` with the tier/profile reason. Do not launch receipt-based reviews or native lenses while RDD is `off`.
 
-**Progress:** implementation verified. RED `./mvnw -Dtest=PaymentMoneyPolicyTest test`: 9 tests, 1 failure as expected (`1E+3` retained scale -3 instead of canonical scale 0). Integration RED `./mvnw -Dtest=PaymentMoneyPolicyTest,PaymentRestControllerFreeAmountTest test`: 33 tests, 4 expected failures for same/cross-currency future dates, sub-cent approval, and anchor-vs-total REMAINING. GREEN/refactor rerun `./mvnw -Dtest=PaymentMoneyPolicyTest,PaymentAllocationPlannerTest,PaymentPreviewTokenServiceTest,PaymentBusinessDatePolicyTest,PaymentRestControllerFreeAmountTest,PaymentRestControllerTest,PaymentSubmissionSnapshotContractTest test`: 75 tests, 0 failures/errors/skips. Route evidence recorded; parent risk assessment and spot check remain pending; conditional independent verifier depends on the parent's tier assessment.
+**Progress:** implementation committed as `efcfa467fbe5d340ec7f2bac27a62d40a6313bc6`. RED `./mvnw -Dtest=PaymentMoneyPolicyTest test`: 9 tests, 1 failure as expected (`1E+3` retained scale -3 instead of canonical scale 0). Integration RED `./mvnw -Dtest=PaymentMoneyPolicyTest,PaymentRestControllerFreeAmountTest test`: 33 tests, 4 expected failures for same/cross-currency future dates, sub-cent approval, and anchor-vs-total REMAINING. GREEN/refactor rerun `./mvnw -Dtest=PaymentMoneyPolicyTest,PaymentAllocationPlannerTest,PaymentPreviewTokenServiceTest,PaymentBusinessDatePolicyTest,PaymentRestControllerFreeAmountTest,PaymentRestControllerTest,PaymentSubmissionSnapshotContractTest test`: 75 tests, 0 failures/errors/skips. CASE G keeps the 10.16 ARS suggested amount separate from its 15.23 ARS safe maximum. Parent risk assessment and spot check remain pending; conditional independent verifier depends on the parent's tier assessment.
 
 **Conventional Commit placeholder:** `fix(payment): enforce safe monetary limits and rate identity`
 
 ### PMR-02 — Preserve frontend approval and payment input state
 
-**Status:** pending
+**Status:** implementation and focused verification complete; work-unit commit pending
 
 **Intent:** make approval and amount-entry state explicit so malformed edits cannot approve more than intended and selected-installment context is not replaced by broader debt.
 
@@ -135,7 +135,9 @@ All work-unit statuses begin **pending**. Each unit follows strict TDD, includes
 
 **Verification evidence:** record the actual risk tier and writer profile, the parent's post-completion risk assessment and one spot-check result, and any independent verifier required by the tier rule above. If no separate verifier is required, record `N/A` with the tier/profile reason. Do not launch receipt-based reviews or native lenses while RDD is `off`.
 
-**Progress:** pending; RED `[pending]`; GREEN `[pending]`; refactor rerun `[pending]`; route evidence `[pending]`; parent risk assessment `[pending]`; parent spot check `[pending]`; conditional independent verifier `[pending risk assessment]`.
+**Progress:** implementation verified locally; PMR-02 work-unit commit pending. RED `NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/features/payments/pages/__tests__/PendingReviewPage.test.tsx`: 5 tests, 2 failures because Save remained enabled for invalid and over-reported values; GREEN rerun: 5 passed. RED `NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/features/users/pages/__tests__/UserDashboardPage.test.tsx -t "seeds REMAINING input"`: 1 failure (input showed 200 instead of server balance 199.99); GREEN rerun after canonical remaining wiring: 1 passed. Backend endpoint RED `./mvnw -Dtest=PaymentRestControllerFreeAmountTest#myInstallments_returnsCanonicalServerComputedRemainingBalance test`: 1 missing-field failure; after local Docker Desktop was started, GREEN rerun: 1 passed. DTO naming RED `./mvnw -Dtest=PaymentCalculationResponseDTOTest test`: 1 expected failure because JSON exposed `remainingAmount`; GREEN `./mvnw -Dtest=PaymentCalculationResponseDTOTest,PaymentUserInstallmentDTOTest test`: 2 passed. Manual input RED `NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/features/users/pages/__tests__/UserDashboardPage.test.tsx -t "does not create an enabled calculation query for a sub-cent manual amount"`: 1 failure because the query cache contained an enabled `MANUAL` query for `1.005`; GREEN rerun after cent-strict payload normalization: 1 passed. Latest focused frontend run over `PendingReviewPage.test.tsx`, `UserDashboardPage.test.tsx`, `payments-service.test.tsx`, and `payments-dtos.test.ts`: 4 files, 31 tests passed. Latest focused backend run `./mvnw -Dtest=PaymentRestControllerFreeAmountTest,PaymentCalculationResponseDTOTest,PaymentUserInstallmentDTOTest test`: 29 tests passed. An earlier API test attempt failed to load the Spring context while Docker was stopped; local Docker was started, `docker info` then reported Server 29.7.2 / Linux arm64, and the focused Testcontainers run passed. Full suites/build/lint and payment harnesses remain for final verification. Parent risk assessment, spot check, and conditional verifier remain pending.
+
+**Verification update:** `cd frontend && npm ci` passed (402 packages installed; npm reported 25 dependency advisories and install scripts awaiting approval). `cd frontend && NODE_OPTIONS=--no-experimental-webstorage npm test` passed: 27 files, 112 tests. `cd frontend && npm run build` passed. `cd frontend && npm run lint` passed with 0 errors and 3 warnings in unmodified TokenContext/session files. The full backend suite and isolated payment harnesses remain for final verification.
 
 **Conventional Commit placeholder:** `fix(frontend): preserve strict payment review and input state`
 
@@ -225,12 +227,12 @@ All work-unit statuses begin **pending**. Each unit follows strict TDD, includes
 
 ## Progress, evidence, and next step
 
-**Overall status:** in progress. PMR-01 implementation and focused verification are complete; its local work-unit commit is pending. No SQL execution, push, or remote write has been performed.
+**Overall status:** in progress. PMR-01 is committed; PMR-02 implementation and focused verification are complete pending its work-unit commit and parent review. PMR-03 and PMR-04 remain pending. Local commit `7519c991084463462201d17de5b6a52b955e8fe8` (`add agents.md`) was present on resume; this writer did not create or alter it. `openspec/` remains untracked and untouched. No push, merge, deployment, production access, or SQL execution has occurred.
 
 | Task | Status | RED / GREEN / refactor evidence | Route evidence | Verification evidence | Commit ID |
 |---|---|---|---|---|---|
-| PMR-01 | implemented; focused verification passed; commit pending | RED: provider-rate scale and four API regressions failed; GREEN/refactor: expanded backend payment suite, 75 passed | delegated direct; one writer, no child agents | parent risk assessment, spot check, and conditional verifier pending | pending |
-| PMR-02 | pending | pending | pending | pending | pending |
+| PMR-01 | implemented and committed | RED: provider-rate scale and four API regressions failed; GREEN/refactor: expanded backend payment suite, 75 passed | delegated direct; one writer, no child agents | parent risk assessment, spot check, and conditional verifier pending | `efcfa467fbe5d340ec7f2bac27a62d40a6313bc6` |
+| PMR-02 | implemented; focused verification passed; commit pending | RED/GREEN for strict review parser, canonical anchor balance, manual cent parser, backend canonical balance, and explicit anchor field; full frontend suite and focused backend suite passed | delegated direct; one writer, no child agents | parent risk assessment, spot check, and conditional verifier pending | pending |
 | PMR-03 | pending | pending | pending | pending | pending |
 | PMR-04 | pending | pending | pending | pending | pending |
 
@@ -240,9 +242,9 @@ Fill one row per work unit after implementation; do not mark a task complete bef
 
 | Task | Commit / parent SHA | Conventional Commit message | Focused test command + exact result | Runtime harness + exact result / N/A reason | Rollback boundary | Authored additions + deletions |
 |---|---|---|---|---|---|---|
-| PMR-01 | pending | fix(payment): enforce safe monetary limits and rate identity | RED `./mvnw -Dtest=PaymentMoneyPolicyTest test` — 9 run, 1 expected failure; integration RED `./mvnw -Dtest=PaymentMoneyPolicyTest,PaymentRestControllerFreeAmountTest test` — 33 run, 4 expected failures; GREEN/refactor command above — 75 run, 0 failures | N/A for this unit: focused Testcontainers/PostgreSQL integration covers persistence-sensitive behavior; isolated full-stack/concurrency harnesses are reserved for PMR-04 | `PaymentMoneyPolicy`, `PaymentService`, `PaymentAllocationPlanner`, `PaymentPreviewTokenService`, business-date policy/configuration, calculation DTO, and PMR-01 regression tests | pending |
-| PMR-02 | pending | pending | pending | pending | pending | pending |
+| PMR-01 | `efcfa467fbe5d340ec7f2bac27a62d40a6313bc6` / parent `efbbe1c746f2e3162600f0cf11e7ec9a1c08fa17` | fix(payment): enforce safe monetary limits and rate identity | RED `./mvnw -Dtest=PaymentMoneyPolicyTest test` — 9 run, 1 expected failure; integration RED `./mvnw -Dtest=PaymentMoneyPolicyTest,PaymentRestControllerFreeAmountTest test` — 33 run, 4 expected failures; GREEN/refactor expanded backend payment suite — 75 run, 0 failures/errors/skips | N/A for this unit: focused Testcontainers/PostgreSQL integration covers persistence-sensitive behavior; isolated full-stack/concurrency harnesses are reserved for PMR-04 | `PaymentMoneyPolicy`, `PaymentService`, `PaymentAllocationPlanner`, `PaymentPreviewTokenService`, business-date policy/configuration, calculation DTO, and PMR-01 regression tests | 852 additions + 77 deletions |
+| PMR-02 | pending | fix(frontend): preserve strict payment review and input state | RED `NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/features/payments/pages/__tests__/PendingReviewPage.test.tsx` — 5 run, 2 expected failures; GREEN — 5 passed. Anchor/manual/dashboard component and DTO regressions GREEN. `NODE_OPTIONS=--no-experimental-webstorage npm test` — 27 files/112 passed; `npm run build` passed; `npm run lint` passed with 0 errors/3 warnings. Backend focused — 29 tests passed | N/A for this unit: component/API integration checks run; full-stack lifecycle harness is PMR-04 | `PaymentService.java`, `UserInstallmentDTO.java`, `PaymentCalculationResponseDTO.java`, `PaymentRestControllerFreeAmountTest.java`, and PMR-02 frontend files | pending |
 | PMR-03 | pending | pending | pending | pending | pending | pending |
 | PMR-04 | pending | pending | pending | pending | pending | pending |
 
-**Next step: commit PMR-01 on the existing branch, then begin PMR-02 RED.** Continue strict RED → GREEN → REFACTOR for each behavior change. Keep all implementation local; do not push or make remote changes.
+**Next step:** commit PMR-02 on the existing branch, then start PMR-03 with a failing migration/deploy-readiness regression. Continue strict RED → GREEN → REFACTOR. Keep all implementation local; do not push or make remote changes.

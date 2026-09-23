@@ -18,6 +18,7 @@ function makeCalculationResponse({
   body,
   tripCurrency,
   remainingAmount,
+  totalPendingAmountInTripCurrency = remainingAmount,
   reportedAmount,
   amountInTripCurrency,
   maxAllowedAmount = reportedAmount,
@@ -29,6 +30,7 @@ function makeCalculationResponse({
   body: Record<string, unknown>;
   tripCurrency: "ARS" | "USD";
   remainingAmount: string | number;
+  totalPendingAmountInTripCurrency?: string | number;
   reportedAmount: string | number | null;
   amountInTripCurrency: string | number | null;
   maxAllowedAmount?: string | number | null;
@@ -45,11 +47,13 @@ function makeCalculationResponse({
     paymentCurrency: body.paymentCurrency,
     reportedAmount: reportedAmount == null ? null : decimal(reportedAmount),
     amountInTripCurrency: amountInTripCurrency == null ? null : decimal(amountInTripCurrency),
-    remainingAmount: decimal(remainingAmount),
+    anchorRemainingAmount: decimal(remainingAmount),
+    totalPendingAmountInTripCurrency: decimal(totalPendingAmountInTripCurrency),
     maxAllowedAmount: maxAllowedAmount == null ? null : decimal(maxAllowedAmount),
     tripCurrencyResidual: "0.00",
     exchangeRate: exchangeRate == null ? null : decimal(exchangeRate),
     reportedPaymentDate: body.reportedPaymentDate,
+    calculationVersion: "3",
     previewToken: status === "READY" ? "preview-token" : null,
     installments,
     message,
@@ -67,6 +71,7 @@ const makeInstallment = (overrides: Record<string, unknown> = {}) => ({
   dueDate: "2026-03-25",
   totalDue: 200,
   paidAmount: 0,
+  remainingAmount: "200.00",
   yellowWarningDays: 5,
   tripCurrency: "ARS",
   installmentStatus: "YELLOW",
@@ -108,6 +113,101 @@ const usdBankAccount = {
 };
 
 describe("UserDashboardPage", () => {
+  it("seeds REMAINING input from the backend canonical anchor balance", async () => {
+    let signalCalculationStarted: (() => void) | undefined;
+    const calculationStarted = new Promise<void>((resolve) => {
+      signalCalculationStarted = resolve;
+    });
+    let releaseCalculation: (() => void) | undefined;
+    const calculationBlocked = new Promise<void>((resolve) => {
+      releaseCalculation = resolve;
+    });
+
+    server.use(
+      http.get(INSTALLMENTS_URL, () =>
+        HttpResponse.json([
+          makeInstallment({
+            installmentId: 901,
+            totalDue: 200,
+            paidAmount: 0,
+            remainingAmount: "199.99",
+          }),
+        ]),
+      ),
+      http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount])),
+      http.post(CALCULATION_URL, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        signalCalculationStarted?.();
+        await calculationBlocked;
+        return HttpResponse.json(makeCalculationResponse({
+          body,
+          tripCurrency: "ARS",
+          remainingAmount: "199.99",
+          reportedAmount: "199.99",
+          amountInTripCurrency: "199.99",
+        }));
+      }),
+    );
+
+    renderWithProviders(<UserDashboardPage />);
+    const amountInput = await screen.findByLabelText("Monto a reportar");
+    await calculationStarted;
+
+    try {
+      expect(amountInput).toHaveValue(199.99);
+    } finally {
+      releaseCalculation?.();
+    }
+  });
+
+  it("does not create an enabled calculation query for a sub-cent manual amount", async () => {
+    let remainingRequests = 0;
+    let manualRequests = 0;
+    server.use(
+      http.get(INSTALLMENTS_URL, () =>
+        HttpResponse.json([makeInstallment({ installmentId: 902, remainingAmount: "200.00" })]),
+      ),
+      http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount])),
+      http.post(CALCULATION_URL, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        if (body.intent === "MANUAL") {
+          manualRequests += 1;
+          return HttpResponse.json(makeCalculationResponse({
+            body,
+            tripCurrency: "ARS",
+            remainingAmount: "200.00",
+            reportedAmount: String(body.reportedAmount),
+            amountInTripCurrency: String(body.reportedAmount),
+          }));
+        }
+
+        remainingRequests += 1;
+        return HttpResponse.json(makeCalculationResponse({
+          body,
+          tripCurrency: "ARS",
+          remainingAmount: "200.00",
+          reportedAmount: "200.00",
+          amountInTripCurrency: "200.00",
+        }));
+      }),
+    );
+
+    const { queryClient } = renderWithProviders(<UserDashboardPage />);
+    const amountInput = await screen.findByLabelText("Monto a reportar");
+    await waitFor(() => expect(remainingRequests).toBe(1));
+    await waitFor(() => expect(amountInput).toHaveValue(200));
+
+    fireEvent.change(amountInput, { target: { value: "1.005" } });
+    await waitFor(() => expect(amountInput).toHaveValue(1.005));
+
+    const enabledManualQueries = queryClient
+      .getQueryCache()
+      .findAll({ queryKey: ["payments", "calculation"] })
+      .filter((query) => query.queryKey[5] === "MANUAL" && query.queryKey[6] === "1.005");
+    expect(enabledManualQueries).toHaveLength(0);
+    expect(manualRequests).toBe(0);
+  });
+
   it("muestra estados y permite enviar un comprobante con monto libre", async () => {
     let calculationPayload: Record<string, unknown> | null = null;
     let paymentPayload: Record<string, FormDataEntryValue> | null = null;
@@ -141,6 +241,7 @@ describe("UserDashboardPage", () => {
             uiStatusLabel: "Al día",
             uiStatusTone: "green",
             paidAmount: 50,
+            remainingAmount: "150.00",
           }),
           makeInstallment({
             tripId: 88,
@@ -179,7 +280,8 @@ describe("UserDashboardPage", () => {
         return HttpResponse.json(makeCalculationResponse({
           body,
           tripCurrency: "ARS",
-          remainingAmount: "400.00",
+          remainingAmount: "200.00",
+          totalPendingAmountInTripCurrency: "400.00",
           reportedAmount,
           amountInTripCurrency: reportedAmount,
           maxAllowedAmount: "400.00",
@@ -426,6 +528,7 @@ describe("UserDashboardPage", () => {
             dueDate: "2026-06-25",
             totalDue: 300,
             paidAmount: 0,
+            remainingAmount: "300.00",
             tripCurrency: "USD",
           }),
         ]),
@@ -523,6 +626,7 @@ describe("UserDashboardPage", () => {
             installmentId: 401,
             totalDue: 20000,
             paidAmount: 0,
+            remainingAmount: "20000.00",
             tripCurrency: "ARS",
           }),
         ]),
@@ -582,6 +686,7 @@ describe("UserDashboardPage", () => {
             installmentId: 451,
             totalDue: 20000,
             paidAmount: 0,
+            remainingAmount: "20000.00",
             tripCurrency: "ARS",
           }),
         ]),
@@ -643,6 +748,7 @@ describe("UserDashboardPage", () => {
             installmentId: 501,
             totalDue: 20000,
             paidAmount: 0,
+            remainingAmount: "20000.00",
             tripCurrency: "ARS",
           }),
         ]),
@@ -712,6 +818,7 @@ describe("UserDashboardPage", () => {
             installmentId: 601,
             totalDue: 20000,
             tripCurrency: "ARS",
+            remainingAmount: "20000.00",
           }),
           makeInstallment({
             tripId: 88,
@@ -722,6 +829,7 @@ describe("UserDashboardPage", () => {
             installmentId: 602,
             totalDue: 99.29,
             tripCurrency: "ARS",
+            remainingAmount: "99.29",
           }),
         ]),
       ),
@@ -786,6 +894,7 @@ describe("UserDashboardPage", () => {
             installmentId: 701,
             totalDue: 20000,
             tripCurrency: "ARS",
+            remainingAmount: "20000.00",
           }),
         ]),
       ),
@@ -837,6 +946,7 @@ describe("UserDashboardPage", () => {
             installmentId: 801,
             totalDue: 0.01,
             tripCurrency: "USD",
+            remainingAmount: "0.01",
           }),
           makeInstallment({
             tripId: 88,
@@ -847,6 +957,7 @@ describe("UserDashboardPage", () => {
             installmentId: 802,
             totalDue: 99.29,
             tripCurrency: "USD",
+            remainingAmount: "99.29",
           }),
         ]),
       ),
@@ -863,7 +974,7 @@ describe("UserDashboardPage", () => {
             remainingAmount: "0.01",
             reportedAmount: "10.16",
             amountInTripCurrency: "0.01",
-            maxAllowedAmount: "10.16",
+            maxAllowedAmount: "15.23",
             exchangeRate: "1015.50",
           }));
         }

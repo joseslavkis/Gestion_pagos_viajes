@@ -9,7 +9,7 @@ import {
 import { isImageAttachment } from "@/features/payments/lib/attachment-preview";
 import {
   compareNonNegativeDecimalStrings,
-  normalizePaymentDecimalInput,
+  normalizePaymentMoneyInput,
 } from "@/features/payments/types/decimal-strings";
 import type {
   DecimalString,
@@ -47,6 +47,20 @@ function formatDate(isoDate: string): string {
 
 function formatInstallmentList(allocations: PaymentBatchInstallmentDTO[]): string {
   return allocations.map((allocation) => `#${allocation.installmentNumber}`).join(", ");
+}
+
+function validateApprovalAmount(
+  input: string,
+  reportedAmount: DecimalString,
+): { amount: DecimalString | null; error: string | null } {
+  const amount = normalizePaymentMoneyInput(input);
+  if (amount == null) {
+    return { amount: null, error: "Ingresá un monto válido con hasta dos decimales." };
+  }
+  if (compareNonNegativeDecimalStrings(amount, reportedAmount) > 0) {
+    return { amount: null, error: "El monto aprobado no puede superar el monto informado." };
+  }
+  return { amount, error: null };
 }
 
 export function PendingReviewPage() {
@@ -102,6 +116,10 @@ export function PendingReviewPage() {
       setActionError("La observación es obligatoria cuando no se aprueba el monto completo.");
       return;
     }
+    if (compareNonNegativeDecimalStrings(approvedAmount, item.reportedAmount) > 0) {
+      setActionError("El monto aprobado no puede superar el monto informado.");
+      return;
+    }
 
     try {
       await reviewPayment.mutateAsync({
@@ -143,7 +161,7 @@ export function PendingReviewPage() {
               {items.map((item) => {
                 const isExpanded = expandedSubmissionIds.includes(item.submissionId);
                 const approvedAmountInput = approvedAmounts[item.submissionId] ?? item.reportedAmount;
-                const approvedAmountValue = normalizePaymentDecimalInput(approvedAmountInput) ?? item.reportedAmount;
+                const approvalValidation = validateApprovalAmount(approvedAmountInput, item.reportedAmount);
                 const observation = observations[item.submissionId] ?? "";
 
                 return (
@@ -268,7 +286,12 @@ export function PendingReviewPage() {
                           <label className={styles.searchBox}>
                             <span>Monto a aprobar</span>
                             <input
+                              id={`approved-amount-${item.submissionId}`}
                               value={approvedAmountInput}
+                              aria-invalid={approvalValidation.error != null}
+                              aria-describedby={approvalValidation.error
+                                ? `approved-amount-error-${item.submissionId}`
+                                : undefined}
                               onChange={(event) =>
                                 setApprovedAmounts((current) => ({
                                   ...current,
@@ -279,6 +302,15 @@ export function PendingReviewPage() {
                               inputMode="decimal"
                             />
                           </label>
+                          {approvalValidation.error ? (
+                            <p
+                              id={`approved-amount-error-${item.submissionId}`}
+                              className={styles.errorText}
+                              role="alert"
+                            >
+                              {approvalValidation.error}
+                            </p>
+                          ) : null}
 
                           <label className={styles.searchBox}>
                             <span>Observación admin</span>
@@ -306,8 +338,12 @@ export function PendingReviewPage() {
                             <button
                               type="button"
                               className={styles.primaryButton}
-                              disabled={reviewPayment.isPending}
-                              onClick={() => submitDecision(item, approvedAmountValue)}
+                              disabled={reviewPayment.isPending || approvalValidation.amount == null}
+                              onClick={() => {
+                                if (approvalValidation.amount != null) {
+                                  void submitDecision(item, approvalValidation.amount);
+                                }
+                              }}
                             >
                               Guardar decisión
                             </button>

@@ -59,6 +59,59 @@ function makePendingSubmission() {
 }
 
 describe("PendingReviewPage", () => {
+  it("preserves invalid approval text, disables saving, and sends no review request", async () => {
+    let reviewRequests = 0;
+    server.use(
+      http.get("http://localhost:30002/api/v1/payments/pending-review", () =>
+        HttpResponse.json([makePendingSubmission()]),
+      ),
+      http.patch("http://localhost:30002/api/v1/payments/91/review", () => {
+        reviewRequests += 1;
+        return HttpResponse.json({});
+      }),
+    );
+
+    renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
+    expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
+
+    const amountInput = screen.getByLabelText("Monto a aprobar");
+    const saveButton = screen.getByRole("button", { name: "Guardar decisión" });
+    for (const invalidAmount of ["250.", "abc", "-1", "1.005"]) {
+      fireEvent.change(amountInput, { target: { value: invalidAmount } });
+
+      expect(amountInput).toHaveValue(invalidAmount);
+      expect(saveButton).toBeDisabled();
+      expect(screen.getByRole("alert")).toHaveTextContent(/monto válido/i);
+      expect(reviewRequests).toBe(0);
+    }
+  });
+
+  it("blocks approval above the reported amount without a request", async () => {
+    let reviewRequests = 0;
+    server.use(
+      http.get("http://localhost:30002/api/v1/payments/pending-review", () =>
+        HttpResponse.json([makePendingSubmission()]),
+      ),
+      http.patch("http://localhost:30002/api/v1/payments/91/review", () => {
+        reviewRequests += 1;
+        return HttpResponse.json({});
+      }),
+    );
+
+    renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
+    expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
+
+    const amountInput = screen.getByLabelText("Monto a aprobar");
+    fireEvent.change(amountInput, { target: { value: "400.01" } });
+
+    expect(amountInput).toHaveValue("400.01");
+    expect(screen.getByRole("button", { name: "Guardar decisión" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("no puede superar el monto informado");
+    expect(reviewRequests).toBe(0);
+  });
+
   it("lista pagos pendientes y permite aprobarlos parcialmente", async () => {
     let decisionBody: unknown = null;
     let pendingItems = [makePendingSubmission()];

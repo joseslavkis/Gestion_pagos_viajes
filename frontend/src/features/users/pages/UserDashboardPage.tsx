@@ -19,7 +19,7 @@ import type {
   UserInstallmentDTO,
 } from "@/features/payments/types/payments-dtos";
 import { type ReceiptSuccessData, ReceiptSuccessScreen } from "@/features/payments/components/ReceiptSuccessScreen";
-import { normalizePaymentDecimalInput } from "@/features/payments/types/decimal-strings";
+import { normalizePaymentMoneyInput } from "@/features/payments/types/decimal-strings";
 
 import styles from "./UserDashboardPage.module.css";
 
@@ -147,8 +147,8 @@ function getGroupBadgeColor(group: InstallmentGroup): "green" | "yellow" | "red"
   return "green";
 }
 
-function isInstallmentCovered(installment: Pick<UserInstallmentDTO, "totalDue" | "paidAmount">): boolean {
-  return getInstallmentRemainingAmount(installment) <= 0;
+function isInstallmentCovered(installment: Pick<UserInstallmentDTO, "uiStatusCode">): boolean {
+  return installment.uiStatusCode === "PAID";
 }
 
 function getPayableInstallments(group: InstallmentGroup): UserInstallmentDTO[] {
@@ -173,30 +173,28 @@ function findPendingInstallment(group: InstallmentGroup): UserInstallmentDTO | n
   return getPayableInstallments(group)[0] ?? null;
 }
 
-function roundMoney(value: number): number {
+function roundDisplayMoney(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
-function parseAmountInput(value: string): number {
-  const normalized = value.replace(",", ".").trim();
-  if (normalized.length === 0) {
-    return 0;
-  }
-
-  const parsed = Number.parseFloat(normalized);
-  return Number.isFinite(parsed) ? roundMoney(parsed) : 0;
+function getDisplayRemainingAmount(
+  installment: Pick<UserInstallmentDTO, "totalDue" | "paidAmount">,
+): number {
+  return Math.max(0, roundDisplayMoney(installment.totalDue - installment.paidAmount));
 }
 
-function formatAmountInput(value: number): string {
-  return String(roundMoney(value));
+function getInstallmentRemainingAmount(installment: Pick<UserInstallmentDTO, "remainingAmount">): string {
+  return installment.remainingAmount;
 }
 
-function getInstallmentRemainingAmount(installment: Pick<UserInstallmentDTO, "totalDue" | "paidAmount">): number {
-  return Math.max(0, roundMoney(installment.totalDue - installment.paidAmount));
-}
-
-function formatInstallmentAmount(installment: Pick<UserInstallmentDTO, "tripCurrency">, amount: number): string {
-  return installment.tripCurrency === "USD" ? usdFormatter.format(amount) : currencyFormatter.format(amount);
+function formatInstallmentAmount(
+  installment: Pick<UserInstallmentDTO, "tripCurrency">,
+  amount: number | string,
+): string {
+  const displayAmount = typeof amount === "string" ? Number.parseFloat(amount) : amount;
+  return installment.tripCurrency === "USD"
+    ? usdFormatter.format(displayAmount)
+    : currencyFormatter.format(displayAmount);
 }
 
 function formatAmountByCurrency(currency: "ARS" | "USD", amount: number | string): string {
@@ -209,22 +207,22 @@ function getGroupCurrency(group: InstallmentGroup): "ARS" | "USD" {
 }
 
 function getGroupTotalDue(group: InstallmentGroup): number {
-  return roundMoney(
+  return roundDisplayMoney(
     group.installments.reduce((sum, installment) => sum + installment.totalDue, 0),
   );
 }
 
 function getGroupRemainingAmount(group: InstallmentGroup): number {
-  return roundMoney(
+  return roundDisplayMoney(
     group.installments.reduce(
-      (sum, installment) => sum + getInstallmentRemainingAmount(installment),
+      (sum, installment) => sum + getDisplayRemainingAmount(installment),
       0,
     ),
   );
 }
 
 function getGroupPaidAmount(group: InstallmentGroup): number {
-  return roundMoney(getGroupTotalDue(group) - getGroupRemainingAmount(group));
+  return roundDisplayMoney(getGroupTotalDue(group) - getGroupRemainingAmount(group));
 }
 
 function formatInstallmentsLabel(installments: Array<{ installmentNumber: number }>): string {
@@ -310,7 +308,9 @@ export function UserDashboardPage() {
   );
 
   const selectedInstallmentDisplay = selectedInstallment ? resolveInstallmentDisplay(selectedInstallment) : null;
-  const selectedInstallmentRemaining = selectedInstallment ? getInstallmentRemainingAmount(selectedInstallment) : 0;
+  const selectedInstallmentRemaining = selectedInstallment
+    ? getInstallmentRemainingAmount(selectedInstallment)
+    : "0.00";
   const selectedGroupHasPendingReview = selectedGroup != null ? groupHasPendingReview(selectedGroup) : false;
   const selectableInstallments = selectedGroup != null ? getPayableInstallments(selectedGroup) : [];
   const selectedTripHasPending = selectableInstallments.length > 0;
@@ -320,7 +320,7 @@ export function UserDashboardPage() {
         ? {
             anchorInstallmentId: selectedInstallment.installmentId,
             tripCurrency: selectedInstallment.tripCurrency,
-            remainingAmount: formatAmountInput(selectedInstallmentRemaining),
+            remainingAmount: selectedInstallmentRemaining,
             reportedPaymentDate,
           }
         : null,
@@ -337,8 +337,8 @@ export function UserDashboardPage() {
     setPaymentCurrency,
     setReportedPaymentDate: invalidatePaymentCalculationDate,
   } = usePaymentCalculationForm(paymentFormContext);
-  const reportedAmountValue = parseAmountInput(reportedAmountInput);
-  const reportedAmountDecimal = normalizePaymentDecimalInput(reportedAmountInput);
+  const reportedAmountDecimal = normalizePaymentMoneyInput(reportedAmountInput);
+  const hasPositiveReportedAmount = reportedAmountDecimal != null && /[1-9]/.test(reportedAmountDecimal);
   const readyPaymentCalculation = paymentCalculation?.status === "READY" ? paymentCalculation : null;
   const calculationStatusMessage = paymentCalculation ? getCalculationStatusMessage(paymentCalculation) : null;
 
@@ -362,7 +362,7 @@ export function UserDashboardPage() {
     !isPaymentCalculationLoading &&
     readyPaymentCalculation != null &&
     readyPaymentCalculation.previewToken != null &&
-    reportedAmountValue > 0 &&
+    hasPositiveReportedAmount &&
     !isBankAccountsLoading &&
     availableBankAccounts.length > 0 &&
     selectedBankAccountId != null &&
@@ -478,7 +478,7 @@ export function UserDashboardPage() {
       return;
     }
 
-    if (reportedAmountValue <= 0 || reportedAmountDecimal == null) {
+    if (!hasPositiveReportedAmount || reportedAmountDecimal == null) {
       toast.error("Ingresá un monto válido antes de enviar el comprobante.");
       return;
     }
@@ -620,8 +620,7 @@ export function UserDashboardPage() {
 
                                   <p className={styles.chipMeta}>{currencyFormatter.format(installment.totalDue)}</p>
                                   {installment.paidAmount > 0 &&
-                                  installment.uiStatusCode !== "PAID" &&
-                                  getInstallmentRemainingAmount(installment) > 0 ? (
+                                  installment.uiStatusCode !== "PAID" ? (
                                     <p className={styles.chipMeta}>
                                       Abonado: {formatInstallmentAmount(installment, installment.paidAmount)} · Resta:{" "}
                                       {formatInstallmentAmount(
@@ -812,7 +811,7 @@ export function UserDashboardPage() {
                     Saldo pendiente total:{" "}
                     {formatAmountByCurrency(
                       readyPaymentCalculation.tripCurrency,
-                      readyPaymentCalculation.remainingAmount,
+                      readyPaymentCalculation.totalPendingAmountInTripCurrency,
                     )}.
                     {" "}Equivale a{" "}
                     {formatAmountByCurrency(

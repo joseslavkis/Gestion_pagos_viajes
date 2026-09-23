@@ -17,8 +17,8 @@ const PositiveDecimalStringSchema = NonNegativeDecimalStringSchema.refine(
   "El monto debe ser mayor a cero.",
 );
 
-// Installment summaries still come from the legacy display endpoint as JSON numbers.
-// Authoritative payment calculation and persistence contracts use DecimalStringSchema.
+// Legacy installment due/paid summaries remain JSON numbers for display-only uses.
+// Payment calculation context uses the canonical backend-computed remaining balance.
 const InstallmentDisplayMoneySchema = z.number().finite();
 
 export const CurrencySchema = z.enum(["ARS", "USD"]);
@@ -165,6 +165,7 @@ export const UserInstallmentDTOSchema = z.object({
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   totalDue: InstallmentDisplayMoneySchema,
   paidAmount: InstallmentDisplayMoneySchema,
+  remainingAmount: DecimalStringSchema,
   yellowWarningDays: z.number().int().nonnegative(),
   tripCurrency: CurrencySchema,
   installmentStatus: z.enum(["GREEN", "YELLOW", "RED", "RETROACTIVE"]),
@@ -283,7 +284,8 @@ export const PaymentCalculationResponseDTOSchema = z.object({
   paymentCurrency: CurrencySchema,
   reportedAmount: DecimalStringSchema.nullable(),
   amountInTripCurrency: DecimalStringSchema.nullable(),
-  remainingAmount: DecimalStringSchema,
+  anchorRemainingAmount: DecimalStringSchema,
+  totalPendingAmountInTripCurrency: DecimalStringSchema,
   maxAllowedAmount: DecimalStringSchema.nullable(),
   tripCurrencyResidual: DecimalStringSchema.nullable(),
   exchangeRate: DecimalStringSchema.nullable(),

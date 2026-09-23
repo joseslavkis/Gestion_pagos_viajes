@@ -6,7 +6,7 @@ import type {
   PaymentCalculationRequestDTO,
   PaymentCalculationResponseDTO,
 } from "@/features/payments/types/payments-dtos";
-import { normalizePaymentDecimalInput } from "@/features/payments/types/decimal-strings";
+import { normalizePaymentMoneyInput } from "@/features/payments/types/decimal-strings";
 
 export type PaymentCalculationFormContext = {
   anchorInstallmentId: number;
@@ -241,7 +241,7 @@ function buildPayload(state: FormState): PaymentCalculationRequestDTO | null {
     return null;
   }
 
-  const reportedAmount = normalizePaymentDecimalInput(state.sourceIntent.amount);
+  const reportedAmount = normalizePaymentMoneyInput(state.sourceIntent.amount);
   if (reportedAmount == null || !/[1-9]/.test(reportedAmount)) {
     return null;
   }

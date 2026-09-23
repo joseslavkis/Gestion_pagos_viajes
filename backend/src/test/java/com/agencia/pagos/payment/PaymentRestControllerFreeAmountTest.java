@@ -140,6 +140,23 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
     }
 
     @Test
+    void myInstallments_returnsCanonicalServerComputedRemainingBalance() throws Exception {
+        PaymentFixture fixture = createPaymentFixture("payment-canonical-installment-balance", Currency.ARS);
+        Installment installment = createInstallment(
+                fixture.trip(), fixture.user(), fixture.student(), 1, "200.00", InstallmentStatus.YELLOW);
+        installment.setPaidAmount(new BigDecimal("30.01"));
+        installmentRepository.saveAndFlush(installment);
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .get("/api/v1/payments/my/installments")
+                        .header("Authorization", "Bearer " + fixture.userTokens().accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].totalDue").value(200.0))
+                .andExpect(jsonPath("$[0].paidAmount").value(30.01))
+                .andExpect(jsonPath("$[0].remainingAmount").value("169.99"));
+    }
+
+    @Test
     void previewPayment_conPagosParcialesPrevios() throws Exception {
         PaymentFixture fixture = createPaymentFixture("pmt-free-prev", Currency.ARS);
         Installment first = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
@@ -235,7 +252,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                 .andExpect(jsonPath("$.intent").value("REMAINING"))
                 .andExpect(jsonPath("$.tripCurrency").value("USD"))
                 .andExpect(jsonPath("$.paymentCurrency").value("ARS"))
-                .andExpect(jsonPath("$.remainingAmount").value("0.01"))
+                .andExpect(jsonPath("$.anchorRemainingAmount").value("0.01"))
                 .andExpect(jsonPath("$.reportedAmount").value("10.16"))
                 .andExpect(jsonPath("$.amountInTripCurrency").value("0.01"))
                 .andExpect(jsonPath("$.tripCurrencyResidual").value("0.00"))
@@ -272,7 +289,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                                 """.formatted(anchor.getId(), paymentDate)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("READY"))
-                .andExpect(jsonPath("$.remainingAmount").value("200.00"))
+                .andExpect(jsonPath("$.anchorRemainingAmount").value("200.00"))
                 .andExpect(jsonPath("$.totalPendingAmountInTripCurrency").value("400.00"))
                 .andExpect(jsonPath("$.reportedAmount").value("66.66"))
                 .andExpect(jsonPath("$.amountInTripCurrency").value("199.98"))
@@ -402,7 +419,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                                 """.formatted(installment.getId(), paymentDate)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("READY"))
-                .andExpect(jsonPath("$.remainingAmount").value("99.29"))
+                .andExpect(jsonPath("$.anchorRemainingAmount").value("99.29"))
                 .andExpect(jsonPath("$.reportedAmount").value("99.29"))
                 .andExpect(jsonPath("$.maxAllowedAmount").value("99.29"))
                 .andExpect(jsonPath("$.amountInTripCurrency").value("99.29"));
@@ -433,7 +450,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("READY"))
                 .andExpect(jsonPath("$.intent").value("MANUAL"))
-                .andExpect(jsonPath("$.remainingAmount").value("99.29"))
+                .andExpect(jsonPath("$.anchorRemainingAmount").value("99.29"))
                 .andExpect(jsonPath("$.reportedAmount").value("25.50"))
                 .andExpect(jsonPath("$.amountInTripCurrency").value("25.50"))
                 .andExpect(jsonPath("$.tripCurrencyResidual").value("73.79"))
@@ -463,7 +480,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                 .andExpect(jsonPath("$.status").value("AMOUNT_EXCEEDS_BALANCE"))
                 .andExpect(jsonPath("$.reportedAmount").value("100.01"))
                 .andExpect(jsonPath("$.amountInTripCurrency").value("100.01"))
-                .andExpect(jsonPath("$.remainingAmount").value("100.00"))
+                .andExpect(jsonPath("$.anchorRemainingAmount").value("100.00"))
                 .andExpect(jsonPath("$.maxAllowedAmount").value("100.00"))
                 .andExpect(jsonPath("$.tripCurrencyResidual").value("0.01"))
                 .andExpect(jsonPath("$.previewToken").doesNotExist());
@@ -491,7 +508,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                                 """.formatted(installment.getId(), paymentDate)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("UNPAYABLE"))
-                .andExpect(jsonPath("$.remainingAmount").value("0.01"))
+                .andExpect(jsonPath("$.anchorRemainingAmount").value("0.01"))
                 .andExpect(jsonPath("$.maxAllowedAmount").value("0.00"))
                 .andExpect(jsonPath("$.reportedAmount").doesNotExist())
                 .andExpect(jsonPath("$.previewToken").doesNotExist())
@@ -520,7 +537,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                                 """.formatted(installment.getId(), paymentDate)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("QUOTE_UNAVAILABLE"))
-                .andExpect(jsonPath("$.remainingAmount").value("100.00"))
+                .andExpect(jsonPath("$.anchorRemainingAmount").value("100.00"))
                 .andExpect(jsonPath("$.exchangeRate").doesNotExist())
                 .andExpect(jsonPath("$.previewToken").doesNotExist())
                 .andExpect(jsonPath("$.message").value("provider unavailable"));
@@ -550,7 +567,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("EXPIRED"))
                 .andExpect(jsonPath("$.anchorInstallmentId").value(installment.getId()))
-                .andExpect(jsonPath("$.remainingAmount").value("100.00"))
+                .andExpect(jsonPath("$.anchorRemainingAmount").value("100.00"))
                 .andExpect(jsonPath("$.previewToken").doesNotExist())
                 .andExpect(jsonPath("$.message").isNotEmpty());
     }

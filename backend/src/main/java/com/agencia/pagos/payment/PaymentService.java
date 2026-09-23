@@ -830,6 +830,7 @@ public class PaymentService {
                             installment.getDueDate(),
                             installment.getTotalDue(),
                             installment.getPaidAmount(),
+                            getRemainingAmount(installment),
                             yellowDays,
                             installment.getTrip().getCurrency(),
                             effectiveStatus,

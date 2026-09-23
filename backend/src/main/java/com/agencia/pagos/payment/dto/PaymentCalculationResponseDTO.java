@@ -15,7 +15,7 @@ public record PaymentCalculationResponseDTO(
         Currency paymentCurrency,
         @JsonSerialize(using = CanonicalDecimalSerializer.class) BigDecimal reportedAmount,
         @JsonSerialize(using = CanonicalDecimalSerializer.class) BigDecimal amountInTripCurrency,
-        @JsonSerialize(using = CanonicalDecimalSerializer.class) BigDecimal remainingAmount,
+        @JsonSerialize(using = CanonicalDecimalSerializer.class) BigDecimal anchorRemainingAmount,
         @JsonSerialize(using = CanonicalDecimalSerializer.class) BigDecimal totalPendingAmountInTripCurrency,
         @JsonSerialize(using = CanonicalDecimalSerializer.class) BigDecimal maxAllowedAmount,
         @JsonSerialize(using = CanonicalDecimalSerializer.class) BigDecimal tripCurrencyResidual,
