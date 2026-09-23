@@ -32,6 +32,15 @@ class PaymentSubmissionSnapshotContractTest {
     }
 
     @Test
+    void persistenceDefaultsMissingCalculationVersionToLegacyV1() {
+        PaymentSubmission submission = new PaymentSubmission();
+
+        submission.onPersist();
+
+        assertEquals("v1", submission.getCalculationVersion());
+    }
+
+    @Test
     void quoteIdentityIsExposedAcrossPreviewReviewAndHistoryDtos() {
         for (Class<?> dto : List.of(
                 PaymentBatchPreviewDTO.class,
@@ -79,7 +88,8 @@ class PaymentSubmissionSnapshotContractTest {
         assertTrue(components.containsAll(List.of(
                 "reportedAmount",
                 "amountInTripCurrency",
-                "remainingAmount",
+                "anchorRemainingAmount",
+                "totalPendingAmountInTripCurrency",
                 "maxAllowedAmount",
                 "tripCurrencyResidual",
                 "exchangeRate",
@@ -88,5 +98,6 @@ class PaymentSubmissionSnapshotContractTest {
         )));
         assertTrue(!components.contains("amount"));
         assertTrue(!components.contains("currency"));
+        assertTrue(!components.contains("remainingAmount"));
     }
 }

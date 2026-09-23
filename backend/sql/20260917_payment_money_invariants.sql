@@ -51,6 +51,14 @@ UPDATE payment_submissions
 SET calculation_version = 'v1'
 WHERE calculation_version IS NULL;
 
+-- Old application writers omit this column. Give those inserts the legacy label,
+-- but reject an explicitly supplied NULL so no unlabeled row can be introduced.
+ALTER TABLE payment_submissions
+    ALTER COLUMN calculation_version SET DEFAULT 'v1';
+
+ALTER TABLE payment_submissions
+    ALTER COLUMN calculation_version SET NOT NULL;
+
 DO $$
 BEGIN
     IF NOT EXISTS (

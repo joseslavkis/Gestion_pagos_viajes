@@ -4,6 +4,7 @@ import com.agencia.pagos.PagosApplication;
 import com.agencia.pagos.TestcontainersConfiguration;
 import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
@@ -16,22 +17,30 @@ import org.springframework.test.context.ActiveProfiles;
 
 import javax.sql.DataSource;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 @SpringBootTest(properties = {
         "app.mail.to=test@agencia.com",
-        "app.mail.from=no-reply@agencia.com"
+        "app.mail.from=no-reply@agencia.com",
+        "spring.jpa.hibernate.ddl-auto=create-drop"
 })
 @ActiveProfiles("production")
 @Import(TestcontainersConfiguration.class)
+/*
+ * create-drop seeds only the disposable Testcontainers database; a separate context
+ * verifies the migrated schema with the production profile and Hibernate validation.
+ */
 class PaymentMoneyInvariantBoundaryTest {
 
     private static final Path MIGRATION = Path.of("sql", "20260917_payment_money_invariants.sql");
@@ -43,10 +52,17 @@ class PaymentMoneyInvariantBoundaryTest {
             Path.of("..", "scripts", "test-payment-money-invariants.sh");
     private static final Path CONCURRENCY_SCRIPT =
             Path.of("..", "scripts", "test-payment-concurrency.sh");
+    private static final Path SCHEMA_PREFLIGHT_SCRIPT =
+            Path.of("..", "scripts", "check-payment-schema-readiness.sh");
     private static final Path CI_WORKFLOW =
             Path.of("..", ".github", "workflows", "ci-cd.yml");
+    private static final Path COMPOSE_FILE = Path.of("..", "docker-compose.yml");
+    private static final Path PRODUCTION_PROPERTIES = Path.of("src", "main", "resources", "application-production.properties");
     private static final Path OPERATIONS_GUIDE =
             Path.of("..", "docs", "payment-money-invariants.md");
+
+    @TempDir
+    private Path temporaryDirectory;
 
     @Autowired
     private ApplicationContext applicationContext;
@@ -58,7 +74,7 @@ class PaymentMoneyInvariantBoundaryTest {
     private DataSource dataSource;
 
     @Test
-    void productionProfile_hasNoDeterministicFxSeam() {
+    void productionProfile_hasNoDeterministicFxSeam() throws Exception {
         Map<String, ExchangeRateQuoteProvider> providers =
                 applicationContext.getBeansOfType(ExchangeRateQuoteProvider.class);
 
@@ -70,6 +86,8 @@ class PaymentMoneyInvariantBoundaryTest {
         assertThat(environment.getProperty("exchange-rate.historical-url")).isNull();
         assertThat(environment.getProperty("exchange-rate.test-provider-enabled")).isNull();
         assertThat(environment.getProperty("payment.fx-test.call-log")).isNull();
+        assertThat(Files.readString(PRODUCTION_PROPERTIES))
+                .contains("spring.jpa.hibernate.ddl-auto=validate");
     }
 
     @Test
@@ -99,6 +117,25 @@ class PaymentMoneyInvariantBoundaryTest {
 
             statement.execute(migrationSql);
             statement.execute("""
+                    INSERT INTO payment_submissions (id, exchange_rate, exchange_rate_source, status)
+                    VALUES (4, NULL, NULL, 'PENDING')
+                    """);
+            SQLException explicitNullFailure = null;
+            try {
+                statement.execute("""
+                        INSERT INTO payment_submissions (
+                            id, exchange_rate, exchange_rate_source, status, calculation_version
+                        )
+                        VALUES (5, NULL, NULL, 'PENDING', NULL)
+                        """);
+            } catch (SQLException exception) {
+                explicitNullFailure = exception;
+            }
+            assertNotNull(explicitNullFailure,
+                    "an older writer may omit calculation_version, but explicit NULL must be rejected");
+            assertThat(explicitNullFailure.getSQLState()).isEqualTo("23502");
+
+            statement.execute("""
                     INSERT INTO payment_submissions (
                         id, exchange_rate, exchange_rate_source, status,
                         exchange_rate_scale, exchange_rate_provider, calculation_version
@@ -116,7 +153,8 @@ class PaymentMoneyInvariantBoundaryTest {
             assertThat(afterFirstRun).containsExactly(
                     new SnapshotRow(1L, new BigDecimal("1234.56000000"), 2, "legacy-source", "v1", "RESOLVED"),
                     new SnapshotRow(2L, null, null, null, "v1", "PENDING"),
-                    new SnapshotRow(3L, new BigDecimal("1234.56789012"), 8, "snapshot-provider", "2", "PENDING")
+                    new SnapshotRow(3L, new BigDecimal("1234.56789012"), 8, "snapshot-provider", "2", "PENDING"),
+                    new SnapshotRow(4L, null, null, null, "v1", "PENDING")
             );
 
             try (ResultSet columns = statement.executeQuery("""
@@ -131,7 +169,71 @@ class PaymentMoneyInvariantBoundaryTest {
                 assertThat(columns.getInt("numeric_scale")).isEqualTo(8);
                 assertThat(columns.getString("is_nullable")).isEqualTo("YES");
             }
+            try (ResultSet versionColumn = statement.executeQuery("""
+                    SELECT column_default, is_nullable
+                    FROM information_schema.columns
+                    WHERE table_schema = 'payment_money_migration_contract'
+                      AND table_name = 'payment_submissions'
+                      AND column_name = 'calculation_version'
+                    """)) {
+                assertThat(versionColumn.next()).isTrue();
+                assertThat(versionColumn.getString("column_default")).contains("v1");
+                assertThat(versionColumn.getString("is_nullable")).isEqualTo("NO");
+            }
         }
+    }
+
+    @Test
+    void deploymentChecksReadOnlySchemaReadinessBeforeStartingProductionBackend() throws Exception {
+        assertThat(SCHEMA_PREFLIGHT_SCRIPT).exists().isRegularFile();
+        assertThat(PRODUCTION_PROPERTIES).exists().isRegularFile();
+
+        String preflight = Files.readString(SCHEMA_PREFLIGHT_SCRIPT);
+        assertThat(preflight)
+                .contains("docker compose exec -T db")
+                .contains("psql -v ON_ERROR_STOP=1")
+                .contains("information_schema.columns")
+                .contains("calculation_version")
+                .contains("NOT_READY")
+                .doesNotContain("20260917_payment_money_invariants.sql")
+                .doesNotContain("UPDATE payment_submissions");
+
+        String workflow = Files.readString(CI_WORKFLOW);
+        int shaVerification = workflow.indexOf("test \"$ACTUAL_SHA\" = \"$DEPLOY_SHA\"");
+        int schemaPreflight = workflow.indexOf("./scripts/check-payment-schema-readiness.sh");
+        int backendStart = workflow.indexOf("docker compose up -d --build backend");
+        assertThat(shaVerification).isGreaterThanOrEqualTo(0);
+        assertThat(schemaPreflight).isGreaterThan(shaVerification);
+        assertThat(backendStart).isGreaterThan(schemaPreflight);
+        assertThat(workflow)
+                .contains("SPRING_PROFILES_ACTIVE=production")
+                .contains("SPRING_JPA_HIBERNATE_DDL_AUTO=validate")
+                .doesNotContain("20260917_payment_money_invariants.sql");
+
+        assertThat(Files.readString(COMPOSE_FILE))
+                .contains("SPRING_PROFILES_ACTIVE: \"${SPRING_PROFILES_ACTIVE:-local}\"")
+                .contains("SPRING_JPA_HIBERNATE_DDL_AUTO: \"${SPRING_JPA_HIBERNATE_DDL_AUTO:-update}\"");
+        assertThat(Files.readString(PRODUCTION_PROPERTIES))
+                .contains("spring.jpa.hibernate.ddl-auto=validate");
+    }
+
+    @Test
+    void schemaPreflight_failsClosedForIncompatibleSchema() throws Exception {
+        Path dockerBin = temporaryDirectory.resolve("bin");
+        Files.createDirectories(dockerBin);
+        Path mockDocker = dockerBin.resolve("docker");
+        Files.writeString(mockDocker, "#!/bin/sh\nprintf '%s\\n' \"$MOCK_SCHEMA_STATE\"\n");
+        assertThat(mockDocker.toFile().setExecutable(true)).isTrue();
+
+        PreflightResult notReady = runSchemaPreflight(dockerBin, "NOT_READY");
+        assertThat(notReady.exitCode()).isEqualTo(1);
+        assertThat(notReady.output())
+                .contains("Payment schema is incompatible")
+                .contains("backend deployment was not started");
+
+        PreflightResult ready = runSchemaPreflight(dockerBin, "READY");
+        assertThat(ready.exitCode()).isZero();
+        assertThat(ready.output()).contains("Payment schema preflight passed.");
     }
 
     @Test
@@ -170,17 +272,22 @@ class PaymentMoneyInvariantBoundaryTest {
     }
 
     @Test
-    void deployNote_documentsOrderingVerificationRetirementAndNonDestructiveRollback() throws Exception {
+    void deployNote_documentsSafeMaintenanceMigrationAndApplicationRollout() throws Exception {
         assertThat(DEPLOY_NOTE).exists();
         String deployNote = Files.readString(DEPLOY_NOTE);
 
         assertThat(deployNote)
-                .contains("SQL")
-                .contains("backend")
-                .contains("frontend")
-                .contains("verify the exact image SHA/version")
-                .contains("Retire the previous calculation path")
-                .contains("Do not shrink or drop snapshot columns")
+                .contains("Freeze payment registration, review, and void writes")
+                .contains("verify it by restoring it to a disposable database")
+                .contains("docker compose exec -T db")
+                .contains("read-only checks")
+                .contains("explicit `production` profile")
+                .contains("Vercel production promotion")
+                .contains("Verify the deployed SHA and backend health")
+                .contains("cv=2` token is invalid immediately")
+                .contains("read-only verification queries")
+                .contains("corrective `UPDATE`")
+                .contains("do not shrink or drop snapshot columns")
                 .contains("suspend cross-currency payments");
     }
 
@@ -214,15 +321,20 @@ class PaymentMoneyInvariantBoundaryTest {
                 .contains("github.event_name == 'push' && github.ref == 'refs/heads/main'")
                 .contains("git reset --hard \"$DEPLOY_SHA\"")
                 .contains("npm run lint")
+                .contains("./scripts/check-payment-schema-readiness.sh")
+                .contains("SPRING_PROFILES_ACTIVE=production")
+                .contains("SPRING_JPA_HIBERNATE_DDL_AUTO=validate")
                 .contains("Payment Money Invariants");
 
         assertThat(Files.readString(OPERATIONS_GUIDE))
-                .contains("SQL → backend → frontend")
+                .contains("write freeze + verified backup → SQL migration")
                 .contains("Do not recalculate approved payment history")
                 .contains("No credit or overpayment ledger")
                 .contains("Manual input is preserved")
                 .contains("CASE F")
-                .contains("CASE G");
+                .contains("CASE G")
+                .contains("CASE J")
+                .contains("anchorRemainingAmount");
     }
 
     private static List<SnapshotRow> readSnapshotRows(Statement statement) throws Exception {
@@ -247,6 +359,26 @@ class PaymentMoneyInvariantBoundaryTest {
         }
     }
 
+    private PreflightResult runSchemaPreflight(Path dockerBin, String schemaState) throws Exception {
+        ProcessBuilder processBuilder = new ProcessBuilder(
+                "bash",
+                SCHEMA_PREFLIGHT_SCRIPT.toAbsolutePath().toString()
+        ).directory(Path.of(".").toAbsolutePath().toFile()).redirectErrorStream(true);
+        Map<String, String> processEnvironment = processBuilder.environment();
+        processEnvironment.put(
+                "PATH",
+                dockerBin + System.getProperty("path.separator") + processEnvironment.getOrDefault("PATH", "")
+        );
+        processEnvironment.put("MOCK_SCHEMA_STATE", schemaState);
+
+        Process process = processBuilder.start();
+        String output;
+        try (var outputStream = process.getInputStream()) {
+            output = new String(outputStream.readAllBytes(), StandardCharsets.UTF_8);
+        }
+        return new PreflightResult(process.waitFor(), output);
+    }
+
     private record SnapshotRow(
             Long id,
             BigDecimal exchangeRate,
@@ -255,5 +387,8 @@ class PaymentMoneyInvariantBoundaryTest {
             String calculationVersion,
             String status
     ) {
+    }
+
+    private record PreflightResult(int exitCode, String output) {
     }
 }

@@ -105,4 +105,5 @@ jobs:
             echo "Deploy target SHA: $DEPLOY_SHA"
             echo "Checked out SHA:   $ACTUAL_SHA"
             test "$ACTUAL_SHA" = "$DEPLOY_SHA"
-            docker compose up -d --build backend
+            ./scripts/check-payment-schema-readiness.sh
+            SPRING_PROFILES_ACTIVE=production SPRING_JPA_HIBERNATE_DDL_AUTO=validate docker compose up -d --build backend

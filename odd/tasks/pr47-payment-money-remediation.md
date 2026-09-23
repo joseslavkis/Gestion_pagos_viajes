@@ -115,7 +115,7 @@ All work-unit statuses begin **pending**. Each unit follows strict TDD, includes
 
 ### PMR-02 — Preserve frontend approval and payment input state
 
-**Status:** implementation and focused verification complete; work-unit commit pending
+**Status:** implementation, focused verification, and work-unit commit complete; parent verification pending
 
 **Intent:** make approval and amount-entry state explicit so malformed edits cannot approve more than intended and selected-installment context is not replaced by broader debt.
 
@@ -139,11 +139,11 @@ All work-unit statuses begin **pending**. Each unit follows strict TDD, includes
 
 **Verification update:** `cd frontend && npm ci` passed (402 packages installed; npm reported 25 dependency advisories and install scripts awaiting approval). `cd frontend && NODE_OPTIONS=--no-experimental-webstorage npm test` passed: 27 files, 112 tests. `cd frontend && npm run build` passed. `cd frontend && npm run lint` passed with 0 errors and 3 warnings in unmodified TokenContext/session files. The full backend suite and isolated payment harnesses remain for final verification.
 
-**Conventional Commit placeholder:** `fix(frontend): preserve strict payment review and input state`
+**Commit evidence:** local commit `d22dbd2b13891ea2b0ab6af6911977c80a0d0f5d`, parent `7519c991084463462201d17de5b6a52b955e8fe8`; `fix(frontend): preserve strict payment review and input state`. Change size: 412 additions, 79 deletions. Parent risk assessment and spot check remain pending.
 
 ### PMR-03 — Guard migration rollout and document operations
 
-**Status:** pending
+**Status:** implementation and focused/full-backend verification passed; work-unit commit pending
 
 **Intent:** prevent a backend requiring the payment schema change from being deployed before the migration is confirmed, while keeping historical data and the existing deployment safety model intact.
 
@@ -172,7 +172,7 @@ All work-unit statuses begin **pending**. Each unit follows strict TDD, includes
 
 **Verification evidence:** record the actual risk tier and writer profile, the parent's post-completion risk assessment and one spot-check result, and any independent verifier required by the tier rule above. If no separate verifier is required, record `N/A` with the tier/profile reason. Do not launch receipt-based reviews or native lenses while RDD is `off`.
 
-**Progress:** pending; RED `[pending]`; GREEN `[pending]`; refactor rerun `[pending]`; disposable-DB result `[pending]`; route evidence `[pending]`; parent risk assessment `[pending]`; parent spot check `[pending]`; conditional independent verifier `[pending risk assessment]`.
+**Progress:** implementation complete; commit and parent review remain pending. RED: `PaymentSubmissionSnapshotContractTest#persistenceDefaultsMissingCalculationVersionToLegacyV1` failed as expected (`v1` expected, `null` observed). GREEN/refactor: `./mvnw -Dtest=PaymentMoneyInvariantBoundaryTest,PaymentSubmissionSnapshotContractTest test` — 11 tests, 0 failures/errors/skips, including disposable PostgreSQL migration idempotence, historical preservation, omitted-column default, explicit-NULL rejection, and Hibernate validation. Process-level readiness regression: `./mvnw -Dtest=PaymentMoneyInvariantBoundaryTest#schemaPreflight_failsClosedForIncompatibleSchema test` — 1 passed for both `NOT_READY` and `READY` mock-Docker results. Full backend: `./mvnw clean test` — 329 tests, 0 failures/errors/skips. Compose validation: `docker compose --env-file .env.example config --no-env-resolution --quiet` passed; `bash -n scripts/check-payment-schema-readiness.sh` passed and the script is executable. A first unclean `./mvnw test` could not start tests because stale duplicate `TestcontainersConfiguration 2/3.class` files existed under `target`; `clean test` removed the stale classes and passed. The production preflight itself was not run against any database. Aggregate harness, commit, parent risk assessment, spot check, and any tier-required independent verification remain pending.
 
 **Conventional Commit placeholder:** `fix(deploy): gate payment backend on schema readiness`
 
@@ -227,13 +227,13 @@ All work-unit statuses begin **pending**. Each unit follows strict TDD, includes
 
 ## Progress, evidence, and next step
 
-**Overall status:** in progress. PMR-01 is committed; PMR-02 implementation and focused verification are complete pending its work-unit commit and parent review. PMR-03 and PMR-04 remain pending. Local commit `7519c991084463462201d17de5b6a52b955e8fe8` (`add agents.md`) was present on resume; this writer did not create or alter it. `openspec/` remains untracked and untouched. No push, merge, deployment, production access, or SQL execution has occurred.
+**Overall status:** in progress. PMR-01 and PMR-02 are committed; PMR-03 implementation and focused/full-backend verification passed but its work-unit commit and parent review remain pending. PMR-04 remains pending. Local commit `7519c991084463462201d17de5b6a52b955e8fe8` (`add agents.md`) was present on resume; this writer did not create or alter it. `openspec/` remains untracked and untouched. No push, merge, deployment, production access, or production SQL execution has occurred.
 
 | Task | Status | RED / GREEN / refactor evidence | Route evidence | Verification evidence | Commit ID |
 |---|---|---|---|---|---|
 | PMR-01 | implemented and committed | RED: provider-rate scale and four API regressions failed; GREEN/refactor: expanded backend payment suite, 75 passed | delegated direct; one writer, no child agents | parent risk assessment, spot check, and conditional verifier pending | `efcfa467fbe5d340ec7f2bac27a62d40a6313bc6` |
-| PMR-02 | implemented; focused verification passed; commit pending | RED/GREEN for strict review parser, canonical anchor balance, manual cent parser, backend canonical balance, and explicit anchor field; full frontend suite and focused backend suite passed | delegated direct; one writer, no child agents | parent risk assessment, spot check, and conditional verifier pending | pending |
-| PMR-03 | pending | pending | pending | pending | pending |
+| PMR-02 | implemented and committed | RED/GREEN for strict review parser, canonical anchor balance, manual cent parser, backend canonical balance, and explicit anchor field; full frontend suite and focused backend suite passed | delegated direct; one writer, no child agents | parent risk assessment, spot check, and conditional verifier pending | `d22dbd2b13891ea2b0ab6af6911977c80a0d0f5d` |
+| PMR-03 | implemented; focused/full-backend verification passed; commit pending | RED for legacy `v1` fallback; focused 11 tests + the process-level preflight regression passed; full backend 329 tests passed; Compose/shell checks passed | delegated direct; one writer, no child agents | parent risk assessment, spot check, aggregate harness, and conditional verifier pending | pending |
 | PMR-04 | pending | pending | pending | pending | pending |
 
 ### Work-unit commit evidence placeholders
@@ -243,8 +243,8 @@ Fill one row per work unit after implementation; do not mark a task complete bef
 | Task | Commit / parent SHA | Conventional Commit message | Focused test command + exact result | Runtime harness + exact result / N/A reason | Rollback boundary | Authored additions + deletions |
 |---|---|---|---|---|---|---|
 | PMR-01 | `efcfa467fbe5d340ec7f2bac27a62d40a6313bc6` / parent `efbbe1c746f2e3162600f0cf11e7ec9a1c08fa17` | fix(payment): enforce safe monetary limits and rate identity | RED `./mvnw -Dtest=PaymentMoneyPolicyTest test` — 9 run, 1 expected failure; integration RED `./mvnw -Dtest=PaymentMoneyPolicyTest,PaymentRestControllerFreeAmountTest test` — 33 run, 4 expected failures; GREEN/refactor expanded backend payment suite — 75 run, 0 failures/errors/skips | N/A for this unit: focused Testcontainers/PostgreSQL integration covers persistence-sensitive behavior; isolated full-stack/concurrency harnesses are reserved for PMR-04 | `PaymentMoneyPolicy`, `PaymentService`, `PaymentAllocationPlanner`, `PaymentPreviewTokenService`, business-date policy/configuration, calculation DTO, and PMR-01 regression tests | 852 additions + 77 deletions |
-| PMR-02 | pending | fix(frontend): preserve strict payment review and input state | RED `NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/features/payments/pages/__tests__/PendingReviewPage.test.tsx` — 5 run, 2 expected failures; GREEN — 5 passed. Anchor/manual/dashboard component and DTO regressions GREEN. `NODE_OPTIONS=--no-experimental-webstorage npm test` — 27 files/112 passed; `npm run build` passed; `npm run lint` passed with 0 errors/3 warnings. Backend focused — 29 tests passed | N/A for this unit: component/API integration checks run; full-stack lifecycle harness is PMR-04 | `PaymentService.java`, `UserInstallmentDTO.java`, `PaymentCalculationResponseDTO.java`, `PaymentRestControllerFreeAmountTest.java`, and PMR-02 frontend files | pending |
-| PMR-03 | pending | pending | pending | pending | pending | pending |
+| PMR-02 | `d22dbd2b13891ea2b0ab6af6911977c80a0d0f5d` / parent `7519c991084463462201d17de5b6a52b955e8fe8` | fix(frontend): preserve strict payment review and input state | RED `NODE_OPTIONS=--no-experimental-webstorage npx vitest run src/features/payments/pages/__tests__/PendingReviewPage.test.tsx` — 5 run, 2 expected failures; GREEN — 5 passed. Anchor/manual/dashboard component and DTO regressions GREEN. `NODE_OPTIONS=--no-experimental-webstorage npm test` — 27 files/112 passed; `npm run build` passed; `npm run lint` passed with 0 errors/3 warnings. Backend focused — 29 tests passed | N/A for this unit: component/API integration checks run; full-stack lifecycle harness is PMR-04 | `PaymentService.java`, DTOs, controller tests, and PMR-02 frontend files | 412 additions + 79 deletions |
+| PMR-03 | pending | fix(deploy): gate payment backend on schema readiness | RED legacy `v1` fallback — 1 expected failure (`null`); GREEN `./mvnw -Dtest=PaymentMoneyInvariantBoundaryTest,PaymentSubmissionSnapshotContractTest test` — 11 passed; process-level preflight regression — 1 passed; `./mvnw clean test` — 329 passed; Compose and shell syntax checks passed | N/A: production preflight must not be run against an unauthorized live database; migration and Hibernate validation ran against disposable Testcontainers PostgreSQL | Additive schema default/NOT NULL and corresponding startup/deploy guard; roll back application artifacts only and keep schema widening/default/constraint | pending |
 | PMR-04 | pending | pending | pending | pending | pending | pending |
 
-**Next step:** commit PMR-02 on the existing branch, then start PMR-03 with a failing migration/deploy-readiness regression. Continue strict RED → GREEN → REFACTOR. Keep all implementation local; do not push or make remote changes.
+**Next step:** commit PMR-03 on the existing branch after the remaining aggregate/risk checks, then start PMR-04 with a failing lifecycle regression. Continue strict RED → GREEN → REFACTOR. Keep all implementation local; do not push or make remote changes.

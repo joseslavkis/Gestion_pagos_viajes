@@ -18,6 +18,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.ColumnDefault;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -96,7 +97,8 @@ public class PaymentSubmission {
     @Column(name = "exchange_rate_provider_timestamp", length = 128)
     private String exchangeRateProviderTimestamp;
 
-    @Column(name = "calculation_version", length = 16)
+    @Column(name = "calculation_version", length = 16, nullable = false)
+    @ColumnDefault("'v1'")
     private String calculationVersion;
 
     @Enumerated(EnumType.STRING)
@@ -123,6 +125,9 @@ public class PaymentSubmission {
         }
         if (fileKey == null) {
             fileKey = "";
+        }
+        if (calculationVersion == null) {
+            calculationVersion = "v1";
         }
         if (createdAt == null) {
             createdAt = LocalDateTime.now();
