@@ -1059,6 +1059,95 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
     }
 
     @Test
+    void reviewPayment_partialCrossCurrencyAcrossInstallmentsConservesBothCurrenciesAndVoidReversesPersistedAllocations()
+            throws Exception {
+        LocalDate paymentDate = LocalDate.now();
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-case-j-multi-installment"));
+        PaymentFixture fixture = createPaymentFixture("payment-case-j-multi-installment", Currency.ARS);
+        Installment first = createInstallment(
+                fixture.trip(), fixture.user(), fixture.student(), 1, "700.00", InstallmentStatus.YELLOW);
+        Installment second = createInstallment(
+                fixture.trip(), fixture.user(), fixture.student(), 2, "700.00", InstallmentStatus.YELLOW);
+        BankAccount bankAccount = createBankAccount(Currency.USD);
+        given(exchangeRateService.getOfficialQuoteForDate(paymentDate)).willReturn(new ExchangeRateQuote(
+                new BigDecimal("1234.56"), paymentDate, paymentDate, "official", "provider-case-j", null));
+        given(paymentAttachmentStorageService.storeReceipt(any(), anyLong(), anyLong(), any()))
+                .willReturn("receipts/case-j.png");
+
+        PaymentBatchPreviewDTO preview = paymentService.previewPayment(
+                new PaymentPreviewRequestDTO(first.getId(), new BigDecimal("1.00"), paymentDate, Currency.USD),
+                fixture.user().getEmail());
+        assertEquals(new BigDecimal("1234.56"), preview.amountInTripCurrency());
+        assertEquals(2, preview.installments().size());
+        org.mockito.Mockito.clearInvocations(exchangeRateService);
+
+        PaymentSubmissionDTO registered = paymentService.registerPayment(
+                new RegisterPaymentDTO(
+                        first.getId(),
+                        new BigDecimal("1.00"),
+                        paymentDate,
+                        Currency.USD,
+                        PaymentMethod.BANK_TRANSFER,
+                        bankAccount.getId(),
+                        preview.previewToken()),
+                fixture.user().getEmail());
+        PaymentSubmission reloadedPending = paymentSubmissionRepository.findByIdWithContext(registered.submissionId())
+                .orElseThrow();
+        assertEquals(new BigDecimal("1.00"), reloadedPending.getReportedAmount());
+        assertEquals(new BigDecimal("1234.56"), reloadedPending.getAmountInTripCurrency());
+        assertEquals(new BigDecimal("0.00"), installmentRepository.findById(first.getId()).orElseThrow().getPaidAmount());
+        assertEquals(new BigDecimal("0.00"), installmentRepository.findById(second.getId()).orElseThrow().getPaidAmount());
+
+        PaymentSubmissionDTO reviewed = paymentService.reviewPayment(
+                registered.submissionId(),
+                new ReviewPaymentDTO(new BigDecimal("0.50"), "Partial cross-currency approval"),
+                "admin@test.com");
+        PaymentSubmission reloadedReviewed = paymentSubmissionRepository.findByIdWithContext(registered.submissionId())
+                .orElseThrow();
+        PaymentOutcome approved = reloadedReviewed.getOutcomes().stream()
+                .filter(outcome -> outcome.getStatus() == PaymentOutcomeStatus.APPROVED)
+                .findFirst()
+                .orElseThrow();
+        PaymentOutcome rejected = reloadedReviewed.getOutcomes().stream()
+                .filter(outcome -> outcome.getStatus() == PaymentOutcomeStatus.REJECTED)
+                .findFirst()
+                .orElseThrow();
+
+        assertEquals("PARTIALLY_APPROVED", reviewed.status().name());
+        assertEquals(new BigDecimal("0.50"), approved.getReportedAmount());
+        assertEquals(new BigDecimal("0.50"), rejected.getReportedAmount());
+        assertEquals(new BigDecimal("617.28"), approved.getAmountInTripCurrency());
+        assertEquals(new BigDecimal("617.28"), rejected.getAmountInTripCurrency());
+        assertEquals(reloadedReviewed.getReportedAmount(),
+                approved.getReportedAmount().add(rejected.getReportedAmount()));
+        assertEquals(reloadedReviewed.getAmountInTripCurrency(),
+                approved.getAmountInTripCurrency().add(rejected.getAmountInTripCurrency()));
+        assertEquals(1, approved.getAllocations().size());
+        PaymentAllocation persistedAllocation = approved.getAllocations().stream().findFirst().orElseThrow();
+        assertEquals(first.getId(), persistedAllocation.getInstallment().getId());
+        assertEquals(new BigDecimal("0.50"), persistedAllocation.getReportedAmount());
+        assertEquals(new BigDecimal("617.28"), persistedAllocation.getAmountInTripCurrency());
+        assertEquals(new BigDecimal("617.28"), installmentRepository.findById(first.getId()).orElseThrow().getPaidAmount());
+        assertEquals(new BigDecimal("0.00"), installmentRepository.findById(second.getId()).orElseThrow().getPaidAmount());
+
+        paymentService.voidPayment(registered.submissionId(), "admin@test.com");
+
+        assertEquals(new BigDecimal("0.00"), installmentRepository.findById(first.getId()).orElseThrow().getPaidAmount());
+        assertEquals(new BigDecimal("0.00"), installmentRepository.findById(second.getId()).orElseThrow().getPaidAmount());
+        PaymentSubmission reloadedVoided = paymentSubmissionRepository.findByIdWithContext(registered.submissionId())
+                .orElseThrow();
+        PaymentOutcome voided = reloadedVoided.getOutcomes().stream()
+                .filter(outcome -> outcome.getStatus() == PaymentOutcomeStatus.VOIDED)
+                .findFirst()
+                .orElseThrow();
+        assertEquals(approved.getReportedAmount(), voided.getReportedAmount());
+        assertEquals(approved.getAmountInTripCurrency(), voided.getAmountInTripCurrency());
+        assertEquals(new BigDecimal("617.28"), persistedAllocation.getAmountInTripCurrency());
+        org.mockito.Mockito.verify(exchangeRateService, org.mockito.Mockito.never())
+                .getOfficialQuoteForDate(org.mockito.ArgumentMatchers.any(LocalDate.class));
+    }
+
+    @Test
     void reviewPayment_rejectsSubcentApprovalWithoutChangingPendingFinancialState() throws Exception {
         TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-subcent-approval"));
         LocalDate paymentDate = LocalDate.now();
