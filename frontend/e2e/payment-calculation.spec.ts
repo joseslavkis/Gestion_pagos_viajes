@@ -134,7 +134,7 @@ test("CASE J conserves a partial cross-currency lifecycle across installments an
     paymentCurrency: "USD",
     exchangeRate: "1234.56",
     amountInTripCurrency: "1234.56",
-    calculationVersion: "3",
+    calculationVersion: "2",
   });
 
   const pendingAllocations = pendingPayment.installments as Array<Record<string, unknown>>;

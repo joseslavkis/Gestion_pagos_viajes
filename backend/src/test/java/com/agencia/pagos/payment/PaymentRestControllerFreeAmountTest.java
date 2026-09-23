@@ -258,7 +258,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                 .andExpect(jsonPath("$.tripCurrencyResidual").value("0.00"))
                 .andExpect(jsonPath("$.exchangeRate").value("1015.50"))
                 .andExpect(jsonPath("$.quoteProvider").value("provider-a"))
-                .andExpect(jsonPath("$.calculationVersion").value("3"))
+                .andExpect(jsonPath("$.calculationVersion").value("2"))
                 .andExpect(jsonPath("$.previewToken").isNotEmpty());
 
         org.mockito.Mockito.verify(exchangeRateService, org.mockito.Mockito.times(1))

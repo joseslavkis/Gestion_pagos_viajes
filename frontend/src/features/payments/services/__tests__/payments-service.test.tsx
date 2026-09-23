@@ -53,7 +53,7 @@ const readyCalculation = {
   quoteSource: "official",
   quoteProvider: "provider-a",
   quoteProviderTimestamp: "2026-09-18T12:00:00Z",
-  calculationVersion: "3",
+  calculationVersion: "2",
   previewToken: "token",
   installments: [],
   message: null,

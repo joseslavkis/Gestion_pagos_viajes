@@ -41,7 +41,7 @@ public class PaymentPreviewTokenService {
     private static final String CLAIM_CALCULATION_VERSION = "cv";
     private static final String CLAIM_INTENT = "intent";
     private static final String PREVIEW_TYPE = "payment-preview";
-    public static final String CURRENT_CALCULATION_VERSION = "3";
+    public static final String CURRENT_CALCULATION_VERSION = "2";
 
     private final SecretKey signingKey;
     private final Duration tokenTtl;

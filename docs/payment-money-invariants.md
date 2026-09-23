@@ -44,7 +44,7 @@ The browser harness requires the pinned Playwright test package and Chromium run
 - CASE J keeps the rejected trip-currency result as the residual share of the original persisted conversion; it is not independently reconverted or credited, and void reverses the persisted approved allocations.
 - Calculation responses name the validated first-installment balance `anchorRemainingAmount` and the enrollment sum `totalPendingAmountInTripCurrency`; only the backend determines either value.
 - Submission stays blocked while calculation is pending, unavailable, expired, or associated with a different input currency.
-- Every preview token issued with the old `cv=2` contract is invalid immediately; users recalculate before registration. Persisted legacy `v1` pending submissions remain reviewable from their stored rate/date snapshot without provider refetch.
+- Every preview token without the required `cv=2` claim is invalid immediately; users recalculate before registration. Persisted legacy `v1` pending submissions remain reviewable from their stored rate/date snapshot without provider refetch.
 
 ## Rollout and rollback
 

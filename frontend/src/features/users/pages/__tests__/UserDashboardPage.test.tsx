@@ -53,7 +53,7 @@ function makeCalculationResponse({
     tripCurrencyResidual: "0.00",
     exchangeRate: exchangeRate == null ? null : decimal(exchangeRate),
     reportedPaymentDate: body.reportedPaymentDate,
-    calculationVersion: "3",
+    calculationVersion: "2",
     previewToken: status === "READY" ? "preview-token" : null,
     installments,
     message,

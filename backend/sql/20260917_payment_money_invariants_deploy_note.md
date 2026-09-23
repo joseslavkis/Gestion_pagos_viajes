@@ -71,7 +71,7 @@ The schema preflight command uses read-only `SELECT` queries, verifies the migra
 
 ## Legacy pending submissions
 
-Rows labeled `v1` retain the persisted scale-2 rate. Review never calls an exchange-rate provider and never reconstructs lost precision. Approval is recorded as an explicit legacy reconciliation; rejection remains explicit through the reviewer observation. New preview tokens use calculation version `3`; every earlier `cv=2` token is invalid immediately, so users must recalculate rather than waiting for the old token TTL.
+Rows labeled `v1` retain the persisted scale-2 rate. Review never calls an exchange-rate provider and never reconstructs lost precision. Approval is recorded as an explicit legacy reconciliation; rejection remains explicit through the reviewer observation. New preview tokens use calculation version `2`; every earlier token without the required `cv=2` claim is invalid immediately, so users must recalculate before registration.
 
 For partial cross-currency review, the rejected trip-currency value is the residual share of the original persisted conversion snapshot. Approved and rejected outcomes conserve that original reported amount and trip-currency snapshot; do not treat the rejected portion as an independent conversion at a new rate.
 

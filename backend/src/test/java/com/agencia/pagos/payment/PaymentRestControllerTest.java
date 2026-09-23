@@ -175,7 +175,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 .andExpect(jsonPath("$.quoteSource").value("official-closing"))
                 .andExpect(jsonPath("$.quoteProvider").value("argentinadatos.com"))
                 .andExpect(jsonPath("$.quoteProviderTimestamp").value("2026-09-18T15:30:00Z"))
-                .andExpect(jsonPath("$.calculationVersion").value("3"))
+                .andExpect(jsonPath("$.calculationVersion").value("2"))
                 .andReturn()
                 .getResponse()
                 .getContentAsString();
@@ -200,7 +200,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 .andExpect(jsonPath("$.exchangeRate").value("1234.567"))
                 .andExpect(jsonPath("$.quoteSource").value("official-closing"))
                 .andExpect(jsonPath("$.quoteProvider").value("argentinadatos.com"))
-                .andExpect(jsonPath("$.calculationVersion").value("3"))
+                .andExpect(jsonPath("$.calculationVersion").value("2"))
                 .andReturn()
                 .getResponse()
                 .getContentAsString();
@@ -222,7 +222,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
         assertThat(reloaded.getExchangeRateSource()).isEqualTo("official-closing");
         assertThat(reloaded.getExchangeRateProvider()).isEqualTo("argentinadatos.com");
         assertThat(reloaded.getExchangeRateProviderTimestamp()).isEqualTo("2026-09-18T15:30:00Z");
-        assertThat(reloaded.getCalculationVersion()).isEqualTo("3");
+        assertThat(reloaded.getCalculationVersion()).isEqualTo("2");
 
         Map<String, Object> persistedSnapshot = jdbcTemplate.queryForMap("""
                 SELECT exchange_rate, exchange_rate_scale, exchange_rate_source,
@@ -235,7 +235,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
         assertThat(persistedSnapshot.get("exchange_rate_scale")).isEqualTo(3);
         assertThat(persistedSnapshot.get("exchange_rate_source")).isEqualTo("official-closing");
         assertThat(persistedSnapshot.get("exchange_rate_provider")).isEqualTo("argentinadatos.com");
-        assertThat(persistedSnapshot.get("calculation_version")).isEqualTo("3");
+        assertThat(persistedSnapshot.get("calculation_version")).isEqualTo("2");
     }
 
     @Test
@@ -700,7 +700,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
         assertThat(reloaded.getExchangeRateSource()).isEqualTo(quote.source());
         assertThat(reloaded.getExchangeRateProvider()).isEqualTo(quote.provider());
         assertThat(reloaded.getExchangeRateProviderTimestamp()).isEqualTo(quote.providerTimestamp());
-        assertThat(reloaded.getCalculationVersion()).isEqualTo("3");
+        assertThat(reloaded.getCalculationVersion()).isEqualTo("2");
     }
 
     private PaymentFixture createPaymentFixture(String prefix, Currency currency) throws Exception {

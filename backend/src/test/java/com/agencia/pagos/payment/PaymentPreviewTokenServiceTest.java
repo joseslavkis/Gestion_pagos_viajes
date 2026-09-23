@@ -65,7 +65,7 @@ class PaymentPreviewTokenServiceTest {
         assertEquals("argentinadatos.com", s.quoteProvider());
         assertEquals("2026-05-05T12:30:00Z", s.quoteProviderTimestamp());
         assertEquals(PaymentCalculationIntent.REMAINING, s.intent());
-        assertEquals("3", s.calculationVersion());
+        assertEquals("2", s.calculationVersion());
     }
 
     @Test
@@ -103,7 +103,7 @@ class PaymentPreviewTokenServiceTest {
     }
 
     @Test
-    void issuedTokenDeclaresCalculationVersionThreeAndIntent() throws Exception {
+    void issuedTokenDeclaresCalculationVersionTwoAndIntent() throws Exception {
         PaymentPreviewTokenService service = newService();
         String token = service.issueToken(sampleSnapshot(42L));
 
@@ -112,29 +112,43 @@ class PaymentPreviewTokenServiceTest {
                 java.nio.charset.StandardCharsets.UTF_8
         );
 
-        assertTrue(payload.contains("\"cv\":\"3\""));
+        assertTrue(payload.contains("\"cv\":\"2\""));
         assertTrue(payload.contains("\"intent\":\"REMAINING\""));
         assertTrue(payload.contains("\"quoteProvider\""));
     }
 
     @Test
-    void missingAndVersionOneTokensAreRejectedAcrossDeployWindow() {
+    void baseBackendTokenWithoutCalculationVersionRequiresImmediateRecalculation() {
+        PaymentPreviewTokenService service = newService();
+
+        PaymentPreviewTokenService.TokenValidation validation = service.validateToken(legacyToken(null), 42L);
+
+        assertEquals(PaymentPreviewTokenService.TokenValidationStatus.INVALID, validation.status());
+        assertTrue(validation.snapshot().isEmpty());
+    }
+
+    @Test
+    void versionlessAndNoncurrentTokensAreRejectedWhileVersionTwoRemainsValid() {
         PaymentPreviewTokenService service = newService();
 
         assertTrue(service.parseAndValidate(legacyToken(null), 42L).isEmpty());
         assertTrue(service.parseAndValidate(legacyToken("1"), 42L).isEmpty());
-        assertTrue(service.parseAndValidate(legacyToken("2"), 42L).isEmpty());
         assertTrue(service.parseAndValidate(legacyToken("3"), 42L).isEmpty());
+
+        PaymentPreviewTokenService.PreviewSnapshot versionTwo =
+                service.parseAndValidate(legacyToken("2"), 42L).orElseThrow();
+        assertEquals("2", versionTwo.calculationVersion());
+        assertEquals(PaymentCalculationIntent.REMAINING, versionTwo.intent());
     }
 
     @Test
-    void versionTwoPreviewTokenIsInvalidImmediatelyEvenWhenExpired() {
+    void expiredVersionTwoTokenRemainsExpired() {
         PaymentPreviewTokenService service = newService();
         String expired = tokenWithVersionAndWindow("2", Instant.now().minusSeconds(600), Instant.now().minusSeconds(300));
 
         PaymentPreviewTokenService.TokenValidation validation = service.validateToken(expired, 42L);
 
-        assertEquals(PaymentPreviewTokenService.TokenValidationStatus.INVALID, validation.status());
+        assertEquals(PaymentPreviewTokenService.TokenValidationStatus.EXPIRED, validation.status());
         assertTrue(validation.snapshot().isEmpty());
         assertTrue(service.parseAndValidate(expired, 42L).isEmpty());
     }
@@ -169,6 +183,7 @@ class PaymentPreviewTokenServiceTest {
                 .claim("quoteEffectiveDate", "2026-05-05")
                 .claim("quoteSource", "official")
                 .claim("quoteProvider", "provider-a")
+                .claim("intent", "REMAINING")
                 .issuedAt(Date.from(issuedAt))
                 .expiration(Date.from(expiresAt));
         if (calculationVersion != null) {
