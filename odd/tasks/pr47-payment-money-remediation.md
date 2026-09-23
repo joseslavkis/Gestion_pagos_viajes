@@ -87,7 +87,7 @@ All work-unit statuses begin **pending**. Each unit follows strict TDD, includes
 
 ### PMR-01 — Enforce backend payment amount rules
 
-**Status:** implemented and committed; parent verification pending
+**Status:** implemented and committed; reopened solely for missing test evidence, now closed by the coverage-only supplement; parent verification pending
 
 **Intent:** make payment suggestions and submissions safe at monetary rounding boundaries and reject invalid conversions before persistence.
 
@@ -186,7 +186,7 @@ All work-unit statuses begin **pending**. Each unit follows strict TDD, includes
 
 ### PMR-04 — Prove payment lifecycle and invariant coverage
 
-**Status:** implementation, aggregate verification, work-unit commit, and medium-risk parent spot-check complete
+**Status:** implementation, aggregate verification, work-unit commit, and medium-risk parent spot-check complete; reopened solely for missing test evidence, now closed by the coverage-only supplement
 
 **Intent:** demonstrate that the backend and UI behavior remains financially consistent across the complete payment lifecycle, persistence reloads, approval, and reversal.
 
@@ -226,6 +226,23 @@ All work-unit statuses begin **pending**. Each unit follows strict TDD, includes
 
 **Commit evidence:** `ed39192e99b9ddff5524a70d1328b14944477a65` / parent `40898896fd811e7b824e239c5d004261befd3af4`; `test(payment): prove lifecycle monetary invariants`. Change size: 311 additions, 12 deletions.
 
+### Coverage-only supplement — PMR-01 / PMR-04
+
+**Status:** Closed. A fresh independent verifier identified four remaining evidence gaps; implementation behavior was already present, so no production code changed.
+
+| Verifier finding | Added evidence |
+|---|---|
+| The exact rounded over-balance vector lacked a PostgreSQL/controller no-mutation assertion. | Register `0.99 USD` against `100.00 ARS` at a token-pinned `101.30` rate. The controller rejects the rounded `100.29 ARS` conversion, reports `maxAllowedAmount=0.98` and `residualInTripCurrency=0.29`, and leaves submissions, outcomes, allocations, total due, and `paidAmount` unchanged. |
+| Later-installment anchor rejection lacked an explicit fixture proving installment #1 remained pending. | With #1 and #2 both pending, calculation from #2 conflicts; calculation from #1 succeeds and allocates only to #1. Fixture assertions verify installment ordering, balances, and zero paid amounts. |
+| Safe-limit tests asserted the next cent exceeded the balance without asserting the resulting residual. | Each boundary vector now asserts the exact residual, including both currency directions at the half-cent cases, while continuing to call the single `PaymentMoneyPolicy.maxAllowedPaymentAmount`. |
+| Same- and cross-currency future-date endpoint cases relied on system time. | The controller integration context provides a fixed qualified `paymentBusinessClock`; tests assert the selected clock instant/business date and endpoint error date. Payment-date fixtures use the same fixed business day. |
+
+**RED/GREEN:** Before the fixed test clock, `./mvnw -Dtest=PaymentMoneyPolicyTest,PaymentRestControllerFreeAmountTest test` ran 38 tests with 2 expected failures: both future-date requests returned HTTP 200 because the test's 2026-01-02 date was earlier than the host's 2026-09-23 system date. This exposed a test-clock mismatch, not a production defect. With the fixed clock and added coverage, the same focused command passed 40 tests, 0 failures/errors/skips. The real Spring/controller and Testcontainers PostgreSQL paths passed; no financial service or date policy was mocked.
+
+**Final verification:** `cd backend && ./mvnw test` passed 335 tests. `cd frontend && NODE_OPTIONS=--no-experimental-webstorage npm test` passed 27 files / 112 tests; `npm run build` passed; `npm run lint` reported 0 errors and 3 existing warnings. `shellcheck scripts/test-payment-concurrency.sh scripts/test-payment-full-stack.sh scripts/test-payment-money-invariants.sh` and `docker compose --env-file .env.example config --no-env-resolution --quiet` passed. Standalone `./scripts/test-payment-full-stack.sh` passed all 4 Playwright cases. Standalone `./scripts/test-payment-concurrency.sh` passed same-currency review/void (one success and one conflict each, exact single credit/reversal) and 2 cross-currency Testcontainers tests; 2 transient `curl: (52) Empty reply from server` readiness probes occurred while the backend started and the script retried successfully. `./scripts/test-payment-money-invariants.sh` passed with backend 335 tests, frontend 27 files / 112 tests, build, lint, isolated concurrency, and all 4 Playwright cases; its startup loop emitted 3 transient empty replies before succeeding. `npm ci` was not repeated per the follow-up instruction; the earlier 402-package install remains recorded above. The task changes are committed as `test(payment): cover remaining money boundaries`, the single supplemental commit directly after `908ed72e3911c0263534a43e49678b27474f535a`; no earlier commit was amended.
+
+**Production-behavior conclusion:** The new PostgreSQL/controller vector confirms the existing planner rejects the `100.29 ARS` conversion before persistence; the anchor check rejects #2 while #1 is pending; and future-date policy rejects both currency paths when given the fixed business clock. The test gaps did not demonstrate a production behavior defect.
+
 ## Delivery strategy and review forecast
 
 - **Strategy:** `exception-ok` — the existing PR #47 body explicitly records that the cumulative change exceeds the 400-line review budget and that the previously accepted single-PR `size:exception` applies. Do not use this exception to broaden scope.
@@ -235,7 +252,7 @@ All work-unit statuses begin **pending**. Each unit follows strict TDD, includes
 
 ## Progress, evidence, and next step
 
-**Overall status:** PMR-02 and PMR-03 corrections are committed locally and all requested final checks pass; the required fresh independent verification of high-risk PMR-03 and the previously pending PMR-01/02 parent checks remain outstanding. PMR-04 medium-risk parent spot-check is complete. Local commit `7519c991084463462201d17de5b6a52b955e8fe8` (`add agents.md`) was present on resume; this writer did not create or alter it. `openspec/` remains untracked and untouched. No push, merge, deployment, production access, or production SQL execution has occurred.
+**Overall status:** PMR-01/PMR-04 coverage-only evidence is complete in one local supplemental commit; PMR-02 and PMR-03 corrections remain committed. The fresh independent verification of high-risk PMR-03 and previously pending PMR-01/02 parent checks remain outstanding. PMR-04 medium-risk parent spot-check is complete. Local commit `7519c991084463462201d17de5b6a52b955e8fe8` (`add agents.md`) was present on resume; this writer did not create or alter it. `openspec/` remains untracked and untouched. No push, merge, deployment, production access, or production SQL execution has occurred.
 
 | Task | Status | RED / GREEN / refactor evidence | Route evidence | Verification evidence | Commit ID |
 |---|---|---|---|---|---|
@@ -243,6 +260,7 @@ All work-unit statuses begin **pending**. Each unit follows strict TDD, includes
 | PMR-02 | original implementation and `cv=2` correction committed | Original strict parser/anchor/manual regressions plus corrective token writer RED/GREEN; focused backend 52 passed; full backend 333 passed | delegated direct; one writer, no child agents | corrective medium-risk spot-check passed; original parent verification pending | `d22dbd2b13891ea2b0ab6af6911977c80a0d0f5d` + correction `855580f8afb6bbb359cde224e6331315fcdd6032` |
 | PMR-03 | original implementation and fail-closed preflight correction committed | Original migration coverage plus corrective READY/NOT_READY PostgreSQL cases; boundary 9 passed; full backend 333, concurrency, full-stack and aggregate passed | delegated direct; one writer, no child agents | high risk; corrective spot-check passed; fresh independent verification required and still pending | `40898896fd811e7b824e239c5d004261befd3af4` + correction `a3a369a6d6647a68cb0e17d5bf2bb9f2233533ac` |
 | PMR-04 | implemented and committed | RED: CASE J fixture missing; GREEN: backend 1 focused regression and aggregate 330 backend + 4 Playwright tests passed | delegated direct; one writer, no child agents | medium risk; parent spot-check passed; independent verifier N/A per tier/profile | `ed39192e99b9ddff5524a70d1328b14944477a65` |
+| PMR-01/04 coverage supplement | coverage-only follow-up complete | RED: 38 tests / 2 future-date failures due to the unfixed test clock; GREEN: 40 focused tests and all final runners passed, including backend 335 and Playwright 4 | one writer; no production changes | independent verifier supplied the four missing-evidence findings; existing PMR-01/02 parent checks and PMR-03 independent verification remain pending | `test(payment): cover remaining money boundaries`, the single direct child of `908ed72e3911c0263534a43e49678b27474f535a` |
 
 ### Work-unit commit evidence placeholders
 
@@ -255,4 +273,4 @@ Fill one row per work unit after implementation; do not mark a task complete bef
 | PMR-03 | `40898896fd811e7b824e239c5d004261befd3af4` / parent `d22dbd2b13891ea2b0ab6af6911977c80a0d0f5d`; correction `a3a369a6d6647a68cb0e17d5bf2bb9f2233533ac` / parent `855580f8afb6bbb359cde224e6331315fcdd6032` | fix(deploy): gate payment backend on schema readiness; fix(deploy): validate payment schema readiness exactly | RED broad default match: 1 expected failure; READY/NOT_READY Testcontainers regression: 1 passed; boundary class: 9 passed; full backend: 333 passed; ShellCheck and Compose config passed | Aggregate harness passed: backend 333; frontend 27 files/112 tests, build/lint; isolated same/cross-currency concurrency; 4 Playwright cases. Production preflight was not executed against any database. | Shared read-only readiness predicate and preflight runner; application-only rollback remains required, never shrink schema or rewrite financial history | Original: 301 additions + 49 deletions; correction: 190 additions + 59 deletions |
 | PMR-04 | `ed39192e99b9ddff5524a70d1328b14944477a65` / parent `40898896fd811e7b824e239c5d004261befd3af4` | test(payment): prove lifecycle monetary invariants | RED `./scripts/test-payment-full-stack.sh` — 3 passed, 1 expected CASE J missing-fixture failure; GREEN — 4 passed; focused backend multi-installment regression — 1 passed; aggregate script — backend 330, frontend 27/112, build/lint, concurrency and 4 browser tests passed | Full-stack lifecycle and isolated concurrency runs use loopback and disposable Postgres; no live/production database or external FX | Test-only CASE J seeding/browser scenario and backend multi-installment outcome regression; rollback removes only these tests/fixture changes | 311 additions + 12 deletions |
 
-**Next step:** arrange a fresh, read-only independent verification for high-risk PMR-03; no current verifier task ID is available. Then complete the previously outstanding PMR-01/02 parent checks. Keep all implementation local; do not push or make remote changes.
+**Next step:** arrange a fresh, read-only independent verification for high-risk PMR-03; no current verifier task ID is available. Then complete the previously outstanding PMR-01/02 parent checks. The supplemental coverage commit remains local; do not push or make remote changes.

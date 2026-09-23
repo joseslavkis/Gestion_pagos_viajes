@@ -104,12 +104,12 @@ class PaymentMoneyPolicyTest {
 
     @Test
     void safeLimitIsTheLargestCentWhoseRoundedConversionFitsTheBalance() {
-        assertSafeLimit("100.00", Currency.ARS, Currency.USD, "101.30", "0.98");
-        assertSafeLimit("200.00", Currency.ARS, Currency.USD, "3", "66.66");
-        assertSafeLimit("0.01", Currency.USD, Currency.ARS, "1015.50", "15.23");
-        assertSafeLimit("100.00", Currency.ARS, Currency.USD, "4", "25.00");
-        assertSafeLimit("0.01", Currency.ARS, Currency.USD, "0.5", "0.02");
-        assertSafeLimit("0.01", Currency.USD, Currency.ARS, "2", "0.02");
+        assertSafeLimit("100.00", Currency.ARS, Currency.USD, "101.30", "0.98", "0.73");
+        assertSafeLimit("200.00", Currency.ARS, Currency.USD, "3", "66.66", "0.02");
+        assertSafeLimit("0.01", Currency.USD, Currency.ARS, "1015.50", "15.23", "0.00");
+        assertSafeLimit("100.00", Currency.ARS, Currency.USD, "4", "25.00", "0.00");
+        assertSafeLimit("0.01", Currency.ARS, Currency.USD, "0.5", "0.02", "0.00");
+        assertSafeLimit("0.01", Currency.USD, Currency.ARS, "2", "0.02", "0.00");
     }
 
     @Test
@@ -132,7 +132,8 @@ class PaymentMoneyPolicyTest {
             Currency tripCurrency,
             Currency paymentCurrency,
             String rate,
-            String expectedLimit
+            String expectedLimit,
+            String expectedResidual
     ) {
         BigDecimal tripBalance = new BigDecimal(balance);
         BigDecimal exchangeRate = new BigDecimal(rate);
@@ -140,9 +141,10 @@ class PaymentMoneyPolicyTest {
                 tripBalance, tripCurrency, paymentCurrency, exchangeRate);
 
         assertEquals(new BigDecimal(expectedLimit), safeLimit);
-        assertTrue(policy.convertPaymentToTripCurrency(
-                        safeLimit, tripCurrency, paymentCurrency, exchangeRate)
-                .compareTo(tripBalance) <= 0);
+        BigDecimal convertedSafeLimit = policy.convertPaymentToTripCurrency(
+                safeLimit, tripCurrency, paymentCurrency, exchangeRate);
+        assertEquals(new BigDecimal(expectedResidual), tripBalance.subtract(convertedSafeLimit));
+        assertTrue(convertedSafeLimit.compareTo(tripBalance) <= 0);
         assertTrue(policy.convertPaymentToTripCurrency(
                         safeLimit.add(new BigDecimal("0.01")), tripCurrency, paymentCurrency, exchangeRate)
                 .compareTo(tripBalance) > 0);

@@ -3,6 +3,7 @@ package com.agencia.pagos.payment;
 import com.agencia.pagos.TestcontainersConfiguration;
 import com.agencia.pagos.payment.dto.PaymentBatchPreviewDTO;
 import com.agencia.pagos.payment.dto.PaymentPreviewRequestDTO;
+import com.agencia.pagos.payment.dto.PaymentCalculationIntent;
 import com.agencia.pagos.payment.dto.PaymentSubmissionDTO;
 import com.agencia.pagos.payment.dto.RegisterPaymentDTO;
 import com.agencia.pagos.payment.dto.ReviewPaymentDTO;
@@ -27,17 +28,24 @@ import com.agencia.pagos.payment.storage.PaymentAttachmentStorageService;
 import com.agencia.pagos.testsupport.ControllerIntegrationTestSupport;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mock.web.MockMultipartFile;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.Date;
 
 import io.jsonwebtoken.Jwts;
@@ -62,11 +70,27 @@ import static org.hamcrest.Matchers.containsString;
         "app.mail.from=no-reply@agencia.com"
 })
 @AutoConfigureMockMvc
-@Import(TestcontainersConfiguration.class)
+@Import({
+        TestcontainersConfiguration.class,
+        PaymentRestControllerFreeAmountTest.FixedPaymentBusinessClockConfiguration.class
+})
 class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSupport {
 
+    private static final ZoneId BUSINESS_ZONE = ZoneId.of("America/Argentina/Buenos_Aires");
+    private static final Instant BUSINESS_NOW = Instant.parse("2026-01-01T15:00:00Z");
+    private static final LocalDate BUSINESS_TODAY = LocalDate.ofInstant(BUSINESS_NOW, BUSINESS_ZONE);
     private static final String TEST_JWT_SECRET =
             "dGVzdC1zZWNyZXQtcGFyYS1jaS1vbmx5LXF1ZS1zZWEtbG8tc3VmaWNpZW50ZW1lbnRlLWxhcmdvLXBhcmEtaG1hYw==";
+
+    @TestConfiguration(proxyBeanMethods = false)
+    static class FixedPaymentBusinessClockConfiguration {
+        @Bean("fixedPaymentBusinessClock")
+        @Primary
+        @Qualifier("paymentBusinessClock")
+        Clock fixedPaymentBusinessClock() {
+            return Clock.fixed(BUSINESS_NOW, ZoneOffset.UTC);
+        }
+    }
 
     private record PaymentFixture(TokenDTO userTokens, User user, Student student, Trip trip) {}
 
@@ -106,6 +130,13 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
     @Autowired
     private PaymentService paymentService;
 
+    @Autowired
+    private PaymentPreviewTokenService paymentPreviewTokenService;
+
+    @Autowired
+    @Qualifier("paymentBusinessClock")
+    private Clock paymentBusinessClock;
+
     @Test
     void previewPayment_montoLibreDevuelveImputacionSecuencial() throws Exception {
         PaymentFixture fixture = createPaymentFixture("payment-free-preview", Currency.ARS);
@@ -123,7 +154,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                                   "reportedPaymentDate": "%s",
                                   "paymentCurrency": "ARS"
                                 }
-                                """.formatted(first.getId(), LocalDate.now())))
+                                """.formatted(first.getId(), BUSINESS_TODAY)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.anchorInstallmentId").value(first.getId()))
                 .andExpect(jsonPath("$.reportedAmount").value("250.00"))
@@ -175,7 +206,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                                   "reportedPaymentDate": "%s",
                                   "paymentCurrency": "ARS"
                                 }
-                                """.formatted(first.getId(), LocalDate.now())))
+                                """.formatted(first.getId(), BUSINESS_TODAY)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalPendingAmountInTripCurrency").value("170.00"))
                 .andExpect(jsonPath("$.installments.length()").value(2))
@@ -194,8 +225,8 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
         org.mockito.Mockito.when(exchangeRateService.getOfficialQuoteForDate(org.mockito.ArgumentMatchers.any(LocalDate.class)))
                 .thenReturn(new com.agencia.pagos.payment.ExchangeRateQuote(
                         new BigDecimal("1000.00"),
-                        LocalDate.now(),
-                        LocalDate.now(),
+                        BUSINESS_TODAY,
+                        BUSINESS_TODAY,
                         "test",
                         "test",
                         null));
@@ -211,7 +242,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                                   "paymentCurrency": "ARS",
                                   "exchangeRate": 1000.00
                                 }
-                                """.formatted(first.getId(), LocalDate.now())))
+                                """.formatted(first.getId(), BUSINESS_TODAY)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.amountInTripCurrency").value("150.00"))
                 .andExpect(jsonPath("$.totalPendingAmountInTripCurrency").value("200.00"))
@@ -224,7 +255,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
 
     @Test
     void calculateRemaining_caseGUsesAuthoritativeHalfUpSuggestionAndOneQuote() throws Exception {
-        LocalDate paymentDate = LocalDate.now();
+        LocalDate paymentDate = BUSINESS_TODAY;
         PaymentFixture fixture = createPaymentFixture("payment-calculation-case-g", Currency.USD);
         Installment installment = createInstallment(
                 fixture.trip(), fixture.user(), fixture.student(), 1, "0.01", InstallmentStatus.YELLOW);
@@ -267,7 +298,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
 
     @Test
     void calculateRemaining_usesAnchorBalanceForSafeCrossCurrencyMaximum() throws Exception {
-        LocalDate paymentDate = LocalDate.now();
+        LocalDate paymentDate = BUSINESS_TODAY;
         PaymentFixture fixture = createPaymentFixture("payment-calculation-anchor", Currency.ARS);
         Installment anchor = createInstallment(
                 fixture.trip(), fixture.user(), fixture.student(), 1, "200.00", InstallmentStatus.YELLOW);
@@ -299,8 +330,58 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
     }
 
     @Test
+    void calculateRemaining_rejectsAnAnchorAfterTheFirstPendingInstallment() throws Exception {
+        LocalDate paymentDate = BUSINESS_TODAY;
+        PaymentFixture fixture = createPaymentFixture("payment-calculation-later-anchor", Currency.ARS);
+        Installment firstPending = createInstallment(
+                fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+        Installment laterPending = createInstallment(
+                fixture.trip(), fixture.user(), fixture.student(), 2, "100.00", InstallmentStatus.YELLOW);
+
+        assertEquals(1, firstPending.getInstallmentNumber());
+        assertEquals(2, laterPending.getInstallmentNumber());
+        assertEquals(new BigDecimal("100.00"), firstPending.getTotalDue());
+        assertEquals(new BigDecimal("100.00"), laterPending.getTotalDue());
+        assertEquals(0, firstPending.getPaidAmount().compareTo(BigDecimal.ZERO));
+        assertEquals(0, laterPending.getPaidAmount().compareTo(BigDecimal.ZERO));
+
+        mockMvc.perform(post("/api/v1/payments/calculation")
+                        .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "anchorInstallmentId": %d,
+                                  "paymentCurrency": "ARS",
+                                  "reportedPaymentDate": "%s",
+                                  "intent": "REMAINING"
+                                }
+                                """.formatted(laterPending.getId(), paymentDate)))
+                .andExpect(status().isConflict())
+                .andExpect(content().string(containsString("primera cuota pendiente")));
+
+        mockMvc.perform(post("/api/v1/payments/calculation")
+                        .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "anchorInstallmentId": %d,
+                                  "paymentCurrency": "ARS",
+                                  "reportedPaymentDate": "%s",
+                                  "intent": "REMAINING"
+                                }
+                                """.formatted(firstPending.getId(), paymentDate)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("READY"))
+                .andExpect(jsonPath("$.anchorInstallmentId").value(firstPending.getId()))
+                .andExpect(jsonPath("$.anchorRemainingAmount").value("100.00"))
+                .andExpect(jsonPath("$.totalPendingAmountInTripCurrency").value("200.00"))
+                .andExpect(jsonPath("$.installments.length()").value(1))
+                .andExpect(jsonPath("$.installments[0].installmentId").value(firstPending.getId()));
+    }
+
+    @Test
     void registerPayment_rejectsAmountAboveRemainingIntentMaximumWithoutMutation() throws Exception {
-        LocalDate paymentDate = LocalDate.now();
+        LocalDate paymentDate = BUSINESS_TODAY;
         PaymentFixture fixture = createPaymentFixture("payment-safe-maximum-register", Currency.ARS);
         Installment anchor = createInstallment(
                 fixture.trip(), fixture.user(), fixture.student(), 1, "200.00", InstallmentStatus.YELLOW);
@@ -356,8 +437,64 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
     }
 
     @Test
+    void registerPayment_rejectsRoundedCrossCurrencyOverBalanceWithoutMutation() throws Exception {
+        LocalDate paymentDate = BUSINESS_TODAY;
+        PaymentFixture fixture = createPaymentFixture("payment-rounded-over-balance", Currency.ARS);
+        Installment installment = createInstallment(
+                fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+        BankAccount bankAccount = createBankAccount(Currency.USD);
+        // 0.99 USD at 101.30 converts to 100.29 ARS, exceeding the 100.00 balance.
+        String previewToken = paymentPreviewTokenService.issueToken(new PaymentPreviewTokenService.PreviewSnapshot(
+                fixture.user().getId(),
+                installment.getId(),
+                Currency.USD,
+                new BigDecimal("0.99"),
+                paymentDate,
+                new BigDecimal("101.30"),
+                paymentDate,
+                paymentDate,
+                "fixed-test-quote",
+                "fixed-test-provider",
+                null,
+                PaymentCalculationIntent.REMAINING,
+                PaymentPreviewTokenService.CURRENT_CALCULATION_VERSION
+        ));
+        long submissionsBefore = paymentSubmissionRepository.count();
+        long outcomesBefore = paymentOutcomeRepository.count();
+        long allocationsBefore = paymentAllocationRepository.count();
+
+        mockMvc.perform(multipart("/api/v1/payments")
+                        .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                        .param("anchorInstallmentId", String.valueOf(installment.getId()))
+                        .param("reportedAmount", "0.99")
+                        .param("reportedPaymentDate", paymentDate.toString())
+                        .param("paymentCurrency", "USD")
+                        .param("paymentMethod", "BANK_TRANSFER")
+                        .param("bankAccountId", String.valueOf(bankAccount.getId()))
+                        .param("previewToken", previewToken)
+                        .with(request -> {
+                            request.setMethod("POST");
+                            return request;
+                        }))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(containsString("maxAllowedAmount=0.98")))
+                .andExpect(content().string(containsString("residualInTripCurrency=0.29")));
+
+        assertEquals(submissionsBefore, paymentSubmissionRepository.count());
+        assertEquals(outcomesBefore, paymentOutcomeRepository.count());
+        assertEquals(allocationsBefore, paymentAllocationRepository.count());
+        assertEquals(new BigDecimal("100.00"), installmentRepository.findById(installment.getId())
+                .orElseThrow().getTotalDue());
+        assertEquals(new BigDecimal("0.00"), installmentRepository.findById(installment.getId())
+                .orElseThrow().getPaidAmount());
+        org.mockito.Mockito.verify(exchangeRateService, org.mockito.Mockito.never())
+                .getOfficialQuoteForDate(org.mockito.ArgumentMatchers.any(LocalDate.class));
+    }
+
+    @Test
     void calculatePayment_rejectsFutureDateForSameCurrency() throws Exception {
-        LocalDate futureDate = LocalDate.now().plusDays(1);
+        LocalDate futureDate = BUSINESS_TODAY.plusDays(1);
+        assertFixedBusinessClockSelected();
         PaymentFixture fixture = createPaymentFixture("payment-future-same-currency", Currency.ARS);
         Installment installment = createInstallment(
                 fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
@@ -373,12 +510,14 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                                   "intent": "REMAINING"
                                 }
                                 """.formatted(installment.getId(), futureDate)))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(containsString("hoy es " + BUSINESS_TODAY)));
     }
 
     @Test
     void calculatePayment_rejectsFutureDateForCrossCurrency() throws Exception {
-        LocalDate futureDate = LocalDate.now().plusDays(1);
+        LocalDate futureDate = BUSINESS_TODAY.plusDays(1);
+        assertFixedBusinessClockSelected();
         PaymentFixture fixture = createPaymentFixture("payment-future-cross-currency", Currency.ARS);
         Installment installment = createInstallment(
                 fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
@@ -396,12 +535,21 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                                   "intent": "REMAINING"
                                 }
                                 """.formatted(installment.getId(), futureDate)))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(containsString("hoy es " + BUSINESS_TODAY)));
+
+        org.mockito.Mockito.verify(exchangeRateService, org.mockito.Mockito.never())
+                .getOfficialQuoteForDate(futureDate);
+    }
+
+    private void assertFixedBusinessClockSelected() {
+        assertEquals(BUSINESS_NOW, paymentBusinessClock.instant());
+        assertEquals(BUSINESS_TODAY, LocalDate.now(paymentBusinessClock.withZone(BUSINESS_ZONE)));
     }
 
     @Test
     void calculateRemaining_preservesValidNinetyNinePointTwentyNineCents() throws Exception {
-        LocalDate paymentDate = LocalDate.now();
+        LocalDate paymentDate = BUSINESS_TODAY;
         PaymentFixture fixture = createPaymentFixture("payment-calculation-cents", Currency.USD);
         Installment installment = createInstallment(
                 fixture.trip(), fixture.user(), fixture.student(), 1, "99.29", InstallmentStatus.YELLOW);
@@ -430,7 +578,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
 
     @Test
     void calculateManualAmount_usesTheSubmittedMoneyAsIntentWithoutFrontendDerivedFields() throws Exception {
-        LocalDate paymentDate = LocalDate.now();
+        LocalDate paymentDate = BUSINESS_TODAY;
         PaymentFixture fixture = createPaymentFixture("payment-calculation-manual", Currency.ARS);
         Installment installment = createInstallment(
                 fixture.trip(), fixture.user(), fixture.student(), 1, "99.29", InstallmentStatus.YELLOW);
@@ -459,7 +607,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
 
     @Test
     void calculateManualAmount_exposesSafeLimitAndResidualWhenAmountExceedsBalance() throws Exception {
-        LocalDate paymentDate = LocalDate.now();
+        LocalDate paymentDate = BUSINESS_TODAY;
         PaymentFixture fixture = createPaymentFixture("payment-calculation-over-balance", Currency.ARS);
         Installment installment = createInstallment(
                 fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
@@ -488,7 +636,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
 
     @Test
     void calculateRemaining_returnsExplicitUnpayableStateWhenNoPaymentCentCanBeImputed() throws Exception {
-        LocalDate paymentDate = LocalDate.now();
+        LocalDate paymentDate = BUSINESS_TODAY;
         PaymentFixture fixture = createPaymentFixture("payment-calculation-unpayable", Currency.ARS);
         Installment installment = createInstallment(
                 fixture.trip(), fixture.user(), fixture.student(), 1, "0.01", InstallmentStatus.YELLOW);
@@ -517,7 +665,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
 
     @Test
     void calculateRemaining_returnsExplicitQuoteUnavailableStateWithoutToken() throws Exception {
-        LocalDate paymentDate = LocalDate.now();
+        LocalDate paymentDate = BUSINESS_TODAY;
         PaymentFixture fixture = createPaymentFixture("payment-calculation-no-quote", Currency.USD);
         Installment installment = createInstallment(
                 fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
@@ -545,7 +693,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
 
     @Test
     void calculateRemaining_returnsExpiredOnlyForAuthenticExpiredVersionTwoToken() throws Exception {
-        LocalDate paymentDate = LocalDate.now();
+        LocalDate paymentDate = BUSINESS_TODAY;
         PaymentFixture fixture = createPaymentFixture("payment-calculation-expired", Currency.ARS);
         Installment installment = createInstallment(
                 fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
@@ -589,7 +737,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                                   "reportedPaymentDate": "%s",
                                   "paymentCurrency": "ARS"
                                 }
-                                """.formatted(first.getId(), LocalDate.now())))
+                                """.formatted(first.getId(), BUSINESS_TODAY)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.amountInTripCurrency").value("300.00"))
                 .andExpect(jsonPath("$.installments.length()").value(3))
@@ -621,7 +769,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                         .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
                         .param("anchorInstallmentId", String.valueOf(first.getId()))
                         .param("reportedAmount", "250.00")
-                        .param("reportedPaymentDate", LocalDate.now().toString())
+                        .param("reportedPaymentDate", BUSINESS_TODAY.toString())
                         .param("paymentCurrency", "ARS")
                         .param("paymentMethod", "BANK_TRANSFER")
                         .param("bankAccountId", String.valueOf(bankAccount.getId()))
@@ -660,7 +808,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                         .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
                         .param("anchorInstallmentId", String.valueOf(first.getId()))
                         .param("reportedAmount", "250.01")
-                        .param("reportedPaymentDate", LocalDate.now().toString())
+                        .param("reportedPaymentDate", BUSINESS_TODAY.toString())
                         .param("paymentCurrency", "ARS")
                         .param("paymentMethod", "BANK_TRANSFER")
                         .param("bankAccountId", String.valueOf(bankAccount.getId()))
@@ -673,7 +821,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
 
     @Test
     void registerPayment_crossCurrencyBalanceChangedAfterPreviewReturns400WithoutMutation() throws Exception {
-        LocalDate paymentDate = LocalDate.now();
+        LocalDate paymentDate = BUSINESS_TODAY;
         PaymentFixture fixture = createPaymentFixture("pmt-register-fin-001", Currency.ARS);
         Installment first = createInstallment(
                 fixture.trip(), fixture.user(), fixture.student(), 1, "100.01", InstallmentStatus.YELLOW);
@@ -721,7 +869,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
     @Test
     void reviewPayment_balanceChangedUnderLockReturns409AndLeavesSubmissionPending() throws Exception {
         TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-review-fin-001"));
-        LocalDate paymentDate = LocalDate.now();
+        LocalDate paymentDate = BUSINESS_TODAY;
         PaymentFixture fixture = createPaymentFixture("pmt-review-fin-001", Currency.ARS);
         Installment first = createInstallment(
                 fixture.trip(), fixture.user(), fixture.student(), 1, "100.01", InstallmentStatus.YELLOW);
@@ -785,7 +933,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                         .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
                         .param("anchorInstallmentId", String.valueOf(first.getId()))
                         .param("reportedAmount", "-50.00")
-                        .param("reportedPaymentDate", LocalDate.now().toString())
+                        .param("reportedPaymentDate", BUSINESS_TODAY.toString())
                         .param("paymentCurrency", "ARS")
                         .param("paymentMethod", "BANK_TRANSFER")
                         .param("bankAccountId", String.valueOf(bankAccount.getId()))
@@ -809,7 +957,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                         .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
                         .param("anchorInstallmentId", String.valueOf(first.getId()))
                         .param("reportedAmount", "150000.00")
-                        .param("reportedPaymentDate", LocalDate.now().toString())
+                        .param("reportedPaymentDate", BUSINESS_TODAY.toString())
                         .param("paymentCurrency", "ARS")
                         .param("paymentMethod", "BANK_TRANSFER")
                         .param("bankAccountId", String.valueOf(bankAccount.getId()))
@@ -833,8 +981,8 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
         org.mockito.Mockito.when(exchangeRateService.getOfficialQuoteForDate(org.mockito.ArgumentMatchers.any(LocalDate.class)))
                 .thenReturn(new com.agencia.pagos.payment.ExchangeRateQuote(
                         new BigDecimal("1000.00"),
-                        LocalDate.now(),
-                        LocalDate.now(),
+                        BUSINESS_TODAY,
+                        BUSINESS_TODAY,
                         "test",
                         "test",
                         null));
@@ -852,7 +1000,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                                   "reportedPaymentDate": "%s",
                                   "paymentCurrency": "ARS"
                                 }
-                                """).formatted(first.getId(), LocalDate.now())))
+                                """).formatted(first.getId(), BUSINESS_TODAY)))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
 
@@ -865,7 +1013,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                         .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
                         .param("anchorInstallmentId", String.valueOf(first.getId()))
                         .param("reportedAmount", "150000.00")
-                        .param("reportedPaymentDate", LocalDate.now().toString())
+                        .param("reportedPaymentDate", BUSINESS_TODAY.toString())
                         .param("paymentCurrency", "ARS")
                         .param("paymentMethod", "BANK_TRANSFER")
                         .param("bankAccountId", String.valueOf(bankAccount.getId()))
@@ -885,7 +1033,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
 
     @Test
     void serviceChain_usesPreviewSnapshotWithoutProviderRefetchDuringRegisterReviewOrVoid() throws Exception {
-        LocalDate paymentDate = LocalDate.now();
+        LocalDate paymentDate = BUSINESS_TODAY;
         PaymentFixture fixture = createPaymentFixture("pmt-service-no-refetch", Currency.USD);
         Installment first = createInstallment(
                 fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
@@ -954,7 +1102,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                         .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
                         .param("anchorInstallmentId", String.valueOf(first.getId()))
                         .param("reportedAmount", "250.00")
-                        .param("reportedPaymentDate", LocalDate.now().toString())
+                        .param("reportedPaymentDate", BUSINESS_TODAY.toString())
                         .param("paymentCurrency", "ARS")
                         .param("paymentMethod", "BANK_TRANSFER")
                         .param("bankAccountId", String.valueOf(bankAccount.getId()))
@@ -988,7 +1136,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
 
     @Test
     void reviewPayment_partialCrossCurrencyOutcomesConserveTheStoredConversionThroughVoid() throws Exception {
-        LocalDate paymentDate = LocalDate.now();
+        LocalDate paymentDate = BUSINESS_TODAY;
         TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-cross-currency-partial"));
         PaymentFixture fixture = createPaymentFixture("payment-cross-currency-partial", Currency.ARS);
         Installment first = createInstallment(
@@ -1061,7 +1209,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
     @Test
     void reviewPayment_partialCrossCurrencyAcrossInstallmentsConservesBothCurrenciesAndVoidReversesPersistedAllocations()
             throws Exception {
-        LocalDate paymentDate = LocalDate.now();
+        LocalDate paymentDate = BUSINESS_TODAY;
         TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-case-j-multi-installment"));
         PaymentFixture fixture = createPaymentFixture("payment-case-j-multi-installment", Currency.ARS);
         Installment first = createInstallment(
@@ -1150,7 +1298,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
     @Test
     void reviewPayment_rejectsSubcentApprovalWithoutChangingPendingFinancialState() throws Exception {
         TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-subcent-approval"));
-        LocalDate paymentDate = LocalDate.now();
+        LocalDate paymentDate = BUSINESS_TODAY;
         PaymentFixture fixture = createPaymentFixture("payment-subcent-approval", Currency.ARS);
         Installment installment = createInstallment(
                 fixture.trip(), fixture.user(), fixture.student(), 1, "10.00", InstallmentStatus.YELLOW);
