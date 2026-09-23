@@ -2,57 +2,14 @@
 
 set -Eeuo pipefail
 
-schema_state="$(docker compose exec -T db sh -c \
-  'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atq' <<'SQL'
-SELECT CASE
-    WHEN COALESCE((
-        SELECT data_type = 'numeric'
-           AND numeric_precision = 18
-           AND numeric_scale = 8
-           AND is_nullable = 'YES'
-        FROM information_schema.columns
-        WHERE table_schema = current_schema()
-          AND table_name = 'payment_submissions'
-          AND column_name = 'exchange_rate'
-    ), false)
-    AND COALESCE((
-        SELECT data_type = 'integer' AND is_nullable = 'YES'
-        FROM information_schema.columns
-        WHERE table_schema = current_schema()
-          AND table_name = 'payment_submissions'
-          AND column_name = 'exchange_rate_scale'
-    ), false)
-    AND COALESCE((
-        SELECT data_type = 'character varying'
-           AND character_maximum_length = 64
-           AND is_nullable = 'YES'
-        FROM information_schema.columns
-        WHERE table_schema = current_schema()
-          AND table_name = 'payment_submissions'
-          AND column_name = 'exchange_rate_provider'
-    ), false)
-    AND COALESCE((
-        SELECT data_type = 'character varying'
-           AND character_maximum_length = 16
-           AND is_nullable = 'NO'
-           AND column_default LIKE '%v1%'
-        FROM information_schema.columns
-        WHERE table_schema = current_schema()
-          AND table_name = 'payment_submissions'
-          AND column_name = 'calculation_version'
-    ), false)
-    AND EXISTS (
-        SELECT 1
-        FROM pg_constraint
-        WHERE conrelid = 'payment_submissions'::regclass
-          AND conname = 'ck_payment_submissions_exchange_rate_scale'
-          AND contype = 'c'
-    )
-    THEN 'READY'
-    ELSE 'NOT_READY'
-END;
-SQL
-)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+READINESS_QUERY="$ROOT_DIR/backend/sql/payment_money_schema_readiness.sql"
+
+schema_state="$(docker compose --project-directory "$ROOT_DIR" \
+  --file "$ROOT_DIR/docker-compose.yml" \
+  exec -T db sh -c \
+  'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atq' \
+  < "$READINESS_QUERY")"
 
 if [[ "$schema_state" != "READY" ]]; then
   printf 'Payment schema is incompatible; backend deployment was not started. Apply and verify the approved migration first.\n' >&2

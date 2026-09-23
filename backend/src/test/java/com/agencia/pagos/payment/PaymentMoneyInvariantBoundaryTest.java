@@ -54,6 +54,8 @@ class PaymentMoneyInvariantBoundaryTest {
             Path.of("..", "scripts", "test-payment-concurrency.sh");
     private static final Path SCHEMA_PREFLIGHT_SCRIPT =
             Path.of("..", "scripts", "check-payment-schema-readiness.sh");
+    private static final Path READINESS_QUERY =
+            Path.of("sql", "payment_money_schema_readiness.sql");
     private static final Path CI_WORKFLOW =
             Path.of("..", ".github", "workflows", "ci-cd.yml");
     private static final Path COMPOSE_FILE = Path.of("..", "docker-compose.yml");
@@ -190,13 +192,24 @@ class PaymentMoneyInvariantBoundaryTest {
 
         String preflight = Files.readString(SCHEMA_PREFLIGHT_SCRIPT);
         assertThat(preflight)
-                .contains("docker compose exec -T db")
+                .contains("docker compose --project-directory")
+                .contains("exec -T db")
                 .contains("psql -v ON_ERROR_STOP=1")
-                .contains("information_schema.columns")
-                .contains("calculation_version")
-                .contains("NOT_READY")
+                .contains("payment_money_schema_readiness.sql")
                 .doesNotContain("20260917_payment_money_invariants.sql")
-                .doesNotContain("UPDATE payment_submissions");
+                .doesNotContain("UPDATE payment_submissions")
+                .doesNotContain("column_default LIKE '%v1%'");
+
+        String readinessQuery = Files.readString(READINESS_QUERY);
+        assertThat(readinessQuery)
+                .contains("information_schema.columns")
+                .contains("column_default = quote_literal('v1')")
+                .contains("convalidated")
+                .contains("pg_get_constraintdef")
+                .contains("calculation_version = '2'")
+                .contains("exchange_rate_requested_date")
+                .contains("exchange_rate_effective_date")
+                .doesNotContain("UPDATE ");
 
         String workflow = Files.readString(CI_WORKFLOW);
         int shaVerification = workflow.indexOf("test \"$ACTUAL_SHA\" = \"$DEPLOY_SHA\"");
@@ -215,6 +228,87 @@ class PaymentMoneyInvariantBoundaryTest {
                 .contains("SPRING_JPA_HIBERNATE_DDL_AUTO: \"${SPRING_JPA_HIBERNATE_DDL_AUTO:-update}\"");
         assertThat(Files.readString(PRODUCTION_PROPERTIES))
                 .contains("spring.jpa.hibernate.ddl-auto=validate");
+    }
+
+    @Test
+    void schemaPreflightDoesNotAcceptBroadVersionDefaultMatches() throws Exception {
+        String preflight = Files.readString(SCHEMA_PREFLIGHT_SCRIPT);
+
+        assertThat(preflight).doesNotContain("column_default LIKE '%v1%'");
+    }
+
+    @Test
+    void sharedReadinessQueryRejectsIncorrectDefaultConstraintAndVersionTwoFxMetadata() throws Exception {
+        assertThat(READINESS_QUERY).exists().isRegularFile();
+        String readinessSql = Files.readString(READINESS_QUERY);
+        String migrationSql = Files.readString(MIGRATION);
+
+        try (Connection connection = dataSource.getConnection(); Statement statement = connection.createStatement()) {
+            statement.execute("DROP SCHEMA IF EXISTS payment_money_readiness_contract CASCADE");
+            statement.execute("CREATE SCHEMA payment_money_readiness_contract");
+            statement.execute("SET search_path TO payment_money_readiness_contract");
+            statement.execute("CREATE TABLE trips (id BIGINT PRIMARY KEY, currency VARCHAR(3) NOT NULL)");
+            statement.execute("INSERT INTO trips (id, currency) VALUES (1, 'ARS')");
+            statement.execute("""
+                    CREATE TABLE payment_submissions (
+                        id BIGINT PRIMARY KEY,
+                        trip_id BIGINT NOT NULL REFERENCES trips(id),
+                        payment_currency VARCHAR(3) NOT NULL,
+                        exchange_rate NUMERIC(10,2),
+                        exchange_rate_source VARCHAR(64),
+                        exchange_rate_requested_date DATE,
+                        exchange_rate_effective_date DATE,
+                        status VARCHAR(16) NOT NULL
+                    )
+                    """);
+            statement.execute("""
+                    INSERT INTO payment_submissions (
+                        id, trip_id, payment_currency, exchange_rate, exchange_rate_source, status
+                    ) VALUES (1, 1, 'ARS', NULL, NULL, 'PENDING')
+                    """);
+            statement.execute(migrationSql);
+            statement.execute("""
+                    INSERT INTO payment_submissions (
+                        id, trip_id, payment_currency, exchange_rate, exchange_rate_scale,
+                        exchange_rate_provider, exchange_rate_source, exchange_rate_requested_date,
+                        exchange_rate_effective_date, status, calculation_version
+                    ) VALUES (
+                        2, 1, 'USD', 1234.56, 2, 'provider-a', 'official',
+                        DATE '2026-09-23', DATE '2026-09-23', 'PENDING', '2'
+                    )
+                    """);
+
+            assertThat(readinessState(statement, readinessSql)).isEqualTo("READY");
+
+            statement.execute("ALTER TABLE payment_submissions ALTER COLUMN calculation_version SET DEFAULT 'v10'");
+            assertThat(readinessState(statement, readinessSql)).isEqualTo("NOT_READY");
+            statement.execute("ALTER TABLE payment_submissions ALTER COLUMN calculation_version SET DEFAULT 'v1'");
+            assertThat(readinessState(statement, readinessSql)).isEqualTo("READY");
+
+            statement.execute("ALTER TABLE payment_submissions DROP CONSTRAINT ck_payment_submissions_exchange_rate_scale");
+            statement.execute("""
+                    ALTER TABLE payment_submissions
+                    ADD CONSTRAINT ck_payment_submissions_exchange_rate_scale
+                    CHECK (exchange_rate_scale IS NULL OR exchange_rate_scale <= 8)
+                    """);
+            assertThat(readinessState(statement, readinessSql)).isEqualTo("NOT_READY");
+
+            statement.execute("ALTER TABLE payment_submissions DROP CONSTRAINT ck_payment_submissions_exchange_rate_scale");
+            statement.execute("""
+                    ALTER TABLE payment_submissions
+                    ADD CONSTRAINT ck_payment_submissions_exchange_rate_scale
+                    CHECK (exchange_rate_scale IS NULL OR exchange_rate_scale BETWEEN 0 AND 8)
+                    NOT VALID
+                    """);
+            assertThat(readinessState(statement, readinessSql)).isEqualTo("NOT_READY");
+            statement.execute("ALTER TABLE payment_submissions VALIDATE CONSTRAINT ck_payment_submissions_exchange_rate_scale");
+            assertThat(readinessState(statement, readinessSql)).isEqualTo("READY");
+
+            statement.execute("UPDATE payment_submissions SET exchange_rate_provider = NULL WHERE id = 2");
+            assertThat(readinessState(statement, readinessSql)).isEqualTo("NOT_READY");
+            statement.execute("UPDATE payment_submissions SET exchange_rate_provider = 'provider-a' WHERE id = 2");
+            assertThat(readinessState(statement, readinessSql)).isEqualTo("READY");
+        }
     }
 
     @Test
@@ -284,9 +378,12 @@ class PaymentMoneyInvariantBoundaryTest {
                 .contains("explicit `production` profile")
                 .contains("Vercel production promotion")
                 .contains("Verify the deployed SHA and backend health")
-                .contains("cv=2` token is invalid immediately")
+                .contains("every earlier token without the required `cv=2` claim is invalid immediately")
                 .contains("read-only verification queries")
                 .contains("corrective `UPDATE`")
+                .contains("exact `DEFAULT 'v1'`")
+                .contains("validated scale-range constraint definition")
+                .contains("calculation-version `2` cross-currency submissions")
                 .contains("do not shrink or drop snapshot columns")
                 .contains("suspend cross-currency payments");
     }
@@ -356,6 +453,13 @@ class PaymentMoneyInvariantBoundaryTest {
                 ));
             }
             return result;
+        }
+    }
+
+    private static String readinessState(Statement statement, String readinessSql) throws Exception {
+        try (ResultSet result = statement.executeQuery(readinessSql)) {
+            assertThat(result.next()).isTrue();
+            return result.getString(1);
         }
     }
 

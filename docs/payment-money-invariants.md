@@ -34,7 +34,7 @@ This is a local/disposable Compose command, not a production command or authoriz
 | Production schema preflight | `./scripts/check-payment-schema-readiness.sh` | Read-only queries through the Compose `db` service; runs before backend container startup |
 | Complete local sweep | `./scripts/test-payment-money-invariants.sh` | Runs every layer above |
 
-The browser harness requires the pinned Playwright test package and Chromium runtime. It never reads the repository `.env`, never calls an external FX provider, binds only to `127.0.0.1`, and removes its PostgreSQL container on exit. Production preflight performs no `UPDATE` or migration execution and must pass before any backend/container mutation. The backend must start with the explicit `production` profile and Hibernate validation; local developer Compose can retain its `local` profile and update behavior.
+The browser harness requires the pinned Playwright test package and Chromium runtime. It never reads the repository `.env`, never calls an external FX provider, binds only to `127.0.0.1`, and removes its PostgreSQL container on exit. Production preflight runs the shared read-only SQL query, requires the exact `DEFAULT 'v1'`, `NOT NULL`, and validated scale-range constraint definition, and rejects calculation-version `2` cross-currency rows missing their rate/scale/provider/date snapshot. It performs no `UPDATE` or migration execution and must pass before any backend/container mutation. The backend must start with the explicit `production` profile and Hibernate validation; local developer Compose can retain its `local` profile and update behavior.
 
 ## User behavior
 

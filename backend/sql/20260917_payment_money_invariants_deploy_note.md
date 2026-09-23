@@ -67,7 +67,7 @@ WHERE exchange_rate IS NOT NULL
 
 Expected: every count is `0`. These are audit-only queries; never run corrective `UPDATE` statements against historical submissions, outcomes, allocations, or installment balances.
 
-The schema preflight command uses read-only `SELECT` queries, verifies the migration columns, numeric scale, default, nullability, and scale constraint, and returns a failure before the workflow runs `docker compose up -d --build backend`. It never applies SQL.
+The deployment script streams the shared read-only query in `backend/sql/payment_money_schema_readiness.sql` to the Compose database. It requires the exact `DEFAULT 'v1'`, `NOT NULL`, and validated scale-range constraint definition. It also rejects calculation-version `2` cross-currency submissions missing rate, scale, source/provider, or requested/effective quote dates. It fails before the workflow runs `docker compose up -d --build backend` and never applies SQL.
 
 ## Legacy pending submissions
 
