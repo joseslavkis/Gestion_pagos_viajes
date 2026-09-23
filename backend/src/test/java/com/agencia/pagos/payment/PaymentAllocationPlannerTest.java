@@ -83,6 +83,44 @@ class PaymentAllocationPlannerTest {
     }
 
     @Test
+    void remainingIntentLimitCapsAtTheAnchorWhileManualIntentUsesTheEnrollmentTotal() {
+        List<Installment> installments = List.of(
+                buildInstallment(1, "240.00", "0.00"),
+                buildInstallment(2, "240.00", "0.00"),
+                buildInstallment(3, "240.00", "0.00")
+        );
+
+        PaymentAllocationPlanner.PlanResult manualPlan = planner.plan(
+                installments, new BigDecimal("500.00"), Currency.ARS, null);
+
+        assertEquals(new BigDecimal("720.00"), manualPlan.totalPendingAmountInTripCurrency());
+        assertIterableEquals(
+                List.of(new BigDecimal("240.00"), new BigDecimal("240.00"), new BigDecimal("20.00")),
+                manualPlan.allocations().stream()
+                        .map(PaymentAllocationPlanner.PlannedAllocation::amountInTripCurrency)
+                        .toList()
+        );
+
+        List<Installment> selectedScope = List.of(
+                buildInstallment(1, "200.00", "0.00"),
+                buildInstallment(2, "100.00", "0.00")
+        );
+        PaymentBalanceExceededException exceeded = assertThrows(
+                PaymentBalanceExceededException.class,
+                () -> planner.plan(
+                        selectedScope,
+                        new BigDecimal("66.67"),
+                        Currency.USD,
+                        new BigDecimal("3"),
+                        new PaymentAllocationPlanner.PaymentLimit(
+                                new BigDecimal("200.00"), new BigDecimal("66.66")))
+        );
+
+        assertEquals(new BigDecimal("66.66"), exceeded.maxAllowedAmount());
+        assertEquals(new BigDecimal("0.01"), exceeded.residualInTripCurrency());
+    }
+
+    @Test
     void caseA_rejectsWhenRoundedTripAmountExceedsImputableBalance() {
         List<Installment> installments = List.of(buildInstallment(1, "100.00", "0.00"));
 

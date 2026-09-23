@@ -47,6 +47,9 @@ public class PaymentAllocationPlanner {
     ) {
     }
 
+    public record PaymentLimit(BigDecimal balanceInTripCurrency, BigDecimal maxAllowedAmount) {
+    }
+
     private final PaymentMoneyPolicy moneyPolicy;
 
     public PaymentAllocationPlanner() {
@@ -64,6 +67,16 @@ public class PaymentAllocationPlanner {
             Currency paymentCurrency,
             BigDecimal exchangeRate
     ) {
+        return plan(installments, reportedAmount, paymentCurrency, exchangeRate, null);
+    }
+
+    public PlanResult plan(
+            List<Installment> installments,
+            BigDecimal reportedAmount,
+            Currency paymentCurrency,
+            BigDecimal exchangeRate,
+            PaymentLimit paymentLimit
+    ) {
         if (installments == null || installments.isEmpty()) {
             throw new IllegalArgumentException("Debe haber al menos una cuota seleccionada");
         }
@@ -75,23 +88,31 @@ public class PaymentAllocationPlanner {
                 .map(this::getRemainingAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add)
                 .setScale(PaymentMoneyPolicy.MONEY_SCALE, RoundingMode.UNNECESSARY);
+        BigDecimal balanceLimit = paymentLimit == null
+                ? totalPendingAmountInTripCurrency
+                : moneyPolicy.requireMoney(paymentLimit.balanceInTripCurrency(), "balanceLimitInTripCurrency");
+        if (balanceLimit.signum() < 0 || balanceLimit.compareTo(totalPendingAmountInTripCurrency) > 0) {
+            throw new IllegalArgumentException("balanceLimitInTripCurrency must be within the pending balance");
+        }
+        BigDecimal maxAllowedAmount = paymentLimit == null
+                ? moneyPolicy.maxAllowedPaymentAmount(
+                        balanceLimit, tripCurrency, paymentCurrency, exchangeRate)
+                : moneyPolicy.requireMoney(paymentLimit.maxAllowedAmount(), "maxAllowedAmount");
+        if (maxAllowedAmount.signum() < 0) {
+            throw new IllegalArgumentException("maxAllowedAmount must not be negative");
+        }
         BigDecimal amountInTripCurrency = moneyPolicy.convertPaymentToTripCurrency(
                 normalizedReportedAmount,
                 tripCurrency,
                 paymentCurrency,
                 exchangeRate
         );
-        BigDecimal maxAllowedAmount = moneyPolicy.maxAllowedPaymentAmount(
-                totalPendingAmountInTripCurrency,
-                tripCurrency,
-                paymentCurrency,
-                exchangeRate
-        );
 
-        if (amountInTripCurrency.compareTo(totalPendingAmountInTripCurrency) > 0) {
+        if (normalizedReportedAmount.compareTo(maxAllowedAmount) > 0
+                || amountInTripCurrency.compareTo(balanceLimit) > 0) {
             throw new PaymentBalanceExceededException(
                     maxAllowedAmount,
-                    amountInTripCurrency.subtract(totalPendingAmountInTripCurrency)
+                    amountInTripCurrency.subtract(balanceLimit)
                             .setScale(PaymentMoneyPolicy.MONEY_SCALE, RoundingMode.UNNECESSARY)
             );
         }

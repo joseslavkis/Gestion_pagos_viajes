@@ -241,11 +241,145 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                 .andExpect(jsonPath("$.tripCurrencyResidual").value("0.00"))
                 .andExpect(jsonPath("$.exchangeRate").value("1015.50"))
                 .andExpect(jsonPath("$.quoteProvider").value("provider-a"))
-                .andExpect(jsonPath("$.calculationVersion").value("2"))
+                .andExpect(jsonPath("$.calculationVersion").value("3"))
                 .andExpect(jsonPath("$.previewToken").isNotEmpty());
 
         org.mockito.Mockito.verify(exchangeRateService, org.mockito.Mockito.times(1))
                 .getOfficialQuoteForDate(paymentDate);
+    }
+
+    @Test
+    void calculateRemaining_usesAnchorBalanceForSafeCrossCurrencyMaximum() throws Exception {
+        LocalDate paymentDate = LocalDate.now();
+        PaymentFixture fixture = createPaymentFixture("payment-calculation-anchor", Currency.ARS);
+        Installment anchor = createInstallment(
+                fixture.trip(), fixture.user(), fixture.student(), 1, "200.00", InstallmentStatus.YELLOW);
+        createInstallment(fixture.trip(), fixture.user(), fixture.student(), 2, "100.00", InstallmentStatus.YELLOW);
+        createInstallment(fixture.trip(), fixture.user(), fixture.student(), 3, "100.00", InstallmentStatus.YELLOW);
+        given(exchangeRateService.getOfficialQuoteForDate(paymentDate)).willReturn(new ExchangeRateQuote(
+                new BigDecimal("3"), paymentDate, paymentDate, "official", "provider-a", null));
+
+        mockMvc.perform(post("/api/v1/payments/calculation")
+                        .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "anchorInstallmentId": %d,
+                                  "paymentCurrency": "USD",
+                                  "reportedPaymentDate": "%s",
+                                  "intent": "REMAINING"
+                                }
+                                """.formatted(anchor.getId(), paymentDate)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("READY"))
+                .andExpect(jsonPath("$.remainingAmount").value("200.00"))
+                .andExpect(jsonPath("$.totalPendingAmountInTripCurrency").value("400.00"))
+                .andExpect(jsonPath("$.reportedAmount").value("66.66"))
+                .andExpect(jsonPath("$.amountInTripCurrency").value("199.98"))
+                .andExpect(jsonPath("$.maxAllowedAmount").value("66.66"))
+                .andExpect(jsonPath("$.tripCurrencyResidual").value("0.02"))
+                .andExpect(jsonPath("$.installments.length()").value(1));
+    }
+
+    @Test
+    void registerPayment_rejectsAmountAboveRemainingIntentMaximumWithoutMutation() throws Exception {
+        LocalDate paymentDate = LocalDate.now();
+        PaymentFixture fixture = createPaymentFixture("payment-safe-maximum-register", Currency.ARS);
+        Installment anchor = createInstallment(
+                fixture.trip(), fixture.user(), fixture.student(), 1, "200.00", InstallmentStatus.YELLOW);
+        createInstallment(fixture.trip(), fixture.user(), fixture.student(), 2, "100.00", InstallmentStatus.YELLOW);
+        createInstallment(fixture.trip(), fixture.user(), fixture.student(), 3, "100.00", InstallmentStatus.YELLOW);
+        BankAccount bankAccount = createBankAccount(Currency.USD);
+        given(exchangeRateService.getOfficialQuoteForDate(paymentDate)).willReturn(new ExchangeRateQuote(
+                new BigDecimal("3"), paymentDate, paymentDate, "official", "provider-a", null));
+
+        String calculationResponse = mockMvc.perform(post("/api/v1/payments/calculation")
+                        .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "anchorInstallmentId": %d,
+                                  "paymentCurrency": "USD",
+                                  "reportedPaymentDate": "%s",
+                                  "intent": "REMAINING"
+                                }
+                                """.formatted(anchor.getId(), paymentDate)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reportedAmount").value("66.66"))
+                .andExpect(jsonPath("$.maxAllowedAmount").value("66.66"))
+                .andExpect(jsonPath("$.amountInTripCurrency").value("199.98"))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String previewToken = objectMapper.readTree(calculationResponse).path("previewToken").asText();
+        long submissionsBefore = paymentSubmissionRepository.count();
+        long outcomesBefore = paymentOutcomeRepository.count();
+        long allocationsBefore = paymentAllocationRepository.count();
+
+        mockMvc.perform(multipart("/api/v1/payments")
+                        .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                        .param("anchorInstallmentId", String.valueOf(anchor.getId()))
+                        .param("reportedAmount", "66.67")
+                        .param("reportedPaymentDate", paymentDate.toString())
+                        .param("paymentCurrency", "USD")
+                        .param("paymentMethod", "BANK_TRANSFER")
+                        .param("bankAccountId", String.valueOf(bankAccount.getId()))
+                        .param("previewToken", previewToken)
+                        .with(request -> {
+                            request.setMethod("POST");
+                            return request;
+                        }))
+                .andExpect(status().isBadRequest());
+
+        assertEquals(submissionsBefore, paymentSubmissionRepository.count());
+        assertEquals(outcomesBefore, paymentOutcomeRepository.count());
+        assertEquals(allocationsBefore, paymentAllocationRepository.count());
+        assertEquals(new BigDecimal("0.00"), installmentRepository.findById(anchor.getId())
+                .orElseThrow().getPaidAmount());
+    }
+
+    @Test
+    void calculatePayment_rejectsFutureDateForSameCurrency() throws Exception {
+        LocalDate futureDate = LocalDate.now().plusDays(1);
+        PaymentFixture fixture = createPaymentFixture("payment-future-same-currency", Currency.ARS);
+        Installment installment = createInstallment(
+                fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+
+        mockMvc.perform(post("/api/v1/payments/calculation")
+                        .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "anchorInstallmentId": %d,
+                                  "paymentCurrency": "ARS",
+                                  "reportedPaymentDate": "%s",
+                                  "intent": "REMAINING"
+                                }
+                                """.formatted(installment.getId(), futureDate)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void calculatePayment_rejectsFutureDateForCrossCurrency() throws Exception {
+        LocalDate futureDate = LocalDate.now().plusDays(1);
+        PaymentFixture fixture = createPaymentFixture("payment-future-cross-currency", Currency.ARS);
+        Installment installment = createInstallment(
+                fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+        given(exchangeRateService.getOfficialQuoteForDate(futureDate)).willReturn(new ExchangeRateQuote(
+                new BigDecimal("3"), futureDate, futureDate, "official", "provider-a", null));
+
+        mockMvc.perform(post("/api/v1/payments/calculation")
+                        .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "anchorInstallmentId": %d,
+                                  "paymentCurrency": "USD",
+                                  "reportedPaymentDate": "%s",
+                                  "intent": "REMAINING"
+                                }
+                                """.formatted(installment.getId(), futureDate)))
+                .andExpect(status().isBadRequest());
     }
 
     @Test
@@ -743,7 +877,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
         BankAccount bankAccount = createBankAccount(Currency.ARS);
         org.mockito.Mockito.when(exchangeRateService.getOfficialQuoteForDate(paymentDate))
                 .thenReturn(new ExchangeRateQuote(
-                        new BigDecimal("1000.000"),
+                        new BigDecimal("1E+3"),
                         paymentDate,
                         paymentDate,
                         "official-closing",
@@ -758,6 +892,8 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                         Currency.ARS),
                 fixture.user().getEmail());
         assertNotNull(preview.previewToken());
+        assertEquals(new BigDecimal("1000"), preview.exchangeRate());
+        assertEquals(0, preview.exchangeRate().scale());
         org.mockito.Mockito.clearInvocations(exchangeRateService);
 
         PaymentSubmissionDTO registered = paymentService.registerPayment(
@@ -770,10 +906,16 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                         bankAccount.getId(),
                         preview.previewToken()),
                 fixture.user().getEmail());
-        paymentService.reviewPayment(
+        PaymentSubmission persistedSubmission = paymentSubmissionRepository.findById(registered.submissionId())
+                .orElseThrow();
+        assertEquals(0, persistedSubmission.getExchangeRateScale());
+        assertEquals(0, persistedSubmission.getExchangeRate().compareTo(new BigDecimal("1000")));
+        assertEquals("1000", registered.exchangeRate().toPlainString());
+        PaymentSubmissionDTO reviewed = paymentService.reviewPayment(
                 registered.submissionId(),
                 new ReviewPaymentDTO(new BigDecimal("150000.00"), null),
                 "admin@test.com");
+        assertEquals("1000", reviewed.exchangeRate().toPlainString());
         paymentService.voidPayment(registered.submissionId(), "admin@test.com");
 
         org.mockito.Mockito.verify(exchangeRateService, org.mockito.Mockito.never())
@@ -825,6 +967,118 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                 .andExpect(jsonPath("$.status").value("PARTIALLY_APPROVED"))
                 .andExpect(jsonPath("$.approvedAmount").value("180.00"))
                 .andExpect(jsonPath("$.rejectedAmount").value("70.00"));
+    }
+
+    @Test
+    void reviewPayment_partialCrossCurrencyOutcomesConserveTheStoredConversionThroughVoid() throws Exception {
+        LocalDate paymentDate = LocalDate.now();
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-cross-currency-partial"));
+        PaymentFixture fixture = createPaymentFixture("payment-cross-currency-partial", Currency.ARS);
+        Installment first = createInstallment(
+                fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+        createInstallment(
+                fixture.trip(), fixture.user(), fixture.student(), 2, "100.00", InstallmentStatus.YELLOW);
+        BankAccount bankAccount = createBankAccount(Currency.USD);
+        given(exchangeRateService.getOfficialQuoteForDate(paymentDate)).willReturn(new ExchangeRateQuote(
+                new BigDecimal("3"), paymentDate, paymentDate, "official", "provider-a", null));
+
+        PaymentBatchPreviewDTO preview = paymentService.previewPayment(
+                new PaymentPreviewRequestDTO(
+                        first.getId(), new BigDecimal("66.66"), paymentDate, Currency.USD),
+                fixture.user().getEmail());
+        org.mockito.Mockito.clearInvocations(exchangeRateService);
+        PaymentSubmissionDTO registered = paymentService.registerPayment(
+                new RegisterPaymentDTO(
+                        first.getId(),
+                        new BigDecimal("66.66"),
+                        paymentDate,
+                        Currency.USD,
+                        PaymentMethod.BANK_TRANSFER,
+                        bankAccount.getId(),
+                        preview.previewToken()),
+                fixture.user().getEmail());
+
+        PaymentSubmissionDTO reviewed = paymentService.reviewPayment(
+                registered.submissionId(),
+                new ReviewPaymentDTO(new BigDecimal("33.33"), "Se acreditó parcialmente"),
+                "admin@test.com");
+        PaymentSubmission persisted = paymentSubmissionRepository.findByIdWithContext(registered.submissionId())
+                .orElseThrow();
+        PaymentOutcome approved = persisted.getOutcomes().stream()
+                .filter(outcome -> outcome.getStatus() == PaymentOutcomeStatus.APPROVED)
+                .findFirst()
+                .orElseThrow();
+        PaymentOutcome rejected = persisted.getOutcomes().stream()
+                .filter(outcome -> outcome.getStatus() == PaymentOutcomeStatus.REJECTED)
+                .findFirst()
+                .orElseThrow();
+
+        assertEquals("199.98", persisted.getAmountInTripCurrency().toPlainString());
+        assertEquals("33.33", reviewed.approvedAmount().toPlainString());
+        assertEquals("33.33", reviewed.rejectedAmount().toPlainString());
+        assertEquals("99.99", approved.getAmountInTripCurrency().toPlainString());
+        assertEquals("99.99", rejected.getAmountInTripCurrency().toPlainString());
+        assertEquals(0, approved.getReportedAmount().add(rejected.getReportedAmount())
+                .compareTo(persisted.getReportedAmount()));
+        assertEquals(0, approved.getAmountInTripCurrency().add(rejected.getAmountInTripCurrency())
+                .compareTo(persisted.getAmountInTripCurrency()));
+        assertEquals(new BigDecimal("99.99"), installmentRepository.findById(first.getId())
+                .orElseThrow().getPaidAmount());
+
+        paymentService.voidPayment(registered.submissionId(), "admin@test.com");
+
+        assertEquals(new BigDecimal("0.00"), installmentRepository.findById(first.getId())
+                .orElseThrow().getPaidAmount());
+        PaymentSubmission afterVoid = paymentSubmissionRepository.findByIdWithContext(registered.submissionId())
+                .orElseThrow();
+        PaymentOutcome voided = afterVoid.getOutcomes().stream()
+                .filter(outcome -> outcome.getStatus() == PaymentOutcomeStatus.VOIDED)
+                .findFirst()
+                .orElseThrow();
+        assertEquals(approved.getReportedAmount(), voided.getReportedAmount());
+        assertEquals(approved.getAmountInTripCurrency(), voided.getAmountInTripCurrency());
+        org.mockito.Mockito.verify(exchangeRateService, org.mockito.Mockito.never())
+                .getOfficialQuoteForDate(org.mockito.ArgumentMatchers.any(LocalDate.class));
+    }
+
+    @Test
+    void reviewPayment_rejectsSubcentApprovalWithoutChangingPendingFinancialState() throws Exception {
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-subcent-approval"));
+        LocalDate paymentDate = LocalDate.now();
+        PaymentFixture fixture = createPaymentFixture("payment-subcent-approval", Currency.ARS);
+        Installment installment = createInstallment(
+                fixture.trip(), fixture.user(), fixture.student(), 1, "10.00", InstallmentStatus.YELLOW);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+        PaymentSubmissionDTO registered = paymentService.registerPayment(
+                new RegisterPaymentDTO(
+                        installment.getId(),
+                        new BigDecimal("10.00"),
+                        paymentDate,
+                        Currency.ARS,
+                        PaymentMethod.BANK_TRANSFER,
+                        bankAccount.getId(),
+                        null),
+                fixture.user().getEmail());
+        long outcomesBefore = paymentOutcomeRepository.count();
+        long allocationsBefore = paymentAllocationRepository.count();
+
+        mockMvc.perform(patch("/api/v1/payments/{id}/review", registered.submissionId())
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "approvedAmount": 1.005,
+                                  "adminObservation": "Monto verificado"
+                                }
+                                """))
+                .andExpect(status().isBadRequest());
+
+        assertEquals(PaymentSubmissionStatus.PENDING,
+                paymentSubmissionRepository.findById(registered.submissionId()).orElseThrow().getStatus());
+        assertEquals(outcomesBefore, paymentOutcomeRepository.count());
+        assertEquals(allocationsBefore, paymentAllocationRepository.count());
+        assertEquals(new BigDecimal("0.00"), installmentRepository.findById(installment.getId())
+                .orElseThrow().getPaidAmount());
     }
 
     private PaymentFixture createPaymentFixture(String prefix, Currency currency) throws Exception {

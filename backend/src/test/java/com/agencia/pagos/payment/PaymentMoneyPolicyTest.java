@@ -36,6 +36,42 @@ class PaymentMoneyPolicyTest {
     }
 
     @Test
+    void providerRatesPreserveSupportedZeroThroughEightDecimalScales() {
+        for (String value : new String[]{"1000", "1015.50", "1234.567", "1.12345678"}) {
+            BigDecimal rate = new BigDecimal(value);
+            BigDecimal validatedRate = policy.requireProviderRate(rate);
+
+            assertEquals(rate, validatedRate);
+            assertEquals(rate.scale(), validatedRate.scale());
+        }
+    }
+
+    @Test
+    void providerRateNormalizesNegativeScaleWithoutChangingItsValue() {
+        BigDecimal rate = policy.requireProviderRate(new BigDecimal("1E+3"));
+
+        assertEquals(new BigDecimal("1000"), rate);
+        assertEquals(0, rate.scale());
+    }
+
+    @Test
+    void positiveMoneyAcceptsCanonicalCentInputsAndRejectsSubcentOrNegativeValues() {
+        for (String amount : new String[]{"1", "1.0", "1.00", "1.01"}) {
+            assertEquals(new BigDecimal(amount).setScale(2),
+                    policy.requirePositiveMoney(new BigDecimal(amount), "approvedAmount"));
+        }
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> policy.requireMoney(new BigDecimal("1.005"), "approvedAmount")
+        );
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> policy.requirePositiveMoney(new BigDecimal("-1.00"), "approvedAmount")
+        );
+    }
+
+    @Test
     void rateRejectsScaleAndRangeOutsideProviderContract() {
         assertThrows(
                 ProviderRateContractException.class,
@@ -71,6 +107,24 @@ class PaymentMoneyPolicyTest {
         assertSafeLimit("100.00", Currency.ARS, Currency.USD, "101.30", "0.98");
         assertSafeLimit("200.00", Currency.ARS, Currency.USD, "3", "66.66");
         assertSafeLimit("0.01", Currency.USD, Currency.ARS, "1015.50", "15.23");
+        assertSafeLimit("100.00", Currency.ARS, Currency.USD, "4", "25.00");
+        assertSafeLimit("0.01", Currency.ARS, Currency.USD, "0.5", "0.02");
+        assertSafeLimit("0.01", Currency.USD, Currency.ARS, "2", "0.02");
+    }
+
+    @Test
+    void safeLimitRetainsExplicitCrossCurrencyResidualAndUnpayableSmallBalances() {
+        BigDecimal arsBalance = new BigDecimal("200.00");
+        BigDecimal usdMaximum = policy.maxAllowedPaymentAmount(
+                arsBalance, Currency.ARS, Currency.USD, new BigDecimal("3"));
+
+        assertEquals(new BigDecimal("66.66"), usdMaximum);
+        assertEquals(new BigDecimal("199.98"), policy.convertPaymentToTripCurrency(
+                usdMaximum, Currency.ARS, Currency.USD, new BigDecimal("3")));
+        assertEquals(new BigDecimal("0.02"), arsBalance.subtract(policy.convertPaymentToTripCurrency(
+                usdMaximum, Currency.ARS, Currency.USD, new BigDecimal("3"))));
+        assertEquals(new BigDecimal("0.00"), policy.maxAllowedPaymentAmount(
+                new BigDecimal("0.01"), Currency.ARS, Currency.USD, new BigDecimal("1000")));
     }
 
     private void assertSafeLimit(

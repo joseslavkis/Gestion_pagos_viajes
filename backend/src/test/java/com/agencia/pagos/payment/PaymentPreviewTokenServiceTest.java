@@ -1,5 +1,6 @@
 package com.agencia.pagos.payment;
 
+import com.agencia.pagos.payment.dto.PaymentCalculationIntent;
 import com.agencia.pagos.shared.money.Currency;
 import org.junit.jupiter.api.Test;
 
@@ -39,6 +40,7 @@ class PaymentPreviewTokenServiceTest {
                 "official",
                 "argentinadatos.com",
                 "2026-05-05T12:30:00Z",
+                PaymentCalculationIntent.REMAINING,
                 PaymentPreviewTokenService.CURRENT_CALCULATION_VERSION
         );
     }
@@ -62,7 +64,8 @@ class PaymentPreviewTokenServiceTest {
         assertEquals("official", s.quoteSource());
         assertEquals("argentinadatos.com", s.quoteProvider());
         assertEquals("2026-05-05T12:30:00Z", s.quoteProviderTimestamp());
-        assertEquals("2", s.calculationVersion());
+        assertEquals(PaymentCalculationIntent.REMAINING, s.intent());
+        assertEquals("3", s.calculationVersion());
     }
 
     @Test
@@ -100,7 +103,7 @@ class PaymentPreviewTokenServiceTest {
     }
 
     @Test
-    void issuedTokenDeclaresCalculationVersionTwo() throws Exception {
+    void issuedTokenDeclaresCalculationVersionThreeAndIntent() throws Exception {
         PaymentPreviewTokenService service = newService();
         String token = service.issueToken(sampleSnapshot(42L));
 
@@ -109,7 +112,8 @@ class PaymentPreviewTokenServiceTest {
                 java.nio.charset.StandardCharsets.UTF_8
         );
 
-        assertTrue(payload.contains("\"cv\":\"2\""));
+        assertTrue(payload.contains("\"cv\":\"3\""));
+        assertTrue(payload.contains("\"intent\":\"REMAINING\""));
         assertTrue(payload.contains("\"quoteProvider\""));
     }
 
@@ -119,17 +123,18 @@ class PaymentPreviewTokenServiceTest {
 
         assertTrue(service.parseAndValidate(legacyToken(null), 42L).isEmpty());
         assertTrue(service.parseAndValidate(legacyToken("1"), 42L).isEmpty());
+        assertTrue(service.parseAndValidate(legacyToken("2"), 42L).isEmpty());
         assertTrue(service.parseAndValidate(legacyToken("3"), 42L).isEmpty());
     }
 
     @Test
-    void authenticExpiredVersionTwoTokenIsDistinguishedWithoutBecomingValid() {
+    void versionTwoPreviewTokenIsInvalidImmediatelyEvenWhenExpired() {
         PaymentPreviewTokenService service = newService();
         String expired = tokenWithVersionAndWindow("2", Instant.now().minusSeconds(600), Instant.now().minusSeconds(300));
 
         PaymentPreviewTokenService.TokenValidation validation = service.validateToken(expired, 42L);
 
-        assertEquals(PaymentPreviewTokenService.TokenValidationStatus.EXPIRED, validation.status());
+        assertEquals(PaymentPreviewTokenService.TokenValidationStatus.INVALID, validation.status());
         assertTrue(validation.snapshot().isEmpty());
         assertTrue(service.parseAndValidate(expired, 42L).isEmpty());
     }

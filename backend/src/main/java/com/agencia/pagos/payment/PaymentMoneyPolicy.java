@@ -37,15 +37,22 @@ public class PaymentMoneyPolicy {
     }
 
     public BigDecimal requireProviderRate(BigDecimal rate) {
-        if (rate == null
-                || rate.scale() > RATE_SCALE_LIMIT
-                || rate.compareTo(MIN_RATE) < 0
-                || rate.compareTo(MAX_RATE) > 0) {
+        if (rate == null) {
             throw new ProviderRateContractException(
                     "El proveedor devolvió un tipo de cambio fuera del contrato soportado"
             );
         }
-        return rate;
+        BigDecimal normalizedRate = rate.scale() < 0
+                ? rate.setScale(0, RoundingMode.UNNECESSARY)
+                : rate;
+        if (normalizedRate.scale() > RATE_SCALE_LIMIT
+                || normalizedRate.compareTo(MIN_RATE) < 0
+                || normalizedRate.compareTo(MAX_RATE) > 0) {
+            throw new ProviderRateContractException(
+                    "El proveedor devolvió un tipo de cambio fuera del contrato soportado"
+            );
+        }
+        return normalizedRate;
     }
 
     public BigDecimal roundMoney(BigDecimal value) {

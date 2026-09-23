@@ -1,5 +1,6 @@
 package com.agencia.pagos.payment;
 
+import com.agencia.pagos.payment.dto.PaymentCalculationIntent;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.Claims;
@@ -38,8 +39,9 @@ public class PaymentPreviewTokenService {
     private static final String CLAIM_QUOTE_PROVIDER = "quoteProvider";
     private static final String CLAIM_QUOTE_TIMESTAMP = "quoteProviderTimestamp";
     private static final String CLAIM_CALCULATION_VERSION = "cv";
+    private static final String CLAIM_INTENT = "intent";
     private static final String PREVIEW_TYPE = "payment-preview";
-    public static final String CURRENT_CALCULATION_VERSION = "2";
+    public static final String CURRENT_CALCULATION_VERSION = "3";
 
     private final SecretKey signingKey;
     private final Duration tokenTtl;
@@ -81,6 +83,7 @@ public class PaymentPreviewTokenService {
                 .claim(CLAIM_QUOTE_SOURCE, snapshot.quoteSource())
                 .claim(CLAIM_QUOTE_PROVIDER, snapshot.quoteProvider())
                 .claim(CLAIM_QUOTE_TIMESTAMP, snapshot.quoteProviderTimestamp())
+                .claim(CLAIM_INTENT, snapshot.intent().name())
                 .claim(CLAIM_CALCULATION_VERSION, snapshot.calculationVersion())
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(expiry))
@@ -140,6 +143,8 @@ public class PaymentPreviewTokenService {
         String quoteSource = claims.get(CLAIM_QUOTE_SOURCE, String.class);
         String quoteProvider = claims.get(CLAIM_QUOTE_PROVIDER, String.class);
         String quoteTimestamp = claims.get(CLAIM_QUOTE_TIMESTAMP, String.class);
+        PaymentCalculationIntent intent = PaymentCalculationIntent.valueOf(
+                claims.get(CLAIM_INTENT, String.class));
         BigDecimal quoteRate = optionalDecimal(claims.get(CLAIM_QUOTE_RATE));
         java.time.LocalDate quoteRequested = optionalDate(claims.get(CLAIM_QUOTE_REQUESTED));
         java.time.LocalDate quoteEffective = optionalDate(claims.get(CLAIM_QUOTE_EFFECTIVE));
@@ -155,6 +160,7 @@ public class PaymentPreviewTokenService {
                 quoteSource,
                 quoteProvider,
                 quoteTimestamp,
+                intent,
                 CURRENT_CALCULATION_VERSION
         );
     }
@@ -197,6 +203,7 @@ public class PaymentPreviewTokenService {
             String quoteSource,
             String quoteProvider,
             String quoteProviderTimestamp,
+            PaymentCalculationIntent intent,
             String calculationVersion
     ) {
         public PreviewSnapshot(
@@ -223,6 +230,7 @@ public class PaymentPreviewTokenService {
                     quoteSource,
                     quoteSource,
                     quoteProviderTimestamp,
+                    PaymentCalculationIntent.MANUAL,
                     CURRENT_CALCULATION_VERSION
             );
         }
@@ -252,6 +260,9 @@ public class PaymentPreviewTokenService {
     private static void validateSnapshot(PreviewSnapshot snapshot) {
         if (!CURRENT_CALCULATION_VERSION.equals(snapshot.calculationVersion())) {
             throw new IllegalArgumentException("Unsupported payment calculation version");
+        }
+        if (snapshot.intent() == null) {
+            throw new IllegalArgumentException("Payment calculation intent is required");
         }
         if (snapshot.quoteSellRate() == null) {
             return;
