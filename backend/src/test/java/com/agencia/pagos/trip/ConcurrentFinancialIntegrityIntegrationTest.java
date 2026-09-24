@@ -81,6 +81,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Import(TestcontainersConfiguration.class)
 class ConcurrentFinancialIntegrityIntegrationTest extends ControllerIntegrationTestSupport {
 
+    private static final LocalDate HISTORICAL_PAYMENT_DATE = LocalDate.of(2020, 1, 15);
+
     private enum PaymentOperation {
         REVIEW,
         VOID
@@ -121,7 +123,7 @@ class ConcurrentFinancialIntegrityIntegrationTest extends ControllerIntegrationT
         paymentServiceSpy.registerPayment(
                 fixture.installment().getId(),
                 new BigDecimal("50.00"),
-                LocalDate.now(),
+                HISTORICAL_PAYMENT_DATE,
                 Currency.ARS,
                 PaymentMethod.BANK_TRANSFER,
                 fixture.bankAccount().getId(),

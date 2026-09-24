@@ -65,6 +65,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Import(TestcontainersConfiguration.class)
 class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
 
+    private static final LocalDate HISTORICAL_PAYMENT_DATE = LocalDate.of(2020, 1, 15);
+
     private record PaymentFixture(TokenDTO userTokens, User user, Student student, Trip trip) {
     }
 
@@ -141,7 +143,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
 
     @Test
     void previewRegisterReload_preservesQuoteIdentityWithoutProviderRefetch() throws Exception {
-        LocalDate requestedDate = LocalDate.now();
+        LocalDate requestedDate = HISTORICAL_PAYMENT_DATE;
         LocalDate effectiveDate = requestedDate.minusDays(1);
         ExchangeRateQuote quote = new ExchangeRateQuote(
                 new BigDecimal("1234.567"),
@@ -149,7 +151,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 effectiveDate,
                 "official-closing",
                 "argentinadatos.com",
-                "2026-09-18T15:30:00Z"
+                "2020-01-15T15:30:00Z"
         );
         PaymentFixture fixture = createPaymentFixture("payment-quote-reload", Currency.USD);
         Installment installment = createInstallment(
@@ -174,7 +176,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 .andExpect(jsonPath("$.quoteEffectiveDate").value(effectiveDate.toString()))
                 .andExpect(jsonPath("$.quoteSource").value("official-closing"))
                 .andExpect(jsonPath("$.quoteProvider").value("argentinadatos.com"))
-                .andExpect(jsonPath("$.quoteProviderTimestamp").value("2026-09-18T15:30:00Z"))
+                .andExpect(jsonPath("$.quoteProviderTimestamp").value("2020-01-15T15:30:00Z"))
                 .andExpect(jsonPath("$.calculationVersion").value("2"))
                 .andReturn()
                 .getResponse()
@@ -221,7 +223,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
         assertThat(reloaded.getExchangeRateEffectiveDate()).isEqualTo(effectiveDate);
         assertThat(reloaded.getExchangeRateSource()).isEqualTo("official-closing");
         assertThat(reloaded.getExchangeRateProvider()).isEqualTo("argentinadatos.com");
-        assertThat(reloaded.getExchangeRateProviderTimestamp()).isEqualTo("2026-09-18T15:30:00Z");
+        assertThat(reloaded.getExchangeRateProviderTimestamp()).isEqualTo("2020-01-15T15:30:00Z");
         assertThat(reloaded.getCalculationVersion()).isEqualTo("2");
 
         Map<String, Object> persistedSnapshot = jdbcTemplate.queryForMap("""
@@ -240,14 +242,14 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
 
     @Test
     void quoteIdentity_survivesReloadFullPartialReviewAndVoid() throws Exception {
-        LocalDate paymentDate = LocalDate.now();
+        LocalDate paymentDate = HISTORICAL_PAYMENT_DATE;
         ExchangeRateQuote quote = new ExchangeRateQuote(
                 new BigDecimal("1234.567"),
                 paymentDate,
                 paymentDate.minusDays(1),
                 "official-closing",
                 "argentinadatos.com",
-                "2026-09-19T12:00:00Z");
+                "2020-01-15T12:00:00Z");
 
         RegisteredSnapshot full = registerQuotedSnapshot(
                 "quote-full-review", "100.00", "123456.70", quote);
@@ -275,14 +277,14 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
 
     @Test
     void decimalStrings_preservePersistedScaleAcrossHistoryAndPendingReview() throws Exception {
-        LocalDate paymentDate = LocalDate.now();
+        LocalDate paymentDate = HISTORICAL_PAYMENT_DATE;
         ExchangeRateQuote quote = new ExchangeRateQuote(
                 new BigDecimal("1015.50"),
                 paymentDate,
                 paymentDate,
                 "official",
                 "provider-a",
-                "2026-09-19T12:00:00Z");
+                "2020-01-15T12:00:00Z");
         RegisteredSnapshot registered = registerQuotedSnapshot(
                 "decimal-history", "0.01", "10.16", quote);
 
@@ -379,14 +381,14 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
 
     @Test
     void voidReversesPersistedAllocationsExactlyWithoutRewritingApprovedHistory() throws Exception {
-        LocalDate paymentDate = LocalDate.now();
+        LocalDate paymentDate = HISTORICAL_PAYMENT_DATE;
         ExchangeRateQuote quote = new ExchangeRateQuote(
                 new BigDecimal("3.000"),
                 paymentDate,
                 paymentDate,
                 "official-closing",
                 "provider-a",
-                "2026-09-19T12:00:00Z");
+                "2020-01-15T12:00:00Z");
         PaymentFixture fixture = createPaymentFixture("void-persisted-allocations", Currency.ARS);
         Installment first = createInstallment(
                 fixture.trip(), fixture.user(), fixture.student(), 1, "100.01", InstallmentStatus.YELLOW);
@@ -737,8 +739,8 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 fileKey);
         legacy.setExchangeRate(new BigDecimal("1015.50"));
         legacy.setExchangeRateScale(2);
-        legacy.setExchangeRateRequestedDate(LocalDate.now().minusDays(2));
-        legacy.setExchangeRateEffectiveDate(LocalDate.now().minusDays(3));
+        legacy.setExchangeRateRequestedDate(HISTORICAL_PAYMENT_DATE.minusDays(2));
+        legacy.setExchangeRateEffectiveDate(HISTORICAL_PAYMENT_DATE.minusDays(3));
         legacy.setExchangeRateSource("legacy-source");
         legacy.setExchangeRateProvider("legacy-source");
         legacy.setCalculationVersion("v1");
@@ -820,7 +822,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
         submission.setPaymentCurrency(bankAccount.getCurrency());
         submission.setExchangeRate(null);
         submission.setAmountInTripCurrency(new BigDecimal(amountInTripCurrency));
-        submission.setReportedPaymentDate(LocalDate.now());
+        submission.setReportedPaymentDate(HISTORICAL_PAYMENT_DATE);
         submission.setPaymentMethod(PaymentMethod.BANK_TRANSFER);
         submission.setStatus(PaymentSubmissionStatus.PENDING);
         submission.setFileKey(fileKey);

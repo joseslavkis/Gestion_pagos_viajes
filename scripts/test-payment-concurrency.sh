@@ -311,6 +311,7 @@ assert_status() {
 }
 
 stamp="$(date +%s)-$RANDOM"
+historical_payment_date="2020-01-15"
 user_email="payment-concurrency-$stamp@example.com"
 user_password="Concurrency-${stamp}-${RANDOM}!"
 student_dni="$(printf '%08d' $((RANDOM * 100 + RANDOM)))"
@@ -343,7 +344,8 @@ assert_status installments 200 "$installments_status"
 cp "$TMP_DIR/installments.body" "$TMP_DIR/installments.json"
 installment_id="$(jq -er --argjson trip "$trip_id" '.[] | select(.tripId == $trip) | .installmentId' "$TMP_DIR/installments.json" | head -n 1)"
 register_body="$(jq -nc --argjson installment "$installment_id" --argjson bank "$bank_id" \
-  '{anchorInstallmentId:$installment,reportedAmount:100,reportedPaymentDate:(now|strftime("%Y-%m-%d")),paymentCurrency:"ARS",paymentMethod:"BANK_TRANSFER",bankAccountId:$bank}')"
+  --arg payment_date "$historical_payment_date" \
+  '{anchorInstallmentId:$installment,reportedAmount:100,reportedPaymentDate:$payment_date,paymentCurrency:"ARS",paymentMethod:"BANK_TRANSFER",bankAccountId:$bank}')"
 register_status="$(request register POST /api/v1/payments "$user_token" "$register_body")"
 assert_status register 201 "$register_status"
 submission_id="$(jq -er '.submissionId' "$TMP_DIR/register.body")"
