@@ -1,6 +1,11 @@
 package com.agencia.pagos.payment;
 
 import com.agencia.pagos.TestcontainersConfiguration;
+import com.agencia.pagos.payment.dto.PaymentBatchPreviewDTO;
+import com.agencia.pagos.payment.dto.PaymentPreviewRequestDTO;
+import com.agencia.pagos.payment.dto.PaymentSubmissionDTO;
+import com.agencia.pagos.payment.dto.RegisterPaymentDTO;
+import com.agencia.pagos.payment.dto.ReviewPaymentDTO;
 import com.agencia.pagos.user.dto.UserCreateDTO;
 import com.agencia.pagos.user.dto.TokenDTO;
 import com.agencia.pagos.payment.BankAccount;
@@ -22,6 +27,7 @@ import com.agencia.pagos.trip.TripRepository;
 import com.agencia.pagos.user.UserRepository;
 import com.agencia.pagos.payment.storage.PaymentAttachmentStorageService;
 import com.agencia.pagos.testsupport.ControllerIntegrationTestSupport;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -29,10 +35,12 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mail.javamail.JavaMailSender;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -40,6 +48,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -56,6 +65,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Import(TestcontainersConfiguration.class)
 class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
 
+    private static final LocalDate HISTORICAL_PAYMENT_DATE = LocalDate.of(2020, 1, 15);
+
     private record PaymentFixture(TokenDTO userTokens, User user, Student student, Trip trip) {
     }
 
@@ -64,6 +75,12 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
 
     @MockBean
     private PaymentAttachmentStorageService paymentAttachmentStorageService;
+
+    @MockBean
+    private ExchangeRateService exchangeRateService;
+
+    @Autowired
+    private EntityManager entityManager;
 
     @Autowired
     private TripRepository tripRepository;
@@ -82,6 +99,15 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
 
     @Autowired
     private PaymentSubmissionRepository paymentSubmissionRepository;
+
+    @Autowired
+    private PaymentAllocationRepository paymentAllocationRepository;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private PaymentService paymentService;
 
     @Test
     void getPendingReview_siendoAdmin_devuelvePagosPendientesAgrupadosPorSubmission() throws Exception {
@@ -109,10 +135,339 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 .andExpect(jsonPath("$[0].status").value("PENDING"))
                 .andExpect(jsonPath("$[0].tripId").value(fixture.trip().getId()))
                 .andExpect(jsonPath("$[0].userEmail").value(fixture.user().getEmail()))
-                .andExpect(jsonPath("$[0].reportedAmount").value(250))
+                .andExpect(jsonPath("$[0].reportedAmount").value("250.00"))
                 .andExpect(jsonPath("$[0].fileKey").value("https://backend.example/api/v1/payment-attachments/admin-review-token"))
                 .andExpect(jsonPath("$[0].allocations.length()").value(3))
-                .andExpect(jsonPath("$[0].allocations[2].amountInTripCurrency").value(50));
+                .andExpect(jsonPath("$[0].allocations[2].amountInTripCurrency").value("50.00"));
+    }
+
+    @Test
+    void previewRegisterReload_preservesQuoteIdentityWithoutProviderRefetch() throws Exception {
+        LocalDate requestedDate = HISTORICAL_PAYMENT_DATE;
+        LocalDate effectiveDate = requestedDate.minusDays(1);
+        ExchangeRateQuote quote = new ExchangeRateQuote(
+                new BigDecimal("1234.567"),
+                requestedDate,
+                effectiveDate,
+                "official-closing",
+                "argentinadatos.com",
+                "2020-01-15T15:30:00Z"
+        );
+        PaymentFixture fixture = createPaymentFixture("payment-quote-reload", Currency.USD);
+        Installment installment = createInstallment(
+                fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+        given(exchangeRateService.getOfficialQuoteForDate(requestedDate)).willReturn(quote);
+
+        String previewBody = mockMvc.perform(post("/api/v1/payments/preview")
+                        .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "anchorInstallmentId": %d,
+                                  "reportedAmount": 123456.70,
+                                  "reportedPaymentDate": "%s",
+                                  "paymentCurrency": "ARS"
+                                }
+                                """.formatted(installment.getId(), requestedDate)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.exchangeRate").value("1234.567"))
+                .andExpect(jsonPath("$.quoteRequestedDate").value(requestedDate.toString()))
+                .andExpect(jsonPath("$.quoteEffectiveDate").value(effectiveDate.toString()))
+                .andExpect(jsonPath("$.quoteSource").value("official-closing"))
+                .andExpect(jsonPath("$.quoteProvider").value("argentinadatos.com"))
+                .andExpect(jsonPath("$.quoteProviderTimestamp").value("2020-01-15T15:30:00Z"))
+                .andExpect(jsonPath("$.calculationVersion").value("2"))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        String previewToken = objectMapper.readTree(previewBody).path("previewToken").asText();
+        org.mockito.Mockito.clearInvocations(exchangeRateService);
+
+        String registrationBody = mockMvc.perform(multipart("/api/v1/payments")
+                        .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                        .param("anchorInstallmentId", String.valueOf(installment.getId()))
+                        .param("reportedAmount", "123456.70")
+                        .param("reportedPaymentDate", requestedDate.toString())
+                        .param("paymentCurrency", "ARS")
+                        .param("paymentMethod", "BANK_TRANSFER")
+                        .param("bankAccountId", String.valueOf(bankAccount.getId()))
+                        .param("previewToken", previewToken)
+                        .with(request -> {
+                            request.setMethod("POST");
+                            return request;
+                        }))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.exchangeRate").value("1234.567"))
+                .andExpect(jsonPath("$.quoteSource").value("official-closing"))
+                .andExpect(jsonPath("$.quoteProvider").value("argentinadatos.com"))
+                .andExpect(jsonPath("$.calculationVersion").value("2"))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        org.mockito.Mockito.verify(exchangeRateService, org.mockito.Mockito.never())
+                .getOfficialQuoteForDate(org.mockito.ArgumentMatchers.any(LocalDate.class));
+
+        Long submissionId = objectMapper.readTree(registrationBody).path("submissionId").asLong();
+        transactionTemplate.executeWithoutResult(status -> {
+            paymentSubmissionRepository.flush();
+            entityManager.clear();
+        });
+        PaymentSubmission reloaded = paymentSubmissionRepository.findById(submissionId).orElseThrow();
+
+        assertThat(reloaded.getExchangeRate()).isEqualByComparingTo("1234.567");
+        assertThat(reloaded.getExchangeRateScale()).isEqualTo(3);
+        assertThat(reloaded.getExchangeRateRequestedDate()).isEqualTo(requestedDate);
+        assertThat(reloaded.getExchangeRateEffectiveDate()).isEqualTo(effectiveDate);
+        assertThat(reloaded.getExchangeRateSource()).isEqualTo("official-closing");
+        assertThat(reloaded.getExchangeRateProvider()).isEqualTo("argentinadatos.com");
+        assertThat(reloaded.getExchangeRateProviderTimestamp()).isEqualTo("2020-01-15T15:30:00Z");
+        assertThat(reloaded.getCalculationVersion()).isEqualTo("2");
+
+        Map<String, Object> persistedSnapshot = jdbcTemplate.queryForMap("""
+                SELECT exchange_rate, exchange_rate_scale, exchange_rate_source,
+                       exchange_rate_provider, calculation_version
+                FROM payment_submissions
+                WHERE id = ?
+                """, submissionId);
+        assertThat((BigDecimal) persistedSnapshot.get("exchange_rate"))
+                .isEqualByComparingTo("1234.567");
+        assertThat(persistedSnapshot.get("exchange_rate_scale")).isEqualTo(3);
+        assertThat(persistedSnapshot.get("exchange_rate_source")).isEqualTo("official-closing");
+        assertThat(persistedSnapshot.get("exchange_rate_provider")).isEqualTo("argentinadatos.com");
+        assertThat(persistedSnapshot.get("calculation_version")).isEqualTo("2");
+    }
+
+    @Test
+    void quoteIdentity_survivesReloadFullPartialReviewAndVoid() throws Exception {
+        LocalDate paymentDate = HISTORICAL_PAYMENT_DATE;
+        ExchangeRateQuote quote = new ExchangeRateQuote(
+                new BigDecimal("1234.567"),
+                paymentDate,
+                paymentDate.minusDays(1),
+                "official-closing",
+                "argentinadatos.com",
+                "2020-01-15T12:00:00Z");
+
+        RegisteredSnapshot full = registerQuotedSnapshot(
+                "quote-full-review", "100.00", "123456.70", quote);
+        paymentService.reviewPayment(
+                full.submissionId(),
+                new ReviewPaymentDTO(new BigDecimal("123456.70"), null),
+                "admin@test.com");
+        assertPersistedSnapshot(full.submissionId(), quote, PaymentSubmissionStatus.RESOLVED);
+        paymentService.voidPayment(full.submissionId(), "admin@test.com");
+        assertPersistedSnapshot(full.submissionId(), quote, PaymentSubmissionStatus.VOIDED);
+
+        RegisteredSnapshot partial = registerQuotedSnapshot(
+                "quote-partial-review", "100.00", "123456.70", quote);
+        paymentService.reviewPayment(
+                partial.submissionId(),
+                new ReviewPaymentDTO(new BigDecimal("61728.35"), "Partial approval contract"),
+                "admin@test.com");
+        assertPersistedSnapshot(partial.submissionId(), quote, PaymentSubmissionStatus.RESOLVED);
+        paymentService.voidPayment(partial.submissionId(), "admin@test.com");
+        assertPersistedSnapshot(partial.submissionId(), quote, PaymentSubmissionStatus.VOIDED);
+
+        org.mockito.Mockito.verify(exchangeRateService, org.mockito.Mockito.times(2))
+                .getOfficialQuoteForDate(paymentDate);
+    }
+
+    @Test
+    void decimalStrings_preservePersistedScaleAcrossHistoryAndPendingReview() throws Exception {
+        LocalDate paymentDate = HISTORICAL_PAYMENT_DATE;
+        ExchangeRateQuote quote = new ExchangeRateQuote(
+                new BigDecimal("1015.50"),
+                paymentDate,
+                paymentDate,
+                "official",
+                "provider-a",
+                "2020-01-15T12:00:00Z");
+        RegisteredSnapshot registered = registerQuotedSnapshot(
+                "decimal-history", "0.01", "10.16", quote);
+
+        var pending = paymentService.getPendingReviewReceipts().stream()
+                .filter(item -> item.submissionId().equals(registered.submissionId()))
+                .findFirst()
+                .orElseThrow();
+        var pendingJson = objectMapper.valueToTree(pending);
+        assertThat(pendingJson.path("reportedAmount").asText()).isEqualTo("10.16");
+        assertThat(pendingJson.path("amountInTripCurrency").asText()).isEqualTo("0.01");
+        assertThat(pendingJson.path("exchangeRate").asText()).isEqualTo("1015.50");
+        assertThat(pendingJson.path("quoteProvider").asText()).isEqualTo("provider-a");
+
+        paymentService.reviewPayment(
+                registered.submissionId(),
+                new ReviewPaymentDTO(new BigDecimal("10.16"), null),
+                "admin@test.com");
+        var approvedHistory = paymentService.getReceiptsForInstallment(registered.installmentId());
+        assertThat(approvedHistory).hasSize(1);
+        var approvedJson = objectMapper.valueToTree(approvedHistory.getFirst());
+        assertThat(approvedJson.path("reportedAmount").asText()).isEqualTo("10.16");
+        assertThat(approvedJson.path("amountInTripCurrency").asText()).isEqualTo("0.01");
+        assertThat(approvedJson.path("exchangeRate").asText()).isEqualTo("1015.50");
+        assertThat(approvedJson.path("quoteProvider").asText()).isEqualTo("provider-a");
+
+        paymentService.voidPayment(registered.submissionId(), "admin@test.com");
+        var voidedHistory = paymentService.getReceiptsForInstallment(registered.installmentId());
+        assertThat(voidedHistory).hasSize(1);
+        var voidedJson = objectMapper.valueToTree(voidedHistory.getFirst());
+        assertThat(voidedJson.path("exchangeRate").asText()).isEqualTo("1015.50");
+        assertThat(voidedJson.path("quoteProvider").asText()).isEqualTo("provider-a");
+    }
+
+    @Test
+    void legacyPendingReview_usesPersistedRateAndLabelsReconciliationWithoutProviderCall() throws Exception {
+        LegacyPendingFixture legacy = createLegacyPendingFixture(
+                "legacy-pending-review", "legacy-pending-receipt");
+        org.mockito.Mockito.clearInvocations(exchangeRateService);
+
+        paymentService.reviewPayment(
+                legacy.submissionId(),
+                new ReviewPaymentDTO(new BigDecimal("10.16"), null),
+                "admin@test.com");
+        paymentSubmissionRepository.flush();
+        entityManager.clear();
+
+        PaymentSubmission reviewed = paymentSubmissionRepository
+                .findByIdWithContext(legacy.submissionId()).orElseThrow();
+        PaymentOutcome approved = reviewed.getOutcomes().stream()
+                .filter(outcome -> outcome.getStatus() == PaymentOutcomeStatus.APPROVED)
+                .findFirst()
+                .orElseThrow();
+        assertThat(reviewed.getExchangeRate()).isEqualByComparingTo("1015.50");
+        assertThat(reviewed.getCalculationVersion()).isEqualTo("v1");
+        assertThat(approved.getAdminObservation())
+                .isEqualTo("Aprobación conciliada con los valores históricos v1 persistidos");
+        assertThat(approved.getReportedAmount()).isEqualByComparingTo("10.16");
+        assertThat(approved.getAmountInTripCurrency()).isEqualByComparingTo("0.01");
+        org.mockito.Mockito.verify(exchangeRateService, org.mockito.Mockito.never())
+                .getOfficialQuoteForDate(org.mockito.ArgumentMatchers.any(LocalDate.class));
+        org.mockito.Mockito.verify(exchangeRateService, org.mockito.Mockito.never())
+                .getOfficialRateForDate(org.mockito.ArgumentMatchers.any(LocalDate.class));
+    }
+
+    @Test
+    void legacyPendingReview_rejectsExplicitlyWithoutReconstructingRate() throws Exception {
+        LegacyPendingFixture legacy = createLegacyPendingFixture(
+                "legacy-pending-reject", "legacy-pending-rejected-receipt");
+        org.mockito.Mockito.clearInvocations(exchangeRateService);
+
+        paymentService.reviewPayment(
+                legacy.submissionId(),
+                new ReviewPaymentDTO(new BigDecimal("0.00"), "Rechazo explícito de pago histórico v1"),
+                "admin@test.com");
+        paymentSubmissionRepository.flush();
+        entityManager.clear();
+
+        PaymentSubmission reviewed = paymentSubmissionRepository
+                .findByIdWithContext(legacy.submissionId()).orElseThrow();
+        PaymentOutcome rejected = reviewed.getOutcomes().stream()
+                .filter(outcome -> outcome.getStatus() == PaymentOutcomeStatus.REJECTED)
+                .findFirst()
+                .orElseThrow();
+        assertThat(reviewed.getExchangeRate()).isEqualByComparingTo("1015.50");
+        assertThat(reviewed.getCalculationVersion()).isEqualTo("v1");
+        assertThat(rejected.getAdminObservation()).isEqualTo("Rechazo explícito de pago histórico v1");
+        assertThat(installmentRepository.findById(legacy.installmentId()).orElseThrow().getPaidAmount())
+                .isEqualByComparingTo("0.00");
+        org.mockito.Mockito.verify(exchangeRateService, org.mockito.Mockito.never())
+                .getOfficialQuoteForDate(org.mockito.ArgumentMatchers.any(LocalDate.class));
+        org.mockito.Mockito.verify(exchangeRateService, org.mockito.Mockito.never())
+                .getOfficialRateForDate(org.mockito.ArgumentMatchers.any(LocalDate.class));
+    }
+
+    @Test
+    void voidReversesPersistedAllocationsExactlyWithoutRewritingApprovedHistory() throws Exception {
+        LocalDate paymentDate = HISTORICAL_PAYMENT_DATE;
+        ExchangeRateQuote quote = new ExchangeRateQuote(
+                new BigDecimal("3.000"),
+                paymentDate,
+                paymentDate,
+                "official-closing",
+                "provider-a",
+                "2020-01-15T12:00:00Z");
+        PaymentFixture fixture = createPaymentFixture("void-persisted-allocations", Currency.ARS);
+        Installment first = createInstallment(
+                fixture.trip(), fixture.user(), fixture.student(), 1, "100.01", InstallmentStatus.YELLOW);
+        Installment second = createInstallment(
+                fixture.trip(), fixture.user(), fixture.student(), 2, "100.00", InstallmentStatus.YELLOW);
+        BankAccount bankAccount = createBankAccount(Currency.USD);
+        given(exchangeRateService.getOfficialQuoteForDate(paymentDate)).willReturn(quote);
+
+        PaymentBatchPreviewDTO preview = paymentService.previewPayment(
+                new PaymentPreviewRequestDTO(first.getId(), new BigDecimal("66.67"), paymentDate, Currency.USD),
+                fixture.user().getEmail());
+        PaymentSubmissionDTO registered = paymentService.registerPayment(
+                new RegisterPaymentDTO(
+                        first.getId(),
+                        new BigDecimal("66.67"),
+                        paymentDate,
+                        Currency.USD,
+                        PaymentMethod.BANK_TRANSFER,
+                        bankAccount.getId(),
+                        preview.previewToken()),
+                fixture.user().getEmail());
+        paymentService.reviewPayment(
+                registered.submissionId(),
+                new ReviewPaymentDTO(new BigDecimal("66.67"), null),
+                "admin@test.com");
+        paymentSubmissionRepository.flush();
+        entityManager.clear();
+
+        PaymentSubmission approvedSubmission = paymentSubmissionRepository
+                .findByIdWithContext(registered.submissionId()).orElseThrow();
+        PaymentOutcome approvedOutcome = approvedSubmission.getOutcomes().stream()
+                .filter(outcome -> outcome.getStatus() == PaymentOutcomeStatus.APPROVED)
+                .findFirst()
+                .orElseThrow();
+        Long approvedOutcomeId = approvedOutcome.getId();
+        Map<Long, BigDecimal> persistedTripAllocations = approvedOutcome.getAllocations().stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        allocation -> allocation.getInstallment().getId(),
+                        PaymentAllocation::getAmountInTripCurrency));
+        Map<Long, BigDecimal> persistedReportedAllocations = approvedOutcome.getAllocations().stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        allocation -> allocation.getInstallment().getId(),
+                        PaymentAllocation::getReportedAmount));
+        org.mockito.Mockito.clearInvocations(exchangeRateService);
+
+        paymentService.voidPayment(registered.submissionId(), "void-admin@test.com");
+        paymentSubmissionRepository.flush();
+        entityManager.clear();
+
+        assertThat(installmentRepository.findById(first.getId()).orElseThrow().getPaidAmount())
+                .isEqualByComparingTo("0.00");
+        assertThat(installmentRepository.findById(second.getId()).orElseThrow().getPaidAmount())
+                .isEqualByComparingTo("0.00");
+        PaymentSubmission voidedSubmission = paymentSubmissionRepository
+                .findByIdWithContext(registered.submissionId()).orElseThrow();
+        PaymentOutcome preservedApprovedOutcome = voidedSubmission.getOutcomes().stream()
+                .filter(outcome -> outcome.getId().equals(approvedOutcomeId))
+                .findFirst()
+                .orElseThrow();
+        assertThat(preservedApprovedOutcome.getStatus()).isEqualTo(PaymentOutcomeStatus.APPROVED);
+        assertThat(preservedApprovedOutcome.getReportedAmount()).isEqualByComparingTo("66.67");
+        assertThat(preservedApprovedOutcome.getAmountInTripCurrency()).isEqualByComparingTo("200.01");
+        assertThat(preservedApprovedOutcome.getAllocations()).allSatisfy(allocation -> {
+            assertThat(allocation.getAmountInTripCurrency())
+                    .isEqualByComparingTo(persistedTripAllocations.get(allocation.getInstallment().getId()));
+            assertThat(allocation.getReportedAmount())
+                    .isEqualByComparingTo(persistedReportedAllocations.get(allocation.getInstallment().getId()));
+        });
+        PaymentOutcome voidOutcome = voidedSubmission.getOutcomes().stream()
+                .filter(outcome -> outcome.getStatus() == PaymentOutcomeStatus.VOIDED)
+                .findFirst()
+                .orElseThrow();
+        assertThat(voidOutcome.getReportedAmount()).isEqualByComparingTo("66.67");
+        assertThat(voidOutcome.getAmountInTripCurrency()).isEqualByComparingTo("200.01");
+        assertThat(paymentAllocationRepository.count()).isEqualTo(2);
+        org.mockito.Mockito.verify(exchangeRateService, org.mockito.Mockito.never())
+                .getOfficialQuoteForDate(org.mockito.ArgumentMatchers.any(LocalDate.class));
+        org.mockito.Mockito.verify(exchangeRateService, org.mockito.Mockito.never())
+                .getOfficialRateForDate(org.mockito.ArgumentMatchers.any(LocalDate.class));
     }
 
     @Test
@@ -269,12 +624,12 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
 
         Installment installment = installmentRepository.findById(submission.getAnchorInstallment().getId()).orElseThrow();
         assertThat(installment.getPaidAmount()).isEqualByComparingTo("0");
-        // Exactly one PaymentOutcome (the original APPROVED) and its status is VOIDED
-        // after the successful concurrent void. The conflicting request must not have
-        // created a duplicate outcome.
-        assertThat(paymentOutcomeRepository.findAll()).hasSize(1);
-        assertThat(paymentOutcomeRepository.findAll().get(0).getStatus())
-                .isEqualTo(PaymentOutcomeStatus.VOIDED);
+        // The approved outcome remains immutable and one separate VOIDED audit outcome is
+        // created. The conflicting request must not create a duplicate reversal outcome.
+        assertThat(paymentOutcomeRepository.findAll()).hasSize(2);
+        assertThat(paymentOutcomeRepository.findAll())
+                .extracting(PaymentOutcome::getStatus)
+                .containsExactlyInAnyOrder(PaymentOutcomeStatus.APPROVED, PaymentOutcomeStatus.VOIDED);
         assertThat(paymentSubmissionRepository.findById(submission.getId()).orElseThrow().getStatus())
                 .isEqualTo(PaymentSubmissionStatus.VOIDED);
     }
@@ -294,6 +649,60 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 .andReturn()
                 .getResponse()
                 .getStatus();
+    }
+
+    private RegisteredSnapshot registerQuotedSnapshot(
+            String prefix,
+            String installmentAmount,
+            String reportedAmount,
+            ExchangeRateQuote quote
+    ) throws Exception {
+        PaymentFixture fixture = createPaymentFixture(prefix, Currency.USD);
+        Installment installment = createInstallment(
+                fixture.trip(), fixture.user(), fixture.student(), 1, installmentAmount, InstallmentStatus.YELLOW);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+        given(exchangeRateService.getOfficialQuoteForDate(quote.requestedDate())).willReturn(quote);
+
+        PaymentBatchPreviewDTO preview = paymentService.previewPayment(
+                new PaymentPreviewRequestDTO(
+                        installment.getId(),
+                        new BigDecimal(reportedAmount),
+                        quote.requestedDate(),
+                        Currency.ARS),
+                fixture.user().getEmail());
+        PaymentSubmissionDTO registered = paymentService.registerPayment(
+                new RegisterPaymentDTO(
+                        installment.getId(),
+                        new BigDecimal(reportedAmount),
+                        quote.requestedDate(),
+                        Currency.ARS,
+                        PaymentMethod.BANK_TRANSFER,
+                        bankAccount.getId(),
+                        preview.previewToken()),
+                fixture.user().getEmail());
+
+        paymentSubmissionRepository.flush();
+        entityManager.clear();
+        assertPersistedSnapshot(registered.submissionId(), quote, PaymentSubmissionStatus.PENDING);
+        return new RegisteredSnapshot(registered.submissionId(), installment.getId());
+    }
+
+    private void assertPersistedSnapshot(
+            Long submissionId,
+            ExchangeRateQuote quote,
+            PaymentSubmissionStatus expectedStatus
+    ) {
+        entityManager.clear();
+        PaymentSubmission reloaded = paymentSubmissionRepository.findById(submissionId).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(expectedStatus);
+        assertThat(reloaded.getExchangeRate()).isEqualByComparingTo(quote.sellRate());
+        assertThat(reloaded.getExchangeRateScale()).isEqualTo(quote.sellRate().scale());
+        assertThat(reloaded.getExchangeRateRequestedDate()).isEqualTo(quote.requestedDate());
+        assertThat(reloaded.getExchangeRateEffectiveDate()).isEqualTo(quote.effectiveDate());
+        assertThat(reloaded.getExchangeRateSource()).isEqualTo(quote.source());
+        assertThat(reloaded.getExchangeRateProvider()).isEqualTo(quote.provider());
+        assertThat(reloaded.getExchangeRateProviderTimestamp()).isEqualTo(quote.providerTimestamp());
+        assertThat(reloaded.getCalculationVersion()).isEqualTo("2");
     }
 
     private PaymentFixture createPaymentFixture(String prefix, Currency currency) throws Exception {
@@ -316,6 +725,28 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 amount,
                 "inline-test-receipt"
         ));
+    }
+
+    private LegacyPendingFixture createLegacyPendingFixture(String prefix, String fileKey) throws Exception {
+        PaymentFixture fixture = createPaymentFixture(prefix, Currency.USD);
+        Installment installment = createInstallment(
+                fixture.trip(), fixture.user(), fixture.student(), 1, "0.01", InstallmentStatus.YELLOW);
+        PaymentSubmission legacy = buildPendingSubmission(
+                installment,
+                createBankAccount(Currency.ARS),
+                "10.16",
+                "0.01",
+                fileKey);
+        legacy.setExchangeRate(new BigDecimal("1015.50"));
+        legacy.setExchangeRateScale(2);
+        legacy.setExchangeRateRequestedDate(HISTORICAL_PAYMENT_DATE.minusDays(2));
+        legacy.setExchangeRateEffectiveDate(HISTORICAL_PAYMENT_DATE.minusDays(3));
+        legacy.setExchangeRateSource("legacy-source");
+        legacy.setExchangeRateProvider("legacy-source");
+        legacy.setCalculationVersion("v1");
+        Long submissionId = paymentSubmissionRepository.saveAndFlush(legacy).getId();
+        entityManager.clear();
+        return new LegacyPendingFixture(submissionId, installment.getId());
     }
 
     private Student getFirstStudent(User user) {
@@ -391,10 +822,16 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
         submission.setPaymentCurrency(bankAccount.getCurrency());
         submission.setExchangeRate(null);
         submission.setAmountInTripCurrency(new BigDecimal(amountInTripCurrency));
-        submission.setReportedPaymentDate(LocalDate.now());
+        submission.setReportedPaymentDate(HISTORICAL_PAYMENT_DATE);
         submission.setPaymentMethod(PaymentMethod.BANK_TRANSFER);
         submission.setStatus(PaymentSubmissionStatus.PENDING);
         submission.setFileKey(fileKey);
         return submission;
+    }
+
+    private record RegisteredSnapshot(Long submissionId, Long installmentId) {
+    }
+
+    private record LegacyPendingFixture(Long submissionId, Long installmentId) {
     }
 }

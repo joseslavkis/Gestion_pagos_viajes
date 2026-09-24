@@ -22,7 +22,7 @@ import java.time.format.DateTimeParseException;
 import java.time.format.DateTimeFormatter;
 
 @Service
-public class ExchangeRateService {
+public class ExchangeRateService implements ExchangeRateQuoteProvider {
 
     private static final Logger logger = LoggerFactory.getLogger(ExchangeRateService.class);
 
@@ -38,28 +38,43 @@ public class ExchangeRateService {
     private final ObjectMapper objectMapper;
     private final Clock clock;
     private final int historicalFallbackDays;
+    private final PaymentMoneyPolicy moneyPolicy;
 
     @Autowired
     public ExchangeRateService(
             RestClient.Builder restClientBuilder,
             ObjectMapper objectMapper,
+            PaymentMoneyPolicy moneyPolicy,
             @Value("${exchange-rate.fallback-days:10}") int historicalFallbackDays
     ) {
         this(
                 restClientBuilder.build(),
                 objectMapper,
                 Clock.system(ARGENTINA_ZONE),
-                historicalFallbackDays > 0 ? historicalFallbackDays : DEFAULT_FALLBACK_DAYS
+                historicalFallbackDays > 0 ? historicalFallbackDays : DEFAULT_FALLBACK_DAYS,
+                moneyPolicy
         );
     }
 
     ExchangeRateService(RestClient restClient, ObjectMapper objectMapper, Clock clock, int historicalFallbackDays) {
+        this(restClient, objectMapper, clock, historicalFallbackDays, new PaymentMoneyPolicy());
+    }
+
+    ExchangeRateService(
+            RestClient restClient,
+            ObjectMapper objectMapper,
+            Clock clock,
+            int historicalFallbackDays,
+            PaymentMoneyPolicy moneyPolicy
+    ) {
         this.restClient = restClient;
         this.objectMapper = objectMapper;
         this.clock = clock;
         this.historicalFallbackDays = historicalFallbackDays;
+        this.moneyPolicy = moneyPolicy;
     }
 
+    @Override
     public ExchangeRateQuote getOfficialQuoteForDate(LocalDate requestedDate) {
         if (requestedDate == null) {
             throw new IllegalArgumentException("La fecha de pago informada es obligatoria");
@@ -73,8 +88,7 @@ public class ExchangeRateService {
         }
 
         if (requestedDate.equals(today)) {
-            BigDecimal currentRate = fetchCurrentRate(today);
-            return new ExchangeRateQuote(currentRate, requestedDate, requestedDate, CURRENT_SOURCE, CURRENT_SOURCE, "");
+            return fetchCurrentQuote(today);
         }
 
         return fetchHistoricalWithFallback(requestedDate, today);
@@ -93,7 +107,7 @@ public class ExchangeRateService {
         return null;
     }
 
-    private BigDecimal fetchCurrentRate(LocalDate today) {
+    private ExchangeRateQuote fetchCurrentQuote(LocalDate today) {
         String url = "https://dolarapi.com/v1/dolares/oficial";
         long startedAt = System.nanoTime();
         try {
@@ -104,10 +118,21 @@ public class ExchangeRateService {
             JsonNode node = objectMapper.readTree(response);
             validateCurrentProviderTimestamp(node, today, url);
             BigDecimal rate = extractVenta(node, url, today);
+            String providerTimestamp = extractProviderTimestamp(node);
             logger.info("exchange_rate.current.success provider={} requestedDate={} effectiveDate={} url={} elapsedMs={}",
                     CURRENT_SOURCE, today, today, url, elapsedMillis(startedAt));
-            return rate;
+            return new ExchangeRateQuote(
+                    rate,
+                    today,
+                    today,
+                    CURRENT_SOURCE,
+                    CURRENT_SOURCE,
+                    providerTimestamp
+            );
         } catch (RuntimeException | java.io.IOException e) {
+            if (e instanceof ProviderRateContractException contractException) {
+                throw contractException;
+            }
             logger.warn("exchange_rate.current.provider_error provider={} url={} requestedDate={} elapsedMs={} cause={}",
                     CURRENT_SOURCE, url, today, elapsedMillis(startedAt), e.getClass().getSimpleName() + ": " + e.getMessage());
             throw new IllegalStateException(
@@ -159,6 +184,9 @@ public class ExchangeRateService {
                         notFound
                 );
             } catch (RuntimeException | java.io.IOException e) {
+                if (e instanceof ProviderRateContractException contractException) {
+                    throw contractException;
+                }
                 logger.warn("exchange_rate.historical.provider_error provider={} url={} requestedDate={} candidateDate={} elapsedMs={} cause={}",
                         HISTORICAL_SOURCE, url, requestedDate, probe, elapsedMillis(startedAt), e.getClass().getSimpleName() + ": " + e.getMessage());
                 throw new IllegalStateException(
@@ -226,7 +254,7 @@ public class ExchangeRateService {
                     url, probe, venta);
             throw new IllegalStateException("El valor de 'venta' no es positivo para " + probe);
         }
-        return venta;
+        return moneyPolicy.requireProviderRate(venta);
     }
 
     private LocalDate extractHistoricalProviderDate(JsonNode node, String url, LocalDate requestedDate, LocalDate expectedDate) {
@@ -267,6 +295,11 @@ public class ExchangeRateService {
             logger.warn("exchange_rate.current.invalid_timestamp url={} value={}", url, timestampNode.asText());
             throw new IllegalStateException("La fecha de actualización del proveedor no es válida", e);
         }
+    }
+
+    private static String extractProviderTimestamp(JsonNode node) {
+        JsonNode timestampNode = node.get("fechaActualizacion");
+        return timestampNode != null && timestampNode.isTextual() ? timestampNode.asText() : "";
     }
 
     private static long elapsedMillis(long startedAtNanos) {

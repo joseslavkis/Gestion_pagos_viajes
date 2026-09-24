@@ -7,7 +7,12 @@ import {
   useReviewPayment,
 } from "@/features/payments/services/payments-service";
 import { isImageAttachment } from "@/features/payments/lib/attachment-preview";
+import {
+  compareNonNegativeDecimalStrings,
+  normalizePaymentMoneyInput,
+} from "@/features/payments/types/decimal-strings";
 import type {
+  DecimalString,
   PaymentBatchInstallmentDTO,
   PendingPaymentReviewDTO,
 } from "@/features/payments/types/payments-dtos";
@@ -28,11 +33,11 @@ const paymentMethodLabels: Record<string, string> = {
   OTHER: "Otro",
 };
 
-function formatMoneyByCurrency(amount: number, currency: "ARS" | "USD"): string {
+function formatMoneyByCurrency(amount: DecimalString, currency: "ARS" | "USD"): string {
   return new Intl.NumberFormat("es-AR", {
     style: "currency",
     currency,
-  }).format(amount);
+  }).format(Number.parseFloat(amount));
 }
 
 function formatDate(isoDate: string): string {
@@ -44,14 +49,18 @@ function formatInstallmentList(allocations: PaymentBatchInstallmentDTO[]): strin
   return allocations.map((allocation) => `#${allocation.installmentNumber}`).join(", ");
 }
 
-function parseAmount(value: string, fallback: number): number {
-  const normalized = value.replace(",", ".").trim();
-  if (normalized.length === 0) {
-    return fallback;
+function validateApprovalAmount(
+  input: string,
+  reportedAmount: DecimalString,
+): { amount: DecimalString | null; error: string | null } {
+  const amount = normalizePaymentMoneyInput(input);
+  if (amount == null) {
+    return { amount: null, error: "Ingresá un monto válido con hasta dos decimales." };
   }
-
-  const parsed = Number.parseFloat(normalized);
-  return Number.isFinite(parsed) ? parsed : fallback;
+  if (compareNonNegativeDecimalStrings(amount, reportedAmount) > 0) {
+    return { amount: null, error: "El monto aprobado no puede superar el monto informado." };
+  }
+  return { amount, error: null };
 }
 
 export function PendingReviewPage() {
@@ -98,14 +107,17 @@ export function PendingReviewPage() {
     );
   };
 
-  const submitDecision = async (item: PendingPaymentReviewDTO, approvedAmount: number) => {
+  const submitDecision = async (item: PendingPaymentReviewDTO, approvedAmount: DecimalString) => {
     setActionError(null);
 
-    const safeApprovedAmount = Math.max(0, approvedAmount);
     const observation = observations[item.submissionId]?.trim() ?? "";
 
-    if (safeApprovedAmount < item.reportedAmount && observation.length === 0) {
+    if (compareNonNegativeDecimalStrings(approvedAmount, item.reportedAmount) < 0 && observation.length === 0) {
       setActionError("La observación es obligatoria cuando no se aprueba el monto completo.");
+      return;
+    }
+    if (compareNonNegativeDecimalStrings(approvedAmount, item.reportedAmount) > 0) {
+      setActionError("El monto aprobado no puede superar el monto informado.");
       return;
     }
 
@@ -113,7 +125,7 @@ export function PendingReviewPage() {
       await reviewPayment.mutateAsync({
         id: item.submissionId,
         data: {
-          approvedAmount: safeApprovedAmount,
+          approvedAmount,
           adminObservation: observation.length > 0 ? observation : undefined,
         },
       });
@@ -148,8 +160,8 @@ export function PendingReviewPage() {
             <div className={styles.list}>
               {items.map((item) => {
                 const isExpanded = expandedSubmissionIds.includes(item.submissionId);
-                const approvedAmountInput = approvedAmounts[item.submissionId] ?? String(item.reportedAmount);
-                const approvedAmountValue = parseAmount(approvedAmountInput, item.reportedAmount);
+                const approvedAmountInput = approvedAmounts[item.submissionId] ?? item.reportedAmount;
+                const approvalValidation = validateApprovalAmount(approvedAmountInput, item.reportedAmount);
                 const observation = observations[item.submissionId] ?? "";
 
                 return (
@@ -274,7 +286,12 @@ export function PendingReviewPage() {
                           <label className={styles.searchBox}>
                             <span>Monto a aprobar</span>
                             <input
+                              id={`approved-amount-${item.submissionId}`}
                               value={approvedAmountInput}
+                              aria-invalid={approvalValidation.error != null}
+                              aria-describedby={approvalValidation.error
+                                ? `approved-amount-error-${item.submissionId}`
+                                : undefined}
                               onChange={(event) =>
                                 setApprovedAmounts((current) => ({
                                   ...current,
@@ -285,6 +302,15 @@ export function PendingReviewPage() {
                               inputMode="decimal"
                             />
                           </label>
+                          {approvalValidation.error ? (
+                            <p
+                              id={`approved-amount-error-${item.submissionId}`}
+                              className={styles.errorText}
+                              role="alert"
+                            >
+                              {approvalValidation.error}
+                            </p>
+                          ) : null}
 
                           <label className={styles.searchBox}>
                             <span>Observación admin</span>
@@ -305,15 +331,19 @@ export function PendingReviewPage() {
                               type="button"
                               className={styles.secondaryButton}
                               disabled={reviewPayment.isPending}
-                              onClick={() => submitDecision(item, 0)}
+                              onClick={() => submitDecision(item, "0")}
                             >
                               Rechazar total
                             </button>
                             <button
                               type="button"
                               className={styles.primaryButton}
-                              disabled={reviewPayment.isPending}
-                              onClick={() => submitDecision(item, approvedAmountValue)}
+                              disabled={reviewPayment.isPending || approvalValidation.amount == null}
+                              onClick={() => {
+                                if (approvalValidation.amount != null) {
+                                  void submitDecision(item, approvalValidation.amount);
+                                }
+                              }}
                             >
                               Guardar decisión
                             </button>

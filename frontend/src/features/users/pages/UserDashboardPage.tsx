@@ -7,22 +7,19 @@ import { CommonLayout } from "@/components/CommonLayout/CommonLayout";
 import { useBankAccounts } from "@/features/bank-accounts/services/bank-accounts-service";
 import type { BankAccountDTO } from "@/features/bank-accounts/types/bank-accounts-dtos";
 import { Folder } from "@/features/payments/components/Folder";
+import { usePaymentCalculationForm } from "@/features/payments/hooks/use-payment-calculation-form";
 import {
   useMyInstallments,
-  usePaymentPreview,
   useRegisterPayment,
 } from "@/features/payments/services/payments-service";
 import type {
   Currency,
   PaymentMethod,
-  PaymentBatchPreviewDTO,
+  PaymentCalculationResponseDTO,
   UserInstallmentDTO,
 } from "@/features/payments/types/payments-dtos";
-import { PaymentBatchPreviewDTOSchema } from "@/features/payments/types/payments-dtos";
 import { type ReceiptSuccessData, ReceiptSuccessScreen } from "@/features/payments/components/ReceiptSuccessScreen";
-import { ApiError } from "@/lib/api-error";
-import { apiPost } from "@/lib/api-client";
-import { useToken } from "@/lib/session";
+import { normalizePaymentMoneyInput } from "@/features/payments/types/decimal-strings";
 
 import styles from "./UserDashboardPage.module.css";
 
@@ -150,8 +147,8 @@ function getGroupBadgeColor(group: InstallmentGroup): "green" | "yellow" | "red"
   return "green";
 }
 
-function isInstallmentCovered(installment: Pick<UserInstallmentDTO, "totalDue" | "paidAmount">): boolean {
-  return getInstallmentRemainingAmount(installment) <= 0;
+function isInstallmentCovered(installment: Pick<UserInstallmentDTO, "uiStatusCode">): boolean {
+  return installment.uiStatusCode === "PAID";
 }
 
 function getPayableInstallments(group: InstallmentGroup): UserInstallmentDTO[] {
@@ -176,34 +173,33 @@ function findPendingInstallment(group: InstallmentGroup): UserInstallmentDTO | n
   return getPayableInstallments(group)[0] ?? null;
 }
 
-function roundMoney(value: number): number {
+function roundDisplayMoney(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
-function parseAmountInput(value: string): number {
-  const normalized = value.replace(",", ".").trim();
-  if (normalized.length === 0) {
-    return 0;
-  }
-
-  const parsed = Number.parseFloat(normalized);
-  return Number.isFinite(parsed) ? roundMoney(parsed) : 0;
+function getDisplayRemainingAmount(
+  installment: Pick<UserInstallmentDTO, "totalDue" | "paidAmount">,
+): number {
+  return Math.max(0, roundDisplayMoney(installment.totalDue - installment.paidAmount));
 }
 
-function formatAmountInput(value: number): string {
-  return String(roundMoney(value));
+function getInstallmentRemainingAmount(installment: Pick<UserInstallmentDTO, "remainingAmount">): string {
+  return installment.remainingAmount;
 }
 
-function getInstallmentRemainingAmount(installment: Pick<UserInstallmentDTO, "totalDue" | "paidAmount">): number {
-  return Math.max(0, roundMoney(installment.totalDue - installment.paidAmount));
+function formatInstallmentAmount(
+  installment: Pick<UserInstallmentDTO, "tripCurrency">,
+  amount: number | string,
+): string {
+  const displayAmount = typeof amount === "string" ? Number.parseFloat(amount) : amount;
+  return installment.tripCurrency === "USD"
+    ? usdFormatter.format(displayAmount)
+    : currencyFormatter.format(displayAmount);
 }
 
-function formatInstallmentAmount(installment: Pick<UserInstallmentDTO, "tripCurrency">, amount: number): string {
-  return installment.tripCurrency === "USD" ? usdFormatter.format(amount) : currencyFormatter.format(amount);
-}
-
-function formatAmountByCurrency(currency: "ARS" | "USD", amount: number): string {
-  return currency === "USD" ? usdFormatter.format(amount) : currencyFormatter.format(amount);
+function formatAmountByCurrency(currency: "ARS" | "USD", amount: number | string): string {
+  const displayAmount = typeof amount === "string" ? Number.parseFloat(amount) : amount;
+  return currency === "USD" ? usdFormatter.format(displayAmount) : currencyFormatter.format(displayAmount);
 }
 
 function getGroupCurrency(group: InstallmentGroup): "ARS" | "USD" {
@@ -211,22 +207,22 @@ function getGroupCurrency(group: InstallmentGroup): "ARS" | "USD" {
 }
 
 function getGroupTotalDue(group: InstallmentGroup): number {
-  return roundMoney(
+  return roundDisplayMoney(
     group.installments.reduce((sum, installment) => sum + installment.totalDue, 0),
   );
 }
 
 function getGroupRemainingAmount(group: InstallmentGroup): number {
-  return roundMoney(
+  return roundDisplayMoney(
     group.installments.reduce(
-      (sum, installment) => sum + getInstallmentRemainingAmount(installment),
+      (sum, installment) => sum + getDisplayRemainingAmount(installment),
       0,
     ),
   );
 }
 
 function getGroupPaidAmount(group: InstallmentGroup): number {
-  return roundMoney(getGroupTotalDue(group) - getGroupRemainingAmount(group));
+  return roundDisplayMoney(getGroupTotalDue(group) - getGroupRemainingAmount(group));
 }
 
 function formatInstallmentsLabel(installments: Array<{ installmentNumber: number }>): string {
@@ -247,77 +243,23 @@ function getGroupDisplayName(group: InstallmentGroup, index: number): string {
   return group.studentName ? `${group.tripName} - ${group.studentName}` : group.tripName || `Viaje ${index + 1}`;
 }
 
-function convertReportedAmountFromTripCurrency(
-  amountInTripCurrency: number,
-  tripCurrency: Currency,
-  paymentCurrency: Currency,
-  exchangeRate: number | null,
-): number | null {
-  if (paymentCurrency === tripCurrency) {
-    return roundMoney(amountInTripCurrency);
-  }
-
-  if (exchangeRate == null || exchangeRate <= 0) {
+function getCalculationStatusMessage(calculation: PaymentCalculationResponseDTO): string | null {
+  if (calculation.status === "READY") {
     return null;
   }
-
-  if (tripCurrency === "ARS" && paymentCurrency === "USD") {
-    return roundMoney(amountInTripCurrency / exchangeRate);
+  if (calculation.status === "AMOUNT_EXCEEDS_BALANCE") {
+    return calculation.message ?? "El monto supera el saldo disponible. Revisá el máximo permitido.";
   }
-
-  if (tripCurrency === "USD" && paymentCurrency === "ARS") {
-    return roundMoney(amountInTripCurrency * exchangeRate);
+  if (calculation.status === "UNPAYABLE") {
+    return calculation.message ?? "El saldo no puede pagarse exactamente en la moneda seleccionada.";
   }
-
-  return null;
-}
-
-function uniquePositiveMoneyAmounts(amounts: number[]): number[] {
-  const seen = new Set<string>();
-  const result: number[] = [];
-
-  for (const amount of amounts) {
-    const roundedAmount = roundMoney(amount);
-    if (!Number.isFinite(roundedAmount) || roundedAmount <= 0) {
-      continue;
-    }
-
-    const key = roundedAmount.toFixed(2);
-    if (seen.has(key)) {
-      continue;
-    }
-
-    seen.add(key);
-    result.push(roundedAmount);
+  if (calculation.status === "QUOTE_UNAVAILABLE") {
+    return calculation.message ?? "No pudimos obtener la cotización para esa fecha.";
   }
-
-  return result;
-}
-
-function getExchangeRateProbeAmounts(
-  amountInTripCurrency: number,
-  tripCurrency: Currency,
-  paymentCurrency: Currency,
-): number[] {
-  if (tripCurrency === paymentCurrency) {
-    return uniquePositiveMoneyAmounts([amountInTripCurrency]);
-  }
-
-  if (tripCurrency === "USD" && paymentCurrency === "ARS") {
-    return uniquePositiveMoneyAmounts(
-      [1000, 2000, 500, 5000, 100, 10, 1].map((multiplier) => amountInTripCurrency * multiplier),
-    );
-  }
-
-  if (tripCurrency === "ARS" && paymentCurrency === "USD") {
-    return uniquePositiveMoneyAmounts([0.01, 0.02, 0.05, 0.1, 0.5, 1]);
-  }
-
-  return uniquePositiveMoneyAmounts([1]);
+  return calculation.message ?? "El cálculo venció. Volvé a intentarlo antes de enviar el comprobante.";
 }
 
 export function UserDashboardPage() {
-  const [tokenState] = useToken();
   const queryClient = useQueryClient();
   const registerPayment = useRegisterPayment();
   const { data: installments, isLoading, error } = useMyInstallments();
@@ -330,9 +272,7 @@ export function UserDashboardPage() {
   const [expandedGroupKeys, setExpandedGroupKeys] = useState<string[]>([]);
   const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null);
   const [selectedAnchorInstallmentId, setSelectedAnchorInstallmentId] = useState<number | null>(null);
-  const [reportedAmountInput, setReportedAmountInput] = useState("");
   const [reportedPaymentDate, setReportedPaymentDate] = useState(getTodayDate);
-  const [paymentCurrency, setPaymentCurrency] = useState<Currency>("ARS");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("BANK_TRANSFER");
   const [selectedBankAccountId, setSelectedBankAccountId] = useState<number | null>(null);
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
@@ -340,7 +280,6 @@ export function UserDashboardPage() {
   const [closeFolderSignal, setCloseFolderSignal] = useState(false);
   const [isDropzoneHovered, setIsDropzoneHovered] = useState(false);
   const [receiptSuccessData, setReceiptSuccessData] = useState<ReceiptSuccessData | null>(null);
-  const [isCurrencyAmountUpdating, setIsCurrencyAmountUpdating] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -369,25 +308,39 @@ export function UserDashboardPage() {
   );
 
   const selectedInstallmentDisplay = selectedInstallment ? resolveInstallmentDisplay(selectedInstallment) : null;
-  const selectedInstallmentRemaining = selectedInstallment ? getInstallmentRemainingAmount(selectedInstallment) : 0;
+  const selectedInstallmentRemaining = selectedInstallment
+    ? getInstallmentRemainingAmount(selectedInstallment)
+    : "0.00";
   const selectedGroupHasPendingReview = selectedGroup != null ? groupHasPendingReview(selectedGroup) : false;
   const selectableInstallments = selectedGroup != null ? getPayableInstallments(selectedGroup) : [];
   const selectedTripHasPending = selectableInstallments.length > 0;
-  const reportedAmountValue = parseAmountInput(reportedAmountInput);
-
-  const previewPayload = selectedAnchorInstallmentId != null && !selectedGroupHasPendingReview
-    ? {
-        anchorInstallmentId: selectedAnchorInstallmentId,
-        reportedAmount: reportedAmountValue,
-        reportedPaymentDate,
-        paymentCurrency,
-      }
-    : null;
+  const paymentFormContext = useMemo(
+    () =>
+      selectedInstallment != null && !selectedGroupHasPendingReview
+        ? {
+            anchorInstallmentId: selectedInstallment.installmentId,
+            tripCurrency: selectedInstallment.tripCurrency,
+            remainingAmount: selectedInstallmentRemaining,
+            reportedPaymentDate,
+          }
+        : null,
+    [selectedGroupHasPendingReview, selectedInstallment, selectedInstallmentRemaining, reportedPaymentDate],
+  );
   const {
-    data: paymentPreview,
-    isLoading: isPaymentPreviewLoading,
-    error: paymentPreviewError,
-  } = usePaymentPreview(previewPayload);
+    amountInput: reportedAmountInput,
+    paymentCurrency,
+    calculation: paymentCalculation,
+    calculationError,
+    amountCurrencyMismatch,
+    isCalculating: isPaymentCalculationLoading,
+    setAmountInput: setReportedAmountInput,
+    setPaymentCurrency,
+    setReportedPaymentDate: invalidatePaymentCalculationDate,
+  } = usePaymentCalculationForm(paymentFormContext);
+  const reportedAmountDecimal = normalizePaymentMoneyInput(reportedAmountInput);
+  const hasPositiveReportedAmount = reportedAmountDecimal != null && /[1-9]/.test(reportedAmountDecimal);
+  const readyPaymentCalculation = paymentCalculation?.status === "READY" ? paymentCalculation : null;
+  const calculationStatusMessage = paymentCalculation ? getCalculationStatusMessage(paymentCalculation) : null;
 
   const availableBankAccounts = useMemo(
     () => bankAccountItems.filter((account) => account.currency === paymentCurrency),
@@ -406,9 +359,10 @@ export function UserDashboardPage() {
     selectedTripHasPending &&
     !selectedGroupHasPendingReview &&
     !registerPayment.isPending &&
-    !isPaymentPreviewLoading &&
-    paymentPreview != null &&
-    reportedAmountValue > 0 &&
+    !isPaymentCalculationLoading &&
+    readyPaymentCalculation != null &&
+    readyPaymentCalculation.previewToken != null &&
+    hasPositiveReportedAmount &&
     !isBankAccountsLoading &&
     availableBankAccounts.length > 0 &&
     selectedBankAccountId != null &&
@@ -457,134 +411,23 @@ export function UserDashboardPage() {
   useEffect(() => {
     if (selectedGroupKey == null) {
       setSelectedAnchorInstallmentId(null);
-      setReportedAmountInput("");
       return;
     }
 
     const group = groups.find((item) => item.groupKey === selectedGroupKey) ?? null;
     if (!group) {
       setSelectedAnchorInstallmentId(null);
-      setReportedAmountInput("");
       return;
     }
 
     const pendingInstallment = findPendingInstallment(group);
     if (!pendingInstallment) {
       setSelectedAnchorInstallmentId(null);
-      setReportedAmountInput("");
       return;
     }
 
     setSelectedAnchorInstallmentId(pendingInstallment.installmentId);
-    setPaymentCurrency(pendingInstallment.tripCurrency);
-    setReportedAmountInput(formatAmountInput(getInstallmentRemainingAmount(pendingInstallment)));
   }, [selectedGroupKey, groups]);
-
-  const fetchPaymentPreviewSnapshot = async (
-    payload: Parameters<typeof apiPost<PaymentBatchPreviewDTO>>[1] & {
-      anchorInstallmentId: number;
-      reportedAmount: number;
-      reportedPaymentDate: string;
-      paymentCurrency: Currency;
-    },
-  ) =>
-    queryClient.fetchQuery<PaymentBatchPreviewDTO, ApiError>({
-      queryKey: [
-        "payments",
-        "preview",
-        payload.anchorInstallmentId,
-        payload.reportedAmount,
-        payload.reportedPaymentDate,
-        payload.paymentCurrency,
-      ],
-      staleTime: 0,
-      queryFn: async () =>
-        apiPost(
-          "/api/v1/payments/preview",
-          payload,
-          (json) => PaymentBatchPreviewDTOSchema.parse(json),
-          {
-            headers:
-              tokenState.state === "LOGGED_IN"
-                ? {
-                    Authorization: `Bearer ${tokenState.accessToken}`,
-                  }
-                : undefined,
-          },
-        ),
-    });
-
-  const handlePaymentCurrencyChange = async (nextCurrency: Currency) => {
-    if (nextCurrency === paymentCurrency) {
-      return;
-    }
-
-    const tripCurrency = selectedInstallment?.tripCurrency ?? null;
-    const amountInTripCurrency =
-      tripCurrency == null
-        ? null
-        : paymentCurrency === tripCurrency
-          ? reportedAmountValue
-          : paymentPreview?.paymentCurrency === paymentCurrency
-            ? paymentPreview.amountInTripCurrency
-            : null;
-
-    let nextAmountInput = reportedAmountInput;
-
-    if (tripCurrency != null && amountInTripCurrency != null && amountInTripCurrency > 0) {
-      const existingExchangeRate =
-        paymentPreview?.paymentCurrency === paymentCurrency ? paymentPreview.exchangeRate : null;
-      let nextExchangeRate = existingExchangeRate;
-
-      if (nextCurrency !== tripCurrency && (nextExchangeRate == null || nextExchangeRate <= 0) && selectedAnchorInstallmentId != null) {
-        setIsCurrencyAmountUpdating(true);
-        try {
-          for (const probeAmount of getExchangeRateProbeAmounts(amountInTripCurrency, tripCurrency, nextCurrency)) {
-            try {
-              const conversionPreview = await fetchPaymentPreviewSnapshot({
-                anchorInstallmentId: selectedAnchorInstallmentId,
-                reportedAmount: probeAmount,
-                reportedPaymentDate,
-                paymentCurrency: nextCurrency,
-              });
-              if (conversionPreview.exchangeRate != null && conversionPreview.exchangeRate > 0) {
-                nextExchangeRate = conversionPreview.exchangeRate;
-                break;
-              }
-            } catch {
-              // Some probe amounts can be too small after backend rounding or exceed the pending balance.
-              // Try the next safe candidate before giving up on the automatic conversion.
-            }
-          }
-        } catch {
-          nextExchangeRate = null;
-        } finally {
-          setIsCurrencyAmountUpdating(false);
-        }
-      }
-
-      const convertedAmount = convertReportedAmountFromTripCurrency(
-        amountInTripCurrency,
-        tripCurrency,
-        nextCurrency,
-        nextExchangeRate,
-      );
-
-      if (convertedAmount != null) {
-        nextAmountInput = formatAmountInput(convertedAmount);
-      }
-    } else if (nextCurrency === tripCurrency && selectedInstallment != null) {
-      // Race-condition guard: when switching back to the trip's native currency
-      // and the preview has not resolved yet (paymentPreview is undefined while
-      // usePaymentPreview refetches), fall back to the installment's remaining
-      // amount. Without this, rapid USD→ARS→USD switches leave the input stuck
-      // at the intermediate converted value (e.g. 420000 instead of 300).
-      nextAmountInput = formatAmountInput(getInstallmentRemainingAmount(selectedInstallment));
-    }
-
-    setPaymentCurrency(nextCurrency);
-    setReportedAmountInput(nextAmountInput);
-  };
 
   const toggleGroup = (groupKey: string) => {
     setExpandedGroupKeys((current) => {
@@ -630,12 +473,12 @@ export function UserDashboardPage() {
       return;
     }
 
-    if (!paymentPreview) {
+    if (!readyPaymentCalculation || readyPaymentCalculation.previewToken == null) {
       toast.error("Todavía no pudimos calcular la imputación del pago. Reintentá en unos segundos.");
       return;
     }
 
-    if (reportedAmountValue <= 0) {
+    if (!hasPositiveReportedAmount || reportedAmountDecimal == null) {
       toast.error("Ingresá un monto válido antes de enviar el comprobante.");
       return;
     }
@@ -643,8 +486,11 @@ export function UserDashboardPage() {
     // Capture display data before resetting state
     const groupIndex = groups.findIndex((g) => g.groupKey === selectedGroupKey);
     const tripDisplayName = selectedGroup ? getGroupDisplayName(selectedGroup, groupIndex) : "";
-    const installmentsLabelSnapshot = formatInstallmentsLabel(paymentPreview.installments);
-    const amountSnapshot = formatAmountByCurrency(paymentPreview.paymentCurrency, paymentPreview.reportedAmount);
+    const installmentsLabelSnapshot = formatInstallmentsLabel(readyPaymentCalculation.installments);
+    const amountSnapshot = formatAmountByCurrency(
+      readyPaymentCalculation.paymentCurrency,
+      readyPaymentCalculation.reportedAmount ?? reportedAmountDecimal,
+    );
     const dateSnapshot = formatReportedDate(reportedPaymentDate);
     const methodSnapshot = paymentMethod;
     const bankSnapshot =
@@ -656,19 +502,17 @@ export function UserDashboardPage() {
     try {
       await registerPayment.mutateAsync({
         anchorInstallmentId: selectedAnchorInstallmentId,
-        reportedAmount: reportedAmountValue,
+        reportedAmount: reportedAmountDecimal,
         reportedPaymentDate,
         paymentCurrency,
         paymentMethod,
         bankAccountId: selectedBankAccountId,
         file: receiptFile,
-        previewToken: paymentPreview.previewToken,
+        previewToken: readyPaymentCalculation.previewToken,
       });
 
       setSelectedAnchorInstallmentId(null);
-      setReportedAmountInput("");
       setReportedPaymentDate(getTodayDate());
-      setPaymentCurrency(selectedInstallment?.tripCurrency ?? "ARS");
       setPaymentMethod("BANK_TRANSFER");
       setSelectedBankAccountId(null);
       setReceiptFile(null);
@@ -776,8 +620,7 @@ export function UserDashboardPage() {
 
                                   <p className={styles.chipMeta}>{currencyFormatter.format(installment.totalDue)}</p>
                                   {installment.paidAmount > 0 &&
-                                  installment.uiStatusCode !== "PAID" &&
-                                  getInstallmentRemainingAmount(installment) > 0 ? (
+                                  installment.uiStatusCode !== "PAID" ? (
                                     <p className={styles.chipMeta}>
                                       Abonado: {formatInstallmentAmount(installment, installment.paidAmount)} · Resta:{" "}
                                       {formatInstallmentAmount(
@@ -943,35 +786,60 @@ export function UserDashboardPage() {
                   disabled={!selectedTripHasPending || selectedGroupHasPendingReview}
                 />
               </label>
-              {paymentPreview ? (
+              {readyPaymentCalculation ? (
                 <div className={styles.selectedInfoBox}>
                   <div className={styles.selectedInfoHeader}>
                     <span>
-                      Se imputa en {formatInstallmentsLabel(paymentPreview.installments)} · monto reportado{" "}
-                      {formatAmountByCurrency(paymentPreview.paymentCurrency, paymentPreview.reportedAmount)}
+                      Se imputa en {formatInstallmentsLabel(readyPaymentCalculation.installments)} · monto reportado{" "}
+                      {formatAmountByCurrency(
+                        readyPaymentCalculation.paymentCurrency,
+                        readyPaymentCalculation.reportedAmount ?? reportedAmountInput,
+                      )}
                     </span>
                     <span className={`${styles.statusBadge} ${styles.statusgreen}`}>Monto libre</span>
                   </div>
-                  <p className={styles.helperText}>
-                    Máximo permitido para esta inscripción:{" "}
-                    {formatAmountByCurrency(paymentPreview.paymentCurrency, paymentPreview.maxAllowedAmount)}.
-                  </p>
+                  {readyPaymentCalculation.maxAllowedAmount != null ? (
+                    <p className={styles.helperText}>
+                      Máximo permitido para esta inscripción:{" "}
+                      {formatAmountByCurrency(
+                        readyPaymentCalculation.paymentCurrency,
+                        readyPaymentCalculation.maxAllowedAmount,
+                      )}.
+                    </p>
+                  ) : null}
                   <p className={styles.helperText}>
                     Saldo pendiente total:{" "}
-                    {formatAmountByCurrency(paymentPreview.tripCurrency, paymentPreview.totalPendingAmountInTripCurrency)}.
+                    {formatAmountByCurrency(
+                      readyPaymentCalculation.tripCurrency,
+                      readyPaymentCalculation.totalPendingAmountInTripCurrency,
+                    )}.
                     {" "}Equivale a{" "}
-                    {formatAmountByCurrency(paymentPreview.tripCurrency, paymentPreview.amountInTripCurrency)} del viaje
-                    {paymentPreview.exchangeRate != null
-                      ? ` · cotización oficial ${formatAmountByCurrency("ARS", paymentPreview.exchangeRate)}${paymentPreview.quoteEffectiveDate ? ` correspondiente al ${formatReportedDate(paymentPreview.quoteEffectiveDate)}` : ""}`
+                    {formatAmountByCurrency(
+                      readyPaymentCalculation.tripCurrency,
+                      readyPaymentCalculation.amountInTripCurrency ?? "0",
+                    )} del viaje
+                    {readyPaymentCalculation.exchangeRate != null
+                      ? ` · cotización oficial ${formatAmountByCurrency("ARS", readyPaymentCalculation.exchangeRate)}${readyPaymentCalculation.quoteEffectiveDate ? ` correspondiente al ${formatReportedDate(readyPaymentCalculation.quoteEffectiveDate)}` : ""}`
                       : ""}
                   </p>
                 </div>
               ) : null}
-              {paymentPreviewError ? (
-                <p className={styles.errorText}>{paymentPreviewError.message}</p>
+              {calculationStatusMessage ? (
+                <p className={styles.errorText} role="alert">{calculationStatusMessage}</p>
               ) : null}
-              {isPaymentPreviewLoading && !paymentPreviewError ? (
-                <p className={styles.helperText}>Calculando imputación...</p>
+              {amountCurrencyMismatch ? (
+                <p className={styles.errorText} role="alert">
+                  El monto ingresado corresponde a {amountCurrencyMismatch.sourceCurrency}. Ingresalo nuevamente para
+                  calcular en {amountCurrencyMismatch.paymentCurrency}.
+                </p>
+              ) : null}
+              {calculationError ? (
+                <p className={styles.errorText} role="alert">
+                  No pudimos calcular el monto. Conservamos lo que ingresaste para que puedas reintentar.
+                </p>
+              ) : null}
+              {isPaymentCalculationLoading && !calculationError ? (
+                <p className={styles.helperText}>Calculando el monto con el servidor...</p>
               ) : null}
 
               {selectedTripHasPending ? (
@@ -986,7 +854,11 @@ export function UserDashboardPage() {
                 <input
                   type="date"
                   value={reportedPaymentDate}
-                  onChange={(event) => setReportedPaymentDate(event.target.value)}
+                  onChange={(event) => {
+                    const nextDate = event.target.value;
+                    invalidatePaymentCalculationDate(nextDate);
+                    setReportedPaymentDate(nextDate);
+                  }}
                   className={styles.input}
                   disabled={!selectedTripHasPending || selectedGroupHasPendingReview}
                   required
@@ -997,20 +869,14 @@ export function UserDashboardPage() {
                 <span className={styles.label}>Moneda en que pagaste</span>
                 <select
                   value={paymentCurrency}
-                  onChange={(event) => {
-                    void handlePaymentCurrencyChange(event.target.value as Currency);
-                  }}
+                  onChange={(event) => setPaymentCurrency(event.target.value as Currency)}
                   className={styles.select}
-                  disabled={!selectedTripHasPending || selectedGroupHasPendingReview || isCurrencyAmountUpdating}
+                  disabled={!selectedTripHasPending || selectedGroupHasPendingReview}
                 >
                   <option value="ARS">Pesos (ARS)</option>
                   <option value="USD">Dólares (USD)</option>
                 </select>
               </label>
-
-              {isCurrencyAmountUpdating ? (
-                <p className={styles.helperText}>Actualizando el monto según la moneda seleccionada...</p>
-              ) : null}
 
               {selectedInstallment && paymentCurrency !== selectedInstallment.tripCurrency ? (
                 <p className={styles.helperWarning}>

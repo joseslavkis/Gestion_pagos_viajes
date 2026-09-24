@@ -66,6 +66,8 @@ import static org.hamcrest.Matchers.containsString;
 @Import(TestcontainersConfiguration.class)
 class TripUnassignFinancialIntegrityIntegrationTest extends ControllerIntegrationTestSupport {
 
+    private static final LocalDate HISTORICAL_PAYMENT_DATE = LocalDate.of(2020, 1, 15);
+
     @MockBean
     private JavaMailSender javaMailSender;
 
@@ -118,7 +120,7 @@ class TripUnassignFinancialIntegrityIntegrationTest extends ControllerIntegratio
                 .paymentCurrency(Currency.ARS)
                 .exchangeRate(new BigDecimal("1.00"))
                 .amountInTripCurrency(new BigDecimal("1500.00"))
-                .reportedPaymentDate(LocalDate.now())
+                .reportedPaymentDate(HISTORICAL_PAYMENT_DATE)
                 .paymentMethod(PaymentMethod.BANK_TRANSFER)
                 .status(status)
                 .fileKey("legacy-receipt-" + status.name().toLowerCase() + ".png")
@@ -365,7 +367,7 @@ class TripUnassignFinancialIntegrityIntegrationTest extends ControllerIntegratio
                         .header("Authorization", "Bearer " + fixture.userToken().accessToken())
                         .param("anchorInstallmentId", String.valueOf(fixture.installment().getId()))
                         .param("reportedAmount", "500.00")
-                        .param("reportedPaymentDate", LocalDate.now().toString())
+                        .param("reportedPaymentDate", HISTORICAL_PAYMENT_DATE.toString())
                         .param("paymentCurrency", "ARS")
                         .param("paymentMethod", PaymentMethod.BANK_TRANSFER.name())
                         .param("bankAccountId", String.valueOf(bankAccount.getId()))
@@ -500,7 +502,7 @@ class TripUnassignFinancialIntegrityIntegrationTest extends ControllerIntegratio
         submission.setPaymentCurrency(Currency.ARS);
         submission.setExchangeRate(new BigDecimal("1.00"));
         submission.setAmountInTripCurrency(new BigDecimal("1500.00"));
-        submission.setReportedPaymentDate(LocalDate.now());
+        submission.setReportedPaymentDate(HISTORICAL_PAYMENT_DATE);
         submission.setPaymentMethod(PaymentMethod.BANK_TRANSFER);
         submission.setStatus(status);
         submission.setFileKey(status + "-receipt.png");
