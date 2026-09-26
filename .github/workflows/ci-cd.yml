@@ -2,7 +2,7 @@ name: CI (Tests & Build)
 
 on:
   pull_request:
-    branches: [main, dev]
+    branches: [main, dev, split/payment-money-db, split/payment-money-backend]
   push:
     branches: [main, dev]
 
