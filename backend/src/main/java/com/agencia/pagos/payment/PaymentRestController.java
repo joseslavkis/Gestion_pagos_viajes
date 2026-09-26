@@ -7,6 +7,8 @@ import com.agencia.pagos.payment.dto.PendingPaymentReviewDTO;
 import com.agencia.pagos.payment.dto.PaymentBatchPreviewDTO;
 import com.agencia.pagos.payment.dto.PaymentInstallmentHistoryDTO;
 import com.agencia.pagos.payment.dto.PaymentSubmissionDTO;
+import com.agencia.pagos.payment.dto.PaymentCalculationRequestDTO;
+import com.agencia.pagos.payment.dto.PaymentCalculationResponseDTO;
 import com.agencia.pagos.user.dto.UserInstallmentDTO;
 import com.agencia.pagos.shared.money.Currency;
 import com.agencia.pagos.payment.PaymentMethod;
@@ -45,6 +47,16 @@ class PaymentRestController {
             @AuthenticationPrincipal(expression = "username") String email
     ) {
         return ResponseEntity.ok(paymentService.previewPayment(dto, email));
+    }
+
+    @PreAuthorize("hasAnyRole('USER','ADMIN')")
+    @PostMapping(value = "/calculation", consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    ResponseEntity<PaymentCalculationResponseDTO> calculatePayment(
+            @Valid @RequestBody PaymentCalculationRequestDTO dto,
+            @AuthenticationPrincipal(expression = "username") String email
+    ) {
+        return ResponseEntity.ok(paymentService.calculatePayment(dto, email));
     }
 
     @PreAuthorize("hasAnyRole('USER','ADMIN')")

@@ -215,12 +215,12 @@ class PaymentMoneySchemaMigrationTest {
         assertThat(Files.readString(Path.of("src/main/resources/application-production.properties")))
                 .contains("spring.jpa.hibernate.ddl-auto=validate");
         assertThat(Files.readString(Path.of("../docker-compose.yml")))
-                .contains("SPRING_PROFILES_ACTIVE: \"${SPRING_PROFILES_ACTIVE:-local}\"")
-                .contains("SPRING_JPA_HIBERNATE_DDL_AUTO: \"${SPRING_JPA_HIBERNATE_DDL_AUTO:-update}\"");
+                .contains("SPRING_PROFILES_ACTIVE: \"${SPRING_PROFILES_ACTIVE:-production}\"")
+                .contains("SPRING_JPA_HIBERNATE_DDL_AUTO: \"${SPRING_JPA_HIBERNATE_DDL_AUTO:-validate}\"");
     }
 
     @Test
-    void olderBackendMappingsValidateAgainstWidenedSchema() throws Exception {
+    void migratedSchemaValidatesWithProductionBackendMappings() throws Exception {
         try (Connection connection = dataSource.getConnection(); Statement sql = connection.createStatement()) {
             sql.execute("SET search_path TO public");
             sql.execute(Files.readString(MIGRATION));

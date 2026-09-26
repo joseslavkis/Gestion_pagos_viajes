@@ -18,6 +18,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.ColumnDefault;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -69,8 +70,11 @@ public class PaymentSubmission {
     @Column(nullable = false)
     private Currency paymentCurrency;
 
-    @Column(precision = 10, scale = 2)
+    @Column(precision = 18, scale = 8)
     private BigDecimal exchangeRate;
+
+    @Column(name = "exchange_rate_scale")
+    private Integer exchangeRateScale;
 
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal amountInTripCurrency;
@@ -87,8 +91,15 @@ public class PaymentSubmission {
     @Column(name = "exchange_rate_source", length = 64)
     private String exchangeRateSource;
 
+    @Column(name = "exchange_rate_provider", length = 64)
+    private String exchangeRateProvider;
+
     @Column(name = "exchange_rate_provider_timestamp", length = 128)
     private String exchangeRateProviderTimestamp;
+
+    @Column(name = "calculation_version", length = 16, nullable = false)
+    @ColumnDefault("'v1'")
+    private String calculationVersion;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -114,6 +125,9 @@ public class PaymentSubmission {
         }
         if (fileKey == null) {
             fileKey = "";
+        }
+        if (calculationVersion == null) {
+            calculationVersion = "v1";
         }
         if (createdAt == null) {
             createdAt = LocalDateTime.now();
@@ -188,6 +202,14 @@ public class PaymentSubmission {
         this.exchangeRate = exchangeRate;
     }
 
+    public Integer getExchangeRateScale() {
+        return exchangeRateScale;
+    }
+
+    public void setExchangeRateScale(Integer exchangeRateScale) {
+        this.exchangeRateScale = exchangeRateScale;
+    }
+
     public BigDecimal getAmountInTripCurrency() {
         return amountInTripCurrency;
     }
@@ -228,12 +250,28 @@ public class PaymentSubmission {
         this.exchangeRateSource = exchangeRateSource;
     }
 
+    public String getExchangeRateProvider() {
+        return exchangeRateProvider;
+    }
+
+    public void setExchangeRateProvider(String exchangeRateProvider) {
+        this.exchangeRateProvider = exchangeRateProvider;
+    }
+
     public String getExchangeRateProviderTimestamp() {
         return exchangeRateProviderTimestamp;
     }
 
     public void setExchangeRateProviderTimestamp(String exchangeRateProviderTimestamp) {
         this.exchangeRateProviderTimestamp = exchangeRateProviderTimestamp;
+    }
+
+    public String getCalculationVersion() {
+        return calculationVersion;
+    }
+
+    public void setCalculationVersion(String calculationVersion) {
+        this.calculationVersion = calculationVersion;
     }
 
     public PaymentMethod getPaymentMethod() {

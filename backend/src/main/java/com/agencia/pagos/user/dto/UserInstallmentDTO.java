@@ -3,7 +3,9 @@ package com.agencia.pagos.user.dto;
 import com.agencia.pagos.trip.InstallmentStatus;
 import com.agencia.pagos.trip.InstallmentUiStatusCode;
 import com.agencia.pagos.payment.ReceiptStatus;
+import com.agencia.pagos.payment.dto.CanonicalDecimalSerializer;
 import com.agencia.pagos.shared.money.Currency;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -19,6 +21,7 @@ public record UserInstallmentDTO(
         LocalDate dueDate,
         BigDecimal totalDue,
         BigDecimal paidAmount,
+        @JsonSerialize(using = CanonicalDecimalSerializer.class) BigDecimal remainingAmount,
         Integer yellowWarningDays,
         Currency tripCurrency,
         InstallmentStatus installmentStatus,
