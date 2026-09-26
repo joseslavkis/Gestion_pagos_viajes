@@ -548,6 +548,180 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
     }
 
     @Test
+    void futurePaymentDateIsRejectedBeforePersistenceOrQuoteAcrossAllCurrencyDirections() throws Exception {
+        assertFixedBusinessClockSelected();
+        LocalDate futureDate = BUSINESS_TODAY.plusDays(1);
+        for (Currency tripCurrency : Currency.values()) {
+            for (Currency paymentCurrency : Currency.values()) {
+                PaymentFixture fixture = createPaymentFixture(
+                        "future-" + tripCurrency + "-" + paymentCurrency, tripCurrency);
+                Installment installment = createInstallment(fixture.trip(), fixture.user(), fixture.student(),
+                        1, "100.00", InstallmentStatus.YELLOW);
+                BankAccount bankAccount = createBankAccount(paymentCurrency);
+                String token = fixture.userTokens().accessToken();
+                String previewBody = """
+                        {"anchorInstallmentId":%d,"reportedAmount":1,"reportedPaymentDate":"%s","paymentCurrency":"%s"}
+                        """.formatted(installment.getId(), futureDate, paymentCurrency);
+                String calculationBody = """
+                        {"anchorInstallmentId":%d,"reportedPaymentDate":"%s","paymentCurrency":"%s","intent":"REMAINING"}
+                        """.formatted(installment.getId(), futureDate, paymentCurrency);
+                String registrationBody = """
+                        {"anchorInstallmentId":%d,"reportedAmount":1,"reportedPaymentDate":"%s",\
+                        "paymentCurrency":"%s","paymentMethod":"BANK_TRANSFER","bankAccountId":%d}
+                        """.formatted(installment.getId(), futureDate, paymentCurrency, bankAccount.getId());
+
+                mockMvc.perform(post("/api/v1/payments/preview")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON).content(previewBody))
+                        .andExpect(status().isBadRequest());
+                mockMvc.perform(post("/api/v1/payments/calculation")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON).content(calculationBody))
+                        .andExpect(status().isBadRequest());
+                mockMvc.perform(post("/api/v1/payments")
+                                .header("Authorization", "Bearer " + token)
+                                .contentType(MediaType.APPLICATION_JSON).content(registrationBody))
+                        .andExpect(status().isBadRequest());
+            }
+        }
+        assertEquals(0, paymentSubmissionRepository.count());
+        org.mockito.Mockito.verifyNoInteractions(exchangeRateService);
+    }
+
+    @Test
+    void registerWithValidV2PreviewPersistsPendingWithoutProviderRefetch() throws Exception {
+        assertRegistrationPreviewCase("valid", 201, null);
+    }
+
+    @Test
+    void registerWithExpiredV2PreviewLeavesFinancialStateUntouched() throws Exception {
+        assertRegistrationPreviewCase("expired", 400, "venció o es inválido");
+    }
+
+    @Test
+    void registerWithTamperedPreviewLeavesFinancialStateUntouched() throws Exception {
+        assertRegistrationPreviewCase("tampered", 400, "venció o es inválido");
+    }
+
+    @Test
+    void registerWithOtherUsersPreviewLeavesFinancialStateUntouched() throws Exception {
+        assertRegistrationPreviewCase("wrong-user", 400, "venció o es inválido");
+    }
+
+    @Test
+    void registerWithWrongAnchorPreviewLeavesFinancialStateUntouched() throws Exception {
+        assertRegistrationPreviewCase("wrong-anchor", 400, "no corresponde a esta cuota");
+    }
+
+    @Test
+    void registerWithWrongCurrencyPreviewLeavesFinancialStateUntouched() throws Exception {
+        assertRegistrationPreviewCase("wrong-currency", 400, "no coincide con la moneda");
+    }
+
+    @Test
+    void registerWithWrongAmountPreviewLeavesFinancialStateUntouched() throws Exception {
+        assertRegistrationPreviewCase("wrong-amount", 400, "no coincide con el monto");
+    }
+
+    @Test
+    void registerWithWrongDatePreviewLeavesFinancialStateUntouched() throws Exception {
+        assertRegistrationPreviewCase("wrong-date", 400, "no coincide con la fecha");
+    }
+
+    @Test
+    void registerWithVersionlessPreviewLeavesFinancialStateUntouched() throws Exception {
+        assertRegistrationPreviewCase("old-no-cv", 400, "venció o es inválido");
+    }
+
+    private void assertRegistrationPreviewCase(String variant, int expectedStatus, String expectedMessage) throws Exception {
+        PaymentFixture fixture = createPaymentFixture("preview-registration-" + variant, Currency.ARS);
+        Installment anchor = createInstallment(fixture.trip(), fixture.user(), fixture.student(),
+                1, "100.00", InstallmentStatus.YELLOW);
+        Installment second = createInstallment(fixture.trip(), fixture.user(), fixture.student(),
+                2, "100.00", InstallmentStatus.YELLOW);
+        BankAccount account = createBankAccount(Currency.USD);
+        BigDecimal amount = new BigDecimal("10.00");
+        ExchangeRateQuote quote = new ExchangeRateQuote(new BigDecimal("3.00"),
+                BUSINESS_TODAY, BUSINESS_TODAY, "official", "provider-a", null);
+        given(exchangeRateService.getOfficialQuoteForDate(BUSINESS_TODAY)).willReturn(quote);
+        String validToken = paymentService.previewPayment(new PaymentPreviewRequestDTO(
+                anchor.getId(), amount, BUSINESS_TODAY, Currency.USD), fixture.user().getEmail()).previewToken();
+        org.mockito.Mockito.verify(exchangeRateService, org.mockito.Mockito.times(1))
+                .getOfficialQuoteForDate(BUSINESS_TODAY);
+        org.mockito.Mockito.clearInvocations(exchangeRateService);
+
+        PaymentPreviewTokenService.PreviewSnapshot snapshot = new PaymentPreviewTokenService.PreviewSnapshot(
+                "wrong-user".equals(variant) ? fixture.user().getId() + 1000 : fixture.user().getId(),
+                "wrong-anchor".equals(variant) ? second.getId() : anchor.getId(),
+                "wrong-currency".equals(variant) ? Currency.ARS : Currency.USD,
+                "wrong-amount".equals(variant) ? new BigDecimal("11.00") : amount,
+                "wrong-date".equals(variant) ? BUSINESS_TODAY.minusDays(1) : BUSINESS_TODAY,
+                quote.sellRate(), quote.requestedDate(), quote.effectiveDate(),
+                quote.source(), quote.provider(), quote.providerTimestamp(),
+                PaymentCalculationIntent.MANUAL, PaymentPreviewTokenService.CURRENT_CALCULATION_VERSION);
+        String previewToken = switch (variant) {
+            case "valid" -> validToken;
+            case "expired", "old-no-cv" -> signedPreviewToken(snapshot, "expired".equals(variant),
+                    "expired".equals(variant));
+            case "tampered" -> validToken + "x";
+            default -> paymentPreviewTokenService.issueToken(snapshot);
+        };
+        long submissionsBefore = paymentSubmissionRepository.count();
+        long outcomesBefore = paymentOutcomeRepository.count();
+        long allocationsBefore = paymentAllocationRepository.count();
+        BigDecimal paidBefore = installmentRepository.findById(anchor.getId()).orElseThrow().getPaidAmount();
+        BigDecimal secondPaidBefore = installmentRepository.findById(second.getId()).orElseThrow().getPaidAmount();
+
+        var result = mockMvc.perform(post("/api/v1/payments")
+                .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"anchorInstallmentId":%d,"reportedAmount":10.00,"reportedPaymentDate":"%s",\
+                        "paymentCurrency":"USD","paymentMethod":"BANK_TRANSFER","bankAccountId":%d,"previewToken":"%s"}
+                        """.formatted(anchor.getId(), BUSINESS_TODAY, account.getId(), previewToken)))
+                .andExpect(status().is(expectedStatus));
+        if (expectedMessage == null) {
+            result.andExpect(jsonPath("$.status").value("PENDING"));
+            assertEquals(submissionsBefore + 1, paymentSubmissionRepository.count());
+        } else {
+            result.andExpect(content().string(containsString(expectedMessage)));
+            assertEquals(submissionsBefore, paymentSubmissionRepository.count(), variant);
+        }
+        assertEquals(outcomesBefore, paymentOutcomeRepository.count(), variant);
+        assertEquals(allocationsBefore, paymentAllocationRepository.count(), variant);
+        assertEquals(paidBefore, installmentRepository.findById(anchor.getId()).orElseThrow().getPaidAmount(), variant);
+        assertEquals(secondPaidBefore, installmentRepository.findById(second.getId()).orElseThrow().getPaidAmount(), variant);
+        org.mockito.Mockito.verifyNoInteractions(exchangeRateService);
+        org.mockito.Mockito.verify(paymentAttachmentStorageService, org.mockito.Mockito.times(expectedStatus == 201 ? 1 : 0))
+                .storeReceipt(any(), anyLong(), anyLong(), any());
+    }
+
+    private String signedPreviewToken(PaymentPreviewTokenService.PreviewSnapshot snapshot,
+            boolean expired, boolean includeVersion) {
+        Instant now = Instant.now();
+        var token = Jwts.builder()
+                .claim("type", "payment-preview")
+                .subject(snapshot.userId().toString())
+                .claim("userId", snapshot.userId())
+                .claim("anchorInstallmentId", snapshot.anchorInstallmentId())
+                .claim("paymentCurrency", snapshot.paymentCurrency().name())
+                .claim("reportedAmount", snapshot.reportedAmount().toPlainString())
+                .claim("reportedPaymentDate", snapshot.reportedPaymentDate().toString())
+                .claim("quoteSellRate", snapshot.quoteSellRate().toPlainString())
+                .claim("quoteRequestedDate", snapshot.quoteRequestedDate().toString())
+                .claim("quoteEffectiveDate", snapshot.quoteEffectiveDate().toString())
+                .claim("quoteSource", snapshot.quoteSource())
+                .claim("quoteProvider", snapshot.quoteProvider())
+                .claim("intent", snapshot.intent().name())
+                .issuedAt(Date.from(now.minusSeconds(expired ? 600 : 1)))
+                .expiration(Date.from(now.plusSeconds(expired ? -300 : 300)));
+        if (includeVersion) {
+            token.claim("cv", PaymentPreviewTokenService.CURRENT_CALCULATION_VERSION);
+        }
+        return token.signWith(Keys.hmacShaKeyFor(Decoders.BASE64.decode(TEST_JWT_SECRET)), Jwts.SIG.HS256).compact();
+    }
+
+    @Test
     void calculateRemaining_preservesValidNinetyNinePointTwentyNineCents() throws Exception {
         LocalDate paymentDate = BUSINESS_TODAY;
         PaymentFixture fixture = createPaymentFixture("payment-calculation-cents", Currency.USD);

@@ -262,12 +262,14 @@ public class PaymentAllocationPlanner {
     }
 
     public BigDecimal getRemainingAmount(Installment installment) {
-        BigDecimal totalDue = installment.getTotalDue() == null ? BigDecimal.ZERO : installment.getTotalDue();
-        BigDecimal paidAmount = installment.getPaidAmount() == null ? BigDecimal.ZERO : installment.getPaidAmount();
+        BigDecimal totalDue = moneyPolicy.requireMoney(
+                installment.getTotalDue() == null ? BigDecimal.ZERO : installment.getTotalDue(), "totalDue");
+        BigDecimal paidAmount = moneyPolicy.requireMoney(
+                installment.getPaidAmount() == null ? BigDecimal.ZERO : installment.getPaidAmount(), "paidAmount");
         BigDecimal remainingAmount = totalDue.subtract(paidAmount);
         return remainingAmount.signum() < 0
                 ? BigDecimal.ZERO.setScale(PaymentMoneyPolicy.MONEY_SCALE)
-                : remainingAmount.setScale(PaymentMoneyPolicy.MONEY_SCALE, RoundingMode.HALF_UP);
+                : remainingAmount.setScale(PaymentMoneyPolicy.MONEY_SCALE, RoundingMode.UNNECESSARY);
     }
 
     private BigInteger toCents(BigDecimal amount) {

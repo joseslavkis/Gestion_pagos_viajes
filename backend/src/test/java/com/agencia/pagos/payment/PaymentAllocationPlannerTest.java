@@ -23,6 +23,13 @@ class PaymentAllocationPlannerTest {
     private final PaymentAllocationPlanner planner = new PaymentAllocationPlanner();
 
     @Test
+    void remainingBalanceRejectsSubcentPersistedAmountsInsteadOfRoundingThem() {
+        Installment installment = buildInstallment(1, "100.00", "0.001");
+
+        assertThrows(IllegalArgumentException.class, () -> planner.getRemainingAmount(installment));
+    }
+
+    @Test
     void plan_reparteMontoLibreSecuencialmenteConUltimaCuotaParcial() {
         List<Installment> installments = List.of(
                 buildInstallment(1, "100.00", "0.00"),
