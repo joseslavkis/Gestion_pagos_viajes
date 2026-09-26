@@ -204,8 +204,9 @@ function formatDate(date: string) {
   }).format(value);
 }
 
-function formatMoney(currency: "ARS" | "USD", amount: number) {
-  return currency === "USD" ? usdFormatter.format(amount) : arsFormatter.format(amount);
+function formatMoney(currency: "ARS" | "USD", amount: number | string) {
+  const displayAmount = typeof amount === "string" ? Number.parseFloat(amount) : amount;
+  return currency === "USD" ? usdFormatter.format(displayAmount) : arsFormatter.format(displayAmount);
 }
 
 function formatInstallments(installments: Array<{ installmentNumber: number }>) {

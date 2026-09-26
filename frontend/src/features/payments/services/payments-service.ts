@@ -1,7 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type {
+  Currency,
   PaymentBatchPreviewDTO,
+  PaymentCalculationRequestDTO,
+  PaymentCalculationResponseDTO,
   PaymentInstallmentHistoryDTO,
   PaymentPreviewRequestDTO,
   PaymentSubmissionDTO,
@@ -12,6 +15,7 @@ import type {
 } from "@/features/payments/types/payments-dtos";
 import {
   PaymentBatchPreviewDTOSchema,
+  PaymentCalculationResponseDTOSchema,
   PaymentInstallmentHistoryDTOSchema,
   PaymentSubmissionDTOSchema,
   PendingPaymentReviewDTOSchema,
@@ -87,7 +91,7 @@ export function usePaymentPreview(payload: PaymentPreviewRequestDTO | null) {
     enabled:
       payload != null &&
       payload.anchorInstallmentId > 0 &&
-      payload.reportedAmount > 0 &&
+      payload.reportedAmount.length > 0 &&
       payload.reportedPaymentDate.length > 0,
     staleTime: 0,
     queryFn: async () => {
@@ -99,6 +103,56 @@ export function usePaymentPreview(payload: PaymentPreviewRequestDTO | null) {
         "/api/v1/payments/preview",
         payload,
         (json) => PaymentBatchPreviewDTOSchema.parse(json),
+        {
+          headers:
+            tokenState.state === "LOGGED_IN"
+              ? {
+                  Authorization: `Bearer ${tokenState.accessToken}`,
+                }
+              : undefined,
+        },
+      );
+    },
+  });
+}
+
+export type PaymentCalculationRequestIdentity = {
+  sourceCurrency: Currency;
+  sourceAmount: string;
+  intentRevision: number;
+};
+
+export function usePaymentCalculation(
+  payload: PaymentCalculationRequestDTO | null,
+  identity?: PaymentCalculationRequestIdentity,
+) {
+  const [tokenState] = useToken();
+
+  return useQuery<PaymentCalculationResponseDTO, ApiError>({
+    queryKey: [
+      "payments",
+      "calculation",
+      payload?.anchorInstallmentId ?? null,
+      payload?.paymentCurrency ?? null,
+      payload?.reportedPaymentDate ?? null,
+      payload?.intent ?? null,
+      payload?.reportedAmount ?? null,
+      payload?.previewToken ?? null,
+      identity?.sourceCurrency ?? null,
+      identity?.sourceAmount ?? null,
+      identity?.intentRevision ?? null,
+    ],
+    enabled: payload != null,
+    staleTime: 0,
+    queryFn: async () => {
+      if (payload == null) {
+        throw new Error("Payment calculation requires a payload.");
+      }
+
+      return apiPost(
+        "/api/v1/payments/calculation",
+        payload,
+        (json) => PaymentCalculationResponseDTOSchema.parse(json),
         {
           headers:
             tokenState.state === "LOGGED_IN"
