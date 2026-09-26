@@ -50,8 +50,8 @@ services:
       INSTALLMENT_NOTIFICATIONS_CRON: "${INSTALLMENT_NOTIFICATIONS_CRON}"
       INSTALLMENT_NOTIFICATIONS_ZONE: "${INSTALLMENT_NOTIFICATIONS_ZONE}"
       CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS}"
-      SPRING_PROFILES_ACTIVE: "${SPRING_PROFILES_ACTIVE:-local}"
-      SPRING_JPA_HIBERNATE_DDL_AUTO: "${SPRING_JPA_HIBERNATE_DDL_AUTO:-update}"
+      SPRING_PROFILES_ACTIVE: "${SPRING_PROFILES_ACTIVE:-production}"
+      SPRING_JPA_HIBERNATE_DDL_AUTO: "${SPRING_JPA_HIBERNATE_DDL_AUTO:-validate}"
     # Backends and frontends bind to all interfaces by default so the stack
     # works on a remote VPS / CI. Local-only callers (e.g. the E2E script)
     # can override the bind host by setting BACKEND_BIND_HOST / FRONTEND_BIND_HOST

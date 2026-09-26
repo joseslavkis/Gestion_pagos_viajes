@@ -70,6 +70,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @Import(TestcontainersConfiguration.class)
 class TripRestControllerTest extends ControllerIntegrationTestSupport {
 
+    private static final LocalDate HISTORICAL_PAYMENT_DATE = LocalDate.of(2020, 1, 15);
+
     @MockBean
     private JavaMailSender javaMailSender;
 
@@ -946,7 +948,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             paymentReceiptRepository.save(PaymentReceipt.builder()
                 .installment(installment)
                 .reportedAmount(BigDecimal.valueOf(200))
-                .reportedPaymentDate(LocalDate.now())
+                .reportedPaymentDate(HISTORICAL_PAYMENT_DATE)
                 .paymentMethod(PaymentMethod.BANK_TRANSFER)
                 .fileKey("test-file")
                 .build());
@@ -1654,7 +1656,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
             paymentReceiptRepository.save(PaymentReceipt.builder()
                     .installment(installment)
                     .reportedAmount(BigDecimal.valueOf(4000))
-                    .reportedPaymentDate(LocalDate.now())
+                    .reportedPaymentDate(HISTORICAL_PAYMENT_DATE)
                     .paymentMethod(PaymentMethod.BANK_TRANSFER)
                     .status(com.agencia.pagos.payment.ReceiptStatus.PENDING)
                     .fileKey("")

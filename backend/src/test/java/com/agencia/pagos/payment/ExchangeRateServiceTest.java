@@ -3,6 +3,8 @@ package com.agencia.pagos.payment;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.test.web.client.MockRestServiceServer;
@@ -224,6 +226,56 @@ class ExchangeRateServiceTest {
                 () -> service.getOfficialQuoteForDate(requested)
         );
         assertTrue(ex.getMessage().toLowerCase().contains("cotización"));
+    }
+
+    @Test
+    void preservesThreeDecimalProviderRateWithoutRounding() {
+        LocalDate requested = today.minusDays(3);
+        server.expect(requestTo("https://api.argentinadatos.com/v1/cotizaciones/dolares/oficial/"
+                + requested.format(java.time.format.DateTimeFormatter.ofPattern("yyyy/MM/dd"))))
+                .andRespond(withSuccess("{\"venta\":1234.567,\"fecha\":\"2026-06-05\"}", MediaType.APPLICATION_JSON));
+
+        ExchangeRateQuote quote = service.getOfficialQuoteForDate(requested);
+
+        assertEquals(new BigDecimal("1234.567"), quote.sellRate());
+        assertEquals(3, quote.sellRate().scale());
+    }
+
+    @Test
+    void rejectsProviderRateWhoseLexicalScaleExceedsEightDigits() {
+        LocalDate requested = today.minusDays(3);
+        server.expect(requestTo("https://api.argentinadatos.com/v1/cotizaciones/dolares/oficial/"
+                + requested.format(java.time.format.DateTimeFormatter.ofPattern("yyyy/MM/dd"))))
+                .andRespond(withSuccess("{\"venta\":\"1234.123456789\",\"fecha\":\"2026-06-05\"}", MediaType.APPLICATION_JSON));
+
+        IllegalStateException error = assertThrows(
+                IllegalStateException.class,
+                () -> service.getOfficialQuoteForDate(requested)
+        );
+
+        assertTrue(error.getMessage().toLowerCase().contains("contrato"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"1234", "1234.5", "1234.56", "1234.567", "1234.56789012", "1E+3"})
+    void numericJsonPreservesExactProviderDecimal(String numericToken) {
+        server.expect(requestTo("https://dolarapi.com/v1/dolares/oficial"))
+                .andRespond(withSuccess("{\"venta\":" + numericToken + "}", MediaType.APPLICATION_JSON));
+
+        BigDecimal expected = new BigDecimal(numericToken).stripTrailingZeros();
+        BigDecimal actual = service.getOfficialQuoteForDate(today).sellRate();
+        assertEquals(0, expected.compareTo(actual));
+        assertEquals(Math.max(0, expected.scale()), actual.scale());
+    }
+
+    @Test
+    void numericJsonWithMoreThanEightNonzeroDecimalPlacesIsRejectedBeforeRounding() {
+        server.expect(requestTo("https://dolarapi.com/v1/dolares/oficial"))
+                .andRespond(withSuccess("{\"venta\":1234.56789012000001}", MediaType.APPLICATION_JSON));
+
+        ProviderRateContractException error = assertThrows(ProviderRateContractException.class,
+                () -> service.getOfficialQuoteForDate(today));
+        assertTrue(error.getMessage().toLowerCase().contains("contrato"));
     }
 
     private static LocalDate previousExpectedCandidate(LocalDate date) {
