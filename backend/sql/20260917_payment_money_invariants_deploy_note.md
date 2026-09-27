@@ -40,6 +40,12 @@ backend/frontend money behavior until this migration and preflight are complete.
 7. Restore payment writes only after all smoke checks pass; backend health alone
    is not sufficient to reopen general traffic.
 
+When the compatible backend is deployed, preview tokens issued before this
+calculation-version rollout without the required `cv=2` claim become invalid
+immediately, even if they have not expired. Users must recalculate the payment
+preview to obtain a new token before registering a payment. Include this
+recalculation step in the registration smoke check before restoring writes.
+
 For an **explicitly disposable local** Compose database, the manual migration
 command is:
 
