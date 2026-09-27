@@ -100,6 +100,21 @@ class PaymentMoneySchemaMigrationTest {
             assertThat(readiness(sql)).isEqualTo("NOT_READY");
             sql.execute("ALTER TABLE payment_submissions VALIDATE CONSTRAINT ck_payment_submissions_exchange_rate_scale");
             assertThat(readiness(sql)).isEqualTo("READY");
+            String beforeWeakenedConstraint = snapshot(sql, 3);
+            sql.execute("ALTER TABLE payment_submissions DROP CONSTRAINT ck_payment_submissions_exchange_rate_scale");
+            sql.execute("""
+                    ALTER TABLE payment_submissions ADD CONSTRAINT ck_payment_submissions_exchange_rate_scale
+                    CHECK (exchange_rate_scale IS NULL OR exchange_rate_scale <= 8)
+                    """);
+            assertThat(readiness(sql)).isEqualTo("NOT_READY");
+            assertThat(snapshot(sql, 3)).isEqualTo(beforeWeakenedConstraint);
+            sql.execute("ALTER TABLE payment_submissions DROP CONSTRAINT ck_payment_submissions_exchange_rate_scale");
+            sql.execute("""
+                    ALTER TABLE payment_submissions ADD CONSTRAINT ck_payment_submissions_exchange_rate_scale
+                    CHECK (exchange_rate_scale IS NULL OR exchange_rate_scale BETWEEN 0 AND 8)
+                    """);
+            assertThat(readiness(sql)).isEqualTo("READY");
+            assertThat(snapshot(sql, 3)).isEqualTo(beforeWeakenedConstraint);
             sql.execute("UPDATE payment_submissions SET exchange_rate = 0 WHERE id = 3");
             assertThat(readiness(sql)).isEqualTo("NOT_READY");
             sql.execute("UPDATE payment_submissions SET exchange_rate = 1200.12345678 WHERE id = 3");
