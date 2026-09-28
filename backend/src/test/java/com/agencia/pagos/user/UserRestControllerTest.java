@@ -46,6 +46,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 @Import(TestcontainersConfiguration.class)
 class UserRestControllerTest extends ControllerIntegrationTestSupport {
+
+    private static final LocalDate HISTORICAL_PAYMENT_DATE = LocalDate.of(2020, 1, 15);
+
     @Autowired
     private TripRepository tripRepository;
 
@@ -515,7 +518,7 @@ class UserRestControllerTest extends ControllerIntegrationTestSupport {
                 .reportedAmount(BigDecimal.valueOf(15000))
                 .paymentCurrency(Currency.ARS)
                 .amountInTripCurrency(BigDecimal.valueOf(15000))
-                .reportedPaymentDate(LocalDate.now())
+                .reportedPaymentDate(HISTORICAL_PAYMENT_DATE)
                 .paymentMethod(PaymentMethod.BANK_TRANSFER)
                 .status(ReceiptStatus.APPROVED)
                 .fileKey("https://example.com/comprobante.pdf")

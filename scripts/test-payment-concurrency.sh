@@ -4,22 +4,18 @@
 # test for the payment-locking fix.
 #
 # Behavior:
-#   * Forcibly resets every isolation-critical variable inside the script
+#   * Generates test-only credentials and resets every isolation-critical variable inside the script
 #     (storage path, bind hosts, published ports, Compose project name) so
 #     the caller's environment cannot redirect the run to dev/VPS storage
 #     or to a public interface.
-#   * Avoids host-port races by publishing backend/frontend/adminer/db on
-#     127.0.0.1:0 (Docker assigns a free port). The backend endpoint is
+#   * Avoids host-port races by publishing the backend on 127.0.0.1:0
+#     (Docker assigns a free port). The backend endpoint is
 #     discovered through `docker compose port backend 8080`; the result is
 #     parsed defensively for macOS ([::]:PORT) and Ubuntu (0.0.0.0:PORT
 #     / 127.0.0.1:PORT) output formats.
-#   * PostgreSQL storage is a project-scoped Docker-managed named volume
-#     declared by an ephemeral Compose override (NO `!override` / `!reset`
-#     custom tags). The override replaces the db service's bind mount at
-#     the SAME container target so the runtime never touches a host bind
-#     path (Linux postgres-owned 0700 directories cannot be cleaned up by
-#     the host process). The named volume is project-prefixed by Compose
-#     and removed automatically by `docker compose down --volumes`.
+#   * PostgreSQL storage is a project-scoped Docker-managed named volume in an
+#     ephemeral test-only Compose file. The runtime never reads the repository
+#     .env or root Compose file and never touches a host database path.
 #   * DB readiness is checked via `docker compose exec db pg_isready`, NOT
 #     via a host-side port (no Postgres connect to the host needed).
 #   * Removes only the built ${PROJECT}-backend image on exit; never prunes
@@ -68,19 +64,41 @@ BACKEND_EXTERNAL_PORT="0"
 FRONTEND_EXTERNAL_PORT="0"
 ADMINER_EXTERNAL_PORT="0"
 
-# EPHEMERAL Compose override: replaces the db service's bind mount at
-# /var/lib/postgresql/data with a project-scoped Docker-managed named volume.
-# Storage path & volume name are NOT caller-controlled: the override is
-# static YAML written by this script and never references VOLUME_DIR.
+# EPHEMERAL test-only Compose file. Storage path & volume name are NOT
+# caller-controlled and no production/development service is targeted.
 # The volume short name is hardcoded; Compose prepends "${PROJECT}_" so
 # the realized full name is e.g.
 #   payment-concurrency-e2e-foo-pid1234_payment-concurrency-pgdata
 # `docker compose down --volumes` removes it automatically.
-cat >"$COMPOSE_OVERRIDE_FILE" <<'OVERRIDE'
+cat >"$COMPOSE_OVERRIDE_FILE" <<OVERRIDE
 services:
   db:
+    image: "postgres:17.4"
+    environment:
+      POSTGRES_DB: "payment_concurrency"
+      POSTGRES_USER: "payment_concurrency"
+      POSTGRES_PASSWORD: "payment-concurrency-only"
     volumes:
       - "payment-concurrency-pgdata:/var/lib/postgresql/data"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payment_concurrency -d payment_concurrency"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  backend:
+    build: "$ROOT_DIR/backend"
+    env_file:
+      - "$ENV_FILE"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: "jdbc:postgresql://db:5432/payment_concurrency"
+      SPRING_DATASOURCE_USERNAME: "payment_concurrency"
+      SPRING_DATASOURCE_PASSWORD: "payment-concurrency-only"
+      SPRING_PROFILES_ACTIVE: "\${ISOLATED_SPRING_PROFILE:-local}"
+    ports:
+      - "127.0.0.1::8080"
 volumes:
   payment-concurrency-pgdata:
 OVERRIDE
@@ -106,24 +124,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ ! -f "$ROOT_DIR/.env" ]]; then
-  printf 'Missing %s/.env; copy .env.example and configure local credentials first.\n' "$ROOT_DIR" >&2
-  exit 1
-fi
-
-cp "$ROOT_DIR/.env" "$ENV_FILE"
-# Ensure the heredoc below starts on a fresh line even if $ROOT_DIR/.env has
-# no trailing newline, so we never silently merge a key with the last .env
-# value above the heredoc.
-if [[ -s "$ENV_FILE" && "$(tail -c 1 "$ENV_FILE" | wc -l)" -eq 0 ]]; then
-  printf '\n' >>"$ENV_FILE"
-fi
-# Note: VOLUME_DIR is intentionally NOT written here. The base compose file
-# references ${VOLUME_DIR}/data/postgres for production / VPS use; the E2E
-# override above REPLACES that volume entirely with a project-scoped named
-# volume, so a caller-provided VOLUME_DIR is irrelevant and cannot redirect
-# storage.
+# Only the test-only Compose file is loaded; no repository .env or host DB is used.
 {
+  printf 'DB_NAME=payment_concurrency\n'
+  printf 'DB_USERNAME=payment_concurrency\n'
+  printf 'DB_PASSWORD=payment-concurrency-only\n'
+  printf 'VOLUME_DIR=%s/unused\n' "$TMP_DIR"
+  printf 'JWT_ACCESS_SECRET=dGVzdC1zZWNyZXQtcGFyYS1jaS1vbmx5LXF1ZS1zZWEtbG8tc3VmaWNpZW50ZW1lbnRlLWxhcmdvLXBhcmEtaG1hYw==\n'
+  printf 'DEFAULT_ADMIN_EMAIL=payment-concurrency-admin@example.com\n'
+  printf 'DEFAULT_ADMIN_PASSWORD=Payment-Concurrency-Admin-2026!\n'
   printf 'DB_EXTERNAL_PORT=%s\n' "$DB_EXTERNAL_PORT"
   printf 'BACKEND_EXTERNAL_PORT=%s\n' "$BACKEND_EXTERNAL_PORT"
   printf 'FRONTEND_EXTERNAL_PORT=%s\n' "$FRONTEND_EXTERNAL_PORT"
@@ -131,6 +140,8 @@ fi
   printf 'BACKEND_BIND_HOST=%s\n' "$BACKEND_BIND_HOST"
   printf 'FRONTEND_BIND_HOST=%s\n' "$FRONTEND_BIND_HOST"
   printf 'INSTALLMENT_NOTIFICATIONS_ENABLED=false\n'
+  printf 'INSTALLMENT_NOTIFICATIONS_CRON=0 0 9 * * *\n'
+  printf 'INSTALLMENT_NOTIFICATIONS_ZONE=America/Argentina/Buenos_Aires\n'
   printf 'RECEIPTS_CLEANUP_ENABLED=false\n'
   printf 'SMTP_HOST=\n'
   printf 'SMTP_PORT=587\n'
@@ -143,11 +154,18 @@ fi
   printf 'SMTP_KEY=\n'
   printf 'QUERY_MAIL=\n'
   printf 'APP_MAIL_TO=\n'
+  printf 'BREVO_FROM_NAME=Payment Concurrency Test\n'
+  printf 'FRONTEND_URL=http://127.0.0.1\n'
+  printf 'BACKEND_EXTERNAL_URL=http://127.0.0.1\n'
+  printf 'CORS_ALLOWED_ORIGINS=http://127.0.0.1\n'
+  printf 'RECEIPTS_STORAGE_PROVIDER=inline\n'
 } >>"$ENV_FILE"
 chmod 600 "$ENV_FILE"
 
 COMPOSE=(docker compose --project-name "$PROJECT" --env-file "$ENV_FILE" \
-  --file "$ROOT_DIR/docker-compose.yml" --file "$COMPOSE_OVERRIDE_FILE")
+  --file "$COMPOSE_OVERRIDE_FILE")
+ISOLATED_SPRING_PROFILE=local
+export ISOLATED_SPRING_PROFILE
 
 # Discover the assigned host port for the backend. Docker Compose's `port`
 # command prints formats that vary by host: `127.0.0.1:32768` (Ubuntu /
@@ -282,6 +300,29 @@ done
 [[ "$status" == 200 ]] || { printf 'Authentication readiness failed (HTTP %s)\n' "$status" >&2; exit 1; }
 admin_token="$(jq -er '.accessToken' "$TMP_DIR/auth-ready.body")"
 
+# Local/update bootstraps only this disposable database. Apply the PR1 SQL,
+# verify readiness, then exercise HTTP flows against production/validate.
+"${COMPOSE[@]}" stop backend >/dev/null
+"${COMPOSE[@]}" exec -T db psql -X -v ON_ERROR_STOP=1 -U "$DB_USERNAME" -d "$DB_NAME" \
+  <"$ROOT_DIR/backend/sql/20260917_payment_money_invariants.sql" >/dev/null
+schema_state="$("${COMPOSE[@]}" exec -T db psql -X -tA -v ON_ERROR_STOP=1 \
+  -U "$DB_USERNAME" -d "$DB_NAME" <"$ROOT_DIR/backend/sql/payment_money_schema_readiness.sql")"
+[[ "$schema_state" == READY ]] || { printf 'Migrated payment schema is not ready: %s\n' "$schema_state" >&2; exit 1; }
+ISOLATED_SPRING_PROFILE=production
+"${COMPOSE[@]}" up -d --no-build --force-recreate backend >/dev/null
+BACKEND_HOST_PORT="$(discover_port backend 8080)"
+BASE_URL="http://127.0.0.1:${BACKEND_HOST_PORT}"
+for _ in {1..90}; do
+  status="$(request auth-validated POST /api/v1/auth/token '' "$auth_ready_body" || true)"
+  if [[ "$status" == 200 ]]; then
+    break
+  fi
+  sleep 2
+done
+[[ "$status" == 200 ]] || { printf 'Production/validate authentication failed (HTTP %s)\n' "$status" >&2; exit 1; }
+admin_token="$(jq -er '.accessToken' "$TMP_DIR/auth-validated.body")"
+printf 'Disposable PR1 migration is READY; PR2 production/validate backend accepts authentication.\n'
+
 assert_status() {
   local name="$1" expected="$2" actual="$3"
   [[ "$actual" == "$expected" ]] || {
@@ -291,6 +332,7 @@ assert_status() {
 }
 
 stamp="$(date +%s)-$RANDOM"
+historical_payment_date="2020-01-15"
 user_email="payment-concurrency-$stamp@example.com"
 user_password="Concurrency-${stamp}-${RANDOM}!"
 student_dni="$(printf '%08d' $((RANDOM * 100 + RANDOM)))"
@@ -322,11 +364,27 @@ installments_status="$(get_json installments /api/v1/payments/my/installments "$
 assert_status installments 200 "$installments_status"
 cp "$TMP_DIR/installments.body" "$TMP_DIR/installments.json"
 installment_id="$(jq -er --argjson trip "$trip_id" '.[] | select(.tripId == $trip) | .installmentId' "$TMP_DIR/installments.json" | head -n 1)"
+preview_body="$(jq -nc --argjson installment "$installment_id" --arg payment_date "$historical_payment_date" \
+  '{anchorInstallmentId:$installment,reportedAmount:100,reportedPaymentDate:$payment_date,paymentCurrency:"ARS"}')"
+preview_status="$(request preview POST /api/v1/payments/preview "$user_token" "$preview_body")"
+assert_status preview 200 "$preview_status"
+jq -e --argjson id "$installment_id" '.anchorInstallmentId == $id and .reportedAmount == "100.00" and (.installments | length) == 1 and (.previewToken | length) > 0' \
+  "$TMP_DIR/preview.body" >/dev/null
+preview_token="$(jq -er '.previewToken' "$TMP_DIR/preview.body")"
 register_body="$(jq -nc --argjson installment "$installment_id" --argjson bank "$bank_id" \
-  '{anchorInstallmentId:$installment,reportedAmount:100,reportedPaymentDate:(now|strftime("%Y-%m-%d")),paymentCurrency:"ARS",paymentMethod:"BANK_TRANSFER",bankAccountId:$bank}')"
+  --arg payment_date "$historical_payment_date" --arg preview_token "$preview_token" \
+  '{anchorInstallmentId:$installment,reportedAmount:100,reportedPaymentDate:$payment_date,paymentCurrency:"ARS",paymentMethod:"BANK_TRANSFER",bankAccountId:$bank,previewToken:$preview_token}')"
 register_status="$(request register POST /api/v1/payments "$user_token" "$register_body")"
 assert_status register 201 "$register_status"
 submission_id="$(jq -er '.submissionId' "$TMP_DIR/register.body")"
+pending_status="$(get_json pending-review /api/v1/payments/pending-review "$admin_token")"
+assert_status pending-review 200 "$pending_status"
+jq -e --argjson id "$submission_id" '.[] | select(.submissionId == $id and .status == "PENDING" and .reportedAmount == "100.00")' \
+  "$TMP_DIR/pending-review.body" >/dev/null
+history_status="$(get_json submitted-history /api/v1/payments/my "$user_token")"
+assert_status submitted-history 200 "$history_status"
+jq -e --argjson id "$submission_id" '.[] | select(.submissionId == $id and .status == "PENDING")' \
+  "$TMP_DIR/submitted-history.body" >/dev/null
 
 admin_config="$TMP_DIR/admin.curl"
 user_config="$TMP_DIR/user.curl"
@@ -381,6 +439,8 @@ credit="$(printf '%s' "$paid_json" | jq -er --argjson installment "$installment_
 credit_is_expected="$(jq -nr --arg value "$credit" '$value | tonumber == 100')"
 [[ "$review_success" == 1 && "$review_conflict" == 1 && "$credit_is_expected" == true ]] || { printf 'REVIEW failed: success=%s conflict=%s credit=%s\n' "$review_success" "$review_conflict" "$credit"; exit 1; }
 printf 'REVIEW: exactly one success and one already-processed conflict; credit=%s\n' "$credit"
+approved_history_status="$(get_json approved-history "/api/v1/payments/installment/$installment_id" "$admin_token")"
+assert_status approved-history 200 "$approved_history_status"
 
 write_curl_config "$admin_config" POST "$BASE_URL/api/v1/payments/$submission_id/void" "$admin_token"
 void_gate="$TMP_DIR/void.gate"
@@ -425,3 +485,46 @@ reversal="$(printf '%s' "$paid_json" | jq -er --argjson installment "$installmen
 reversal_is_expected="$(jq -nr --arg value "$reversal" '$value | tonumber == 0')"
 [[ "$void_success" == 1 && "$void_conflict" == 1 && "$reversal_is_expected" == true ]] || { printf 'VOID failed: success=%s conflict=%s paid=%s\n' "$void_success" "$void_conflict" "$reversal"; exit 1; }
 printf 'VOID: exactly one success and one already-voided conflict; paid=%s (reversed once)\n' "$reversal"
+
+history_status="$(get_json voided-history /api/v1/payments/my "$user_token")"
+assert_status voided-history 200 "$history_status"
+jq -e --argjson id "$submission_id" '.[] | select(.submissionId == $id and .status == "VOIDED")' \
+  "$TMP_DIR/voided-history.body" >/dev/null
+printf 'Old-client API flow: installments, preview, registration, admin queue, history and void verified.\n'
+
+if [[ "${PAYMENT_COMPAT_CHECK_FRONTEND:-0}" == 1 ]]; then
+  # Opt-in local compatibility check against the untouched main frontend's Zod
+  # schemas. The CI backend gate does not install frontend dependencies.
+  node --experimental-strip-types --input-type=module - "$ROOT_DIR" "$TMP_DIR" <<'NODE'
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const [, , root, fixtures] = process.argv;
+const schemas = await import(pathToFileURL(join(root, 'frontend/src/features/payments/types/payments-dtos.ts')).href);
+const cases = [
+  ['installments', schemas.UserInstallmentDTOSchema.array()],
+  ['preview', schemas.PaymentBatchPreviewDTOSchema],
+  ['register', schemas.PaymentSubmissionDTOSchema],
+  ['pending-review', schemas.PendingPaymentReviewDTOSchema.array()],
+  ['submitted-history', schemas.PaymentSubmissionDTOSchema.array()],
+  ['approved-history', schemas.PaymentInstallmentHistoryDTOSchema.array()],
+  ['voided-history', schemas.PaymentSubmissionDTOSchema.array()],
+];
+for (const [name, schema] of cases) {
+  schema.parse(JSON.parse(readFileSync(join(fixtures, `${name}.body`), 'utf8')));
+}
+console.log(`Unmodified frontend Zod schemas parsed ${cases.length} migrated-DB API responses.`);
+NODE
+fi
+
+printf 'Stopping isolated Compose stack before Testcontainers cross-currency checks...\n'
+"${COMPOSE[@]}" down --volumes --remove-orphans >/dev/null
+docker image rm "${PROJECT}-backend:latest" >/dev/null 2>&1 || true
+COMPOSE=()
+
+printf 'Running cross-currency concurrent review/void checks against disposable PostgreSQL...\n'
+(
+  cd "$ROOT_DIR/backend"
+  ./mvnw -Dtest='ConcurrentFinancialIntegrityIntegrationTest#crossCurrencyConcurrentReview_conservesAmountsAndOnlyApprovesOnce+crossCurrencyConcurrentVoid_reversesPersistedAllocationAndOnlyVoidsOnce' test
+)

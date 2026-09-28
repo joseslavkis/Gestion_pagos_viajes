@@ -1,8 +1,10 @@
 package com.agencia.pagos.payment;
 
+import com.agencia.pagos.payment.dto.PaymentCalculationIntent;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.Jws;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
@@ -34,8 +36,12 @@ public class PaymentPreviewTokenService {
     private static final String CLAIM_QUOTE_REQUESTED = "quoteRequestedDate";
     private static final String CLAIM_QUOTE_EFFECTIVE = "quoteEffectiveDate";
     private static final String CLAIM_QUOTE_SOURCE = "quoteSource";
+    private static final String CLAIM_QUOTE_PROVIDER = "quoteProvider";
     private static final String CLAIM_QUOTE_TIMESTAMP = "quoteProviderTimestamp";
+    private static final String CLAIM_CALCULATION_VERSION = "cv";
+    private static final String CLAIM_INTENT = "intent";
     private static final String PREVIEW_TYPE = "payment-preview";
+    public static final String CURRENT_CALCULATION_VERSION = "2";
 
     private final SecretKey signingKey;
     private final Duration tokenTtl;
@@ -54,6 +60,7 @@ public class PaymentPreviewTokenService {
 
     public String issueToken(PreviewSnapshot snapshot) {
         Objects.requireNonNull(snapshot, "snapshot");
+        validateSnapshot(snapshot);
         Instant now = clock.instant();
         Instant expiry = now.plus(tokenTtl);
         return Jwts.builder()
@@ -74,7 +81,10 @@ public class PaymentPreviewTokenService {
                         ? null
                         : snapshot.quoteEffectiveDate().toString())
                 .claim(CLAIM_QUOTE_SOURCE, snapshot.quoteSource())
+                .claim(CLAIM_QUOTE_PROVIDER, snapshot.quoteProvider())
                 .claim(CLAIM_QUOTE_TIMESTAMP, snapshot.quoteProviderTimestamp())
+                .claim(CLAIM_INTENT, snapshot.intent().name())
+                .claim(CLAIM_CALCULATION_VERSION, snapshot.calculationVersion())
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(expiry))
                 .signWith(signingKey, Jwts.SIG.HS256)
@@ -82,8 +92,15 @@ public class PaymentPreviewTokenService {
     }
 
     public Optional<PreviewSnapshot> parseAndValidate(String token, Long userId) {
+        TokenValidation validation = validateToken(token, userId);
+        return validation.status() == TokenValidationStatus.VALID
+                ? validation.snapshot()
+                : Optional.empty();
+    }
+
+    public TokenValidation validateToken(String token, Long userId) {
         if (token == null || token.isBlank()) {
-            return Optional.empty();
+            return TokenValidation.invalid();
         }
         try {
             Jws<Claims> parsed = Jwts.parser()
@@ -91,49 +108,69 @@ public class PaymentPreviewTokenService {
                     .build()
                     .parseSignedClaims(token);
             Claims claims = parsed.getPayload();
-            if (!PREVIEW_TYPE.equals(claims.get(CLAIM_TYPE, String.class))) {
-                return Optional.empty();
+            if (!hasExpectedIdentity(claims, userId)) {
+                return TokenValidation.invalid();
             }
-            Object userIdClaim = claims.get(CLAIM_USER);
-            if (userIdClaim == null || !Long.valueOf(userIdClaim.toString()).equals(userId)) {
-                return Optional.empty();
-            }
-            Long anchor = ((Number) claims.get(CLAIM_ANCHOR)).longValue();
-            String currency = claims.get(CLAIM_CURRENCY, String.class);
-            BigDecimal amount = new BigDecimal(claims.get(CLAIM_AMOUNT, String.class));
-            java.time.LocalDate date = java.time.LocalDate.parse(claims.get(CLAIM_DATE, String.class));
-            String quoteSource = claims.get(CLAIM_QUOTE_SOURCE, String.class);
-            String quoteTimestamp = claims.get(CLAIM_QUOTE_TIMESTAMP, String.class);
-            BigDecimal quoteRate = null;
-            Object rate = claims.get(CLAIM_QUOTE_RATE);
-            if (rate != null) {
-                quoteRate = new BigDecimal(rate.toString());
-            }
-            java.time.LocalDate quoteRequested = null;
-            Object requested = claims.get(CLAIM_QUOTE_REQUESTED);
-            if (requested != null) {
-                quoteRequested = java.time.LocalDate.parse(requested.toString());
-            }
-            java.time.LocalDate quoteEffective = null;
-            Object effective = claims.get(CLAIM_QUOTE_EFFECTIVE);
-            if (effective != null) {
-                quoteEffective = java.time.LocalDate.parse(effective.toString());
-            }
-            return Optional.of(new PreviewSnapshot(
-                    userId,
-                    anchor,
-                    com.agencia.pagos.shared.money.Currency.valueOf(currency),
-                    amount,
-                    date,
-                    quoteRate,
-                    quoteRequested,
-                    quoteEffective,
-                    quoteSource,
-                    quoteTimestamp
-            ));
+            return TokenValidation.valid(toSnapshot(claims, userId));
+        } catch (ExpiredJwtException expired) {
+            return hasExpectedIdentity(expired.getClaims(), userId)
+                    ? TokenValidation.expired()
+                    : TokenValidation.invalid();
         } catch (RuntimeException e) {
-            return Optional.empty();
+            return TokenValidation.invalid();
         }
+    }
+
+    private boolean hasExpectedIdentity(Claims claims, Long userId) {
+        if (claims == null
+                || !PREVIEW_TYPE.equals(claims.get(CLAIM_TYPE, String.class))
+                || !CURRENT_CALCULATION_VERSION.equals(claims.get(CLAIM_CALCULATION_VERSION, String.class))) {
+            return false;
+        }
+        Object userIdClaim = claims.get(CLAIM_USER);
+        String subject = claims.getSubject();
+        return userIdClaim != null
+                && Long.valueOf(userIdClaim.toString()).equals(userId)
+                && userId != null
+                && userId.toString().equals(subject);
+    }
+
+    private PreviewSnapshot toSnapshot(Claims claims, Long userId) {
+        Long anchor = ((Number) claims.get(CLAIM_ANCHOR)).longValue();
+        String currency = claims.get(CLAIM_CURRENCY, String.class);
+        BigDecimal amount = new BigDecimal(claims.get(CLAIM_AMOUNT, String.class));
+        java.time.LocalDate date = java.time.LocalDate.parse(claims.get(CLAIM_DATE, String.class));
+        String quoteSource = claims.get(CLAIM_QUOTE_SOURCE, String.class);
+        String quoteProvider = claims.get(CLAIM_QUOTE_PROVIDER, String.class);
+        String quoteTimestamp = claims.get(CLAIM_QUOTE_TIMESTAMP, String.class);
+        PaymentCalculationIntent intent = PaymentCalculationIntent.valueOf(
+                claims.get(CLAIM_INTENT, String.class));
+        BigDecimal quoteRate = optionalDecimal(claims.get(CLAIM_QUOTE_RATE));
+        java.time.LocalDate quoteRequested = optionalDate(claims.get(CLAIM_QUOTE_REQUESTED));
+        java.time.LocalDate quoteEffective = optionalDate(claims.get(CLAIM_QUOTE_EFFECTIVE));
+        return new PreviewSnapshot(
+                userId,
+                anchor,
+                com.agencia.pagos.shared.money.Currency.valueOf(currency),
+                amount,
+                date,
+                quoteRate,
+                quoteRequested,
+                quoteEffective,
+                quoteSource,
+                quoteProvider,
+                quoteTimestamp,
+                intent,
+                CURRENT_CALCULATION_VERSION
+        );
+    }
+
+    private BigDecimal optionalDecimal(Object value) {
+        return value == null ? null : new BigDecimal(value.toString());
+    }
+
+    private java.time.LocalDate optionalDate(Object value) {
+        return value == null ? null : java.time.LocalDate.parse(value.toString());
     }
 
     public String toJsonString(Object value) {
@@ -164,7 +201,79 @@ public class PaymentPreviewTokenService {
             java.time.LocalDate quoteRequestedDate,
             java.time.LocalDate quoteEffectiveDate,
             String quoteSource,
-            String quoteProviderTimestamp
+            String quoteProvider,
+            String quoteProviderTimestamp,
+            PaymentCalculationIntent intent,
+            String calculationVersion
     ) {
+        public PreviewSnapshot(
+                Long userId,
+                Long anchorInstallmentId,
+                com.agencia.pagos.shared.money.Currency paymentCurrency,
+                BigDecimal reportedAmount,
+                java.time.LocalDate reportedPaymentDate,
+                BigDecimal quoteSellRate,
+                java.time.LocalDate quoteRequestedDate,
+                java.time.LocalDate quoteEffectiveDate,
+                String quoteSource,
+                String quoteProviderTimestamp
+        ) {
+            this(
+                    userId,
+                    anchorInstallmentId,
+                    paymentCurrency,
+                    reportedAmount,
+                    reportedPaymentDate,
+                    quoteSellRate,
+                    quoteRequestedDate,
+                    quoteEffectiveDate,
+                    quoteSource,
+                    quoteSource,
+                    quoteProviderTimestamp,
+                    PaymentCalculationIntent.MANUAL,
+                    CURRENT_CALCULATION_VERSION
+            );
+        }
+    }
+
+    public enum TokenValidationStatus {
+        VALID,
+        EXPIRED,
+        INVALID
+    }
+
+    public record TokenValidation(TokenValidationStatus status, Optional<PreviewSnapshot> snapshot) {
+
+        private static TokenValidation valid(PreviewSnapshot snapshot) {
+            return new TokenValidation(TokenValidationStatus.VALID, Optional.of(snapshot));
+        }
+
+        private static TokenValidation expired() {
+            return new TokenValidation(TokenValidationStatus.EXPIRED, Optional.empty());
+        }
+
+        private static TokenValidation invalid() {
+            return new TokenValidation(TokenValidationStatus.INVALID, Optional.empty());
+        }
+    }
+
+    private static void validateSnapshot(PreviewSnapshot snapshot) {
+        if (!CURRENT_CALCULATION_VERSION.equals(snapshot.calculationVersion())) {
+            throw new IllegalArgumentException("Unsupported payment calculation version");
+        }
+        if (snapshot.intent() == null) {
+            throw new IllegalArgumentException("Payment calculation intent is required");
+        }
+        if (snapshot.quoteSellRate() == null) {
+            return;
+        }
+        if (snapshot.quoteRequestedDate() == null
+                || snapshot.quoteEffectiveDate() == null
+                || snapshot.quoteSource() == null
+                || snapshot.quoteSource().isBlank()
+                || snapshot.quoteProvider() == null
+                || snapshot.quoteProvider().isBlank()) {
+            throw new IllegalArgumentException("Exchange-rate quote identity is incomplete");
+        }
     }
 }
