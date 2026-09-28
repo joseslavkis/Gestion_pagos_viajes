@@ -68,6 +68,12 @@ La operación diaria se realiza dentro de la app y, adicionalmente, se puede exp
 * Ver el estado de sus comprobantes (pendiente de revisión, aprobado o rechazado).
 * Si un comprobante es rechazado, ver la observación del administrador y poder enviar uno nuevo.
 
+### Cálculo de pagos
+* El servidor calcula los importes y la conversión entre pesos y dólares con la cotización correspondiente a la fecha informada; la app no fija una cotización por su cuenta.
+* Al cambiar de moneda, se conserva el importe ingresado manualmente y su moneda de origen. Un cálculo anterior o una respuesta tardía no reemplaza una edición más reciente.
+* Si el cálculo está pendiente, venció o falló, el importe manual sigue visible y editable, pero no se puede enviar el pago hasta obtener un cálculo vigente con estado `READY`.
+* Se conservan los centavos legítimos: por ejemplo, un saldo de `99,29` sigue visible y puede pagarse.
+
 ## Semáforo de pagos
 Cada cuota se representa visualmente con un color. Los estados internos del sistema se traducen a colores de la siguiente manera:
 

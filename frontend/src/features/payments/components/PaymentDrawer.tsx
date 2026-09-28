@@ -49,11 +49,11 @@ const dateFormatter = new Intl.DateTimeFormat("es-AR", {
   timeZone: "America/Argentina/Buenos_Aires",
 });
 
-function formatMoneyByCurrency(amount: number, currency: "ARS" | "USD"): string {
+function formatMoneyByCurrency(amount: number | string, currency: "ARS" | "USD"): string {
   return new Intl.NumberFormat("es-AR", {
     style: "currency",
     currency,
-  }).format(amount);
+  }).format(typeof amount === "string" ? Number.parseFloat(amount) : amount);
 }
 
 function formatDate(isoDate: string): string {
@@ -230,7 +230,7 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
                   <span className={styles.strong}>Monto reportado:</span> {formatMoneyByCurrency(entry.reportedAmount, entry.paymentCurrency)}
                 </div>
                 <div>
-                  <span className={styles.strong}>Equivalente viaje:</span> {entry.amountInTripCurrency.toFixed(2)}
+                  <span className={styles.strong}>Equivalente viaje:</span> {entry.amountInTripCurrency}
                 </div>
                 <div>
                   <span className={styles.strong}>Fecha:</span> {formatDate(entry.reportedPaymentDate)}

@@ -10,10 +10,10 @@ function makePendingSubmission() {
   return {
     submissionId: 91,
     status: "PENDING",
-    reportedAmount: 400,
+    reportedAmount: "400.00",
     paymentCurrency: "ARS",
     exchangeRate: null,
-    amountInTripCurrency: 400,
+    amountInTripCurrency: "400.00",
     reportedPaymentDate: "2026-03-23",
     paymentMethod: "BANK_TRANSFER",
     fileKey: "",
@@ -35,11 +35,11 @@ function makePendingSubmission() {
         installmentId: 12,
         installmentNumber: 4,
         dueDate: "2026-03-25",
-        totalDue: 200,
-        paidAmount: 0,
-        remainingAmount: 200,
-        reportedAmount: 200,
-        amountInTripCurrency: 200,
+        totalDue: "200.00",
+        paidAmount: "0.00",
+        remainingAmount: "200.00",
+        reportedAmount: "200.00",
+        amountInTripCurrency: "200.00",
         status: "PENDING",
       },
       {
@@ -47,11 +47,11 @@ function makePendingSubmission() {
         installmentId: 13,
         installmentNumber: 5,
         dueDate: "2026-04-25",
-        totalDue: 200,
-        paidAmount: 0,
-        remainingAmount: 200,
-        reportedAmount: 200,
-        amountInTripCurrency: 200,
+        totalDue: "200.00",
+        paidAmount: "0.00",
+        remainingAmount: "200.00",
+        reportedAmount: "200.00",
+        amountInTripCurrency: "200.00",
         status: "PENDING",
       },
     ],
@@ -59,6 +59,59 @@ function makePendingSubmission() {
 }
 
 describe("PendingReviewPage", () => {
+  it("preserves invalid approval text, disables saving, and sends no review request", async () => {
+    let reviewRequests = 0;
+    server.use(
+      http.get("http://localhost:30002/api/v1/payments/pending-review", () =>
+        HttpResponse.json([makePendingSubmission()]),
+      ),
+      http.patch("http://localhost:30002/api/v1/payments/91/review", () => {
+        reviewRequests += 1;
+        return HttpResponse.json({});
+      }),
+    );
+
+    renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
+    expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
+
+    const amountInput = screen.getByLabelText("Monto a aprobar");
+    const saveButton = screen.getByRole("button", { name: "Guardar decisión" });
+    for (const invalidAmount of ["250.", "abc", "-1", "1.005"]) {
+      fireEvent.change(amountInput, { target: { value: invalidAmount } });
+
+      expect(amountInput).toHaveValue(invalidAmount);
+      expect(saveButton).toBeDisabled();
+      expect(screen.getByRole("alert")).toHaveTextContent(/monto válido/i);
+      expect(reviewRequests).toBe(0);
+    }
+  });
+
+  it("blocks approval above the reported amount without a request", async () => {
+    let reviewRequests = 0;
+    server.use(
+      http.get("http://localhost:30002/api/v1/payments/pending-review", () =>
+        HttpResponse.json([makePendingSubmission()]),
+      ),
+      http.patch("http://localhost:30002/api/v1/payments/91/review", () => {
+        reviewRequests += 1;
+        return HttpResponse.json({});
+      }),
+    );
+
+    renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
+    expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
+
+    const amountInput = screen.getByLabelText("Monto a aprobar");
+    fireEvent.change(amountInput, { target: { value: "400.01" } });
+
+    expect(amountInput).toHaveValue("400.01");
+    expect(screen.getByRole("button", { name: "Guardar decisión" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("no puede superar el monto informado");
+    expect(reviewRequests).toBe(0);
+  });
+
   it("lista pagos pendientes y permite aprobarlos parcialmente", async () => {
     let decisionBody: unknown = null;
     let pendingItems = [makePendingSubmission()];
@@ -71,13 +124,13 @@ describe("PendingReviewPage", () => {
         return HttpResponse.json({
           submissionId: 91,
           status: "PARTIALLY_APPROVED",
-          reportedAmount: 400,
-          approvedAmount: 250,
-          rejectedAmount: 150,
+          reportedAmount: "400.00",
+          approvedAmount: "250.00",
+          rejectedAmount: "150.00",
           paymentCurrency: "ARS",
           exchangeRate: null,
-          amountInTripCurrency: 400,
-          approvedAmountInTripCurrency: 250,
+          amountInTripCurrency: "400.00",
+          approvedAmountInTripCurrency: "250.00",
           reportedPaymentDate: "2026-03-23",
           paymentMethod: "BANK_TRANSFER",
           fileKey: "",
@@ -116,7 +169,7 @@ describe("PendingReviewPage", () => {
 
     await waitFor(() => {
       expect(decisionBody).toEqual({
-        approvedAmount: 250,
+        approvedAmount: "250",
         adminObservation: "Se aprobó el monto verificado.",
       });
     });
@@ -135,13 +188,13 @@ describe("PendingReviewPage", () => {
         return HttpResponse.json({
           submissionId: 91,
           status: "REJECTED",
-          reportedAmount: 400,
-          approvedAmount: 0,
-          rejectedAmount: 400,
+          reportedAmount: "400.00",
+          approvedAmount: "0.00",
+          rejectedAmount: "400.00",
           paymentCurrency: "ARS",
           exchangeRate: null,
-          amountInTripCurrency: 400,
-          approvedAmountInTripCurrency: 0,
+          amountInTripCurrency: "400.00",
+          approvedAmountInTripCurrency: "0.00",
           reportedPaymentDate: "2026-03-23",
           paymentMethod: "BANK_TRANSFER",
           fileKey: "",
@@ -172,7 +225,7 @@ describe("PendingReviewPage", () => {
 
     await waitFor(() => {
       expect(decisionBody).toEqual({
-        approvedAmount: 0,
+        approvedAmount: "0",
         adminObservation: "Comprobante borroso",
       });
     });
