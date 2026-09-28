@@ -780,6 +780,32 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
     }
 
     @Test
+    void calculateManualAmount_rejectsMissingAmountWithValidV2PreviewToken() throws Exception {
+        PaymentFixture fixture = createPaymentFixture("payment-calculation-manual-missing-amount", Currency.ARS);
+        Installment installment = createInstallment(
+                fixture.trip(), fixture.user(), fixture.student(), 1, "99.29", InstallmentStatus.YELLOW);
+        PaymentBatchPreviewDTO preview = paymentService.previewPayment(
+                new PaymentPreviewRequestDTO(
+                        installment.getId(), new BigDecimal("25.50"), BUSINESS_TODAY, Currency.ARS),
+                fixture.user().getEmail());
+
+        mockMvc.perform(post("/api/v1/payments/calculation")
+                        .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "anchorInstallmentId": %d,
+                                  "paymentCurrency": "ARS",
+                                  "reportedPaymentDate": "%s",
+                                  "intent": "MANUAL",
+                                  "previewToken": "%s"
+                                }
+                                """.formatted(installment.getId(), BUSINESS_TODAY, preview.previewToken())))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(containsString("reportedAmount is required")));
+    }
+
+    @Test
     void calculateManualAmount_exposesSafeLimitAndResidualWhenAmountExceedsBalance() throws Exception {
         LocalDate paymentDate = BUSINESS_TODAY;
         PaymentFixture fixture = createPaymentFixture("payment-calculation-over-balance", Currency.ARS);

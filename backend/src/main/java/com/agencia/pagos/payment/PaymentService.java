@@ -332,9 +332,12 @@ public class PaymentService {
                     || !snapshot.reportedPaymentDate().equals(dto.reportedPaymentDate())) {
                 throw new IllegalArgumentException("La previsualización no corresponde al contexto de cálculo.");
             }
-            if (dto.intent() == PaymentCalculationIntent.MANUAL
-                    && snapshot.reportedAmount().compareTo(dto.reportedAmount()) != 0) {
-                throw new IllegalArgumentException("La previsualización no corresponde al monto calculado.");
+            if (dto.intent() == PaymentCalculationIntent.MANUAL) {
+                BigDecimal reportedAmount = paymentMoneyPolicy.requirePositiveMoney(
+                        dto.reportedAmount(), "reportedAmount");
+                if (snapshot.reportedAmount().compareTo(reportedAmount) != 0) {
+                    throw new IllegalArgumentException("La previsualización no corresponde al monto calculado.");
+                }
             }
         });
         return validation;
