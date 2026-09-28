@@ -30,9 +30,9 @@ backend/frontend money behavior until this migration and preflight are complete.
    `production` profile and `SPRING_JPA_HIBERNATE_DDL_AUTO=validate`. The CI
    deploy path now gates startup on schema readiness; it does **not** apply SQL.
    Verify the deployed SHA and backend health before promoting the compatible
-   frontend. Do not run a standalone Compose deployment with its local
-   development defaults (`ddl-auto=update`) against the migrated database;
-   that setting may try to narrow the column.
+   frontend. Compose defaults to the `production` profile and `ddl-auto=validate`.
+   Do not explicitly opt into the local `ddl-auto=update` setting against the
+   migrated database; it may try to narrow the column.
 6. Only after the compatible backend is healthy, promote the intended frontend
    release. Smoke-test preview, registration, admin review, history/balances,
    and void in both same-currency and cross-currency flows while writes remain
