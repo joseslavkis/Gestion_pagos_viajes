@@ -26,6 +26,30 @@ const currencyFormatter = new Intl.NumberFormat("es-AR", {
   currency: "ARS",
 });
 
+const installmentMonthFormatter = new Intl.DateTimeFormat("es-AR", {
+  month: "long",
+  timeZone: "UTC",
+});
+
+function getInstallmentMonthLabel(firstDueDate: string | undefined, installmentIndex: number) {
+  if (!firstDueDate) {
+    return null;
+  }
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(firstDueDate);
+  if (!match) {
+    return null;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const label = installmentMonthFormatter.format(
+    new Date(Date.UTC(year, month - 1 + installmentIndex, 1)),
+  );
+
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
 type SpreadsheetPageProps = {
   tripId: number;
 };
@@ -379,11 +403,21 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                   <thead className={styles.thead}>
                     <tr>
                       <th className={`${styles.th} ${styles.userCol}`}>Participante</th>
-                      {Array.from({ length: installmentsCount }).map((_, index) => (
-                        <th key={index} className={`${styles.th} ${styles.quotaHeader}`}>
-                          Cuota {index + 1}
-                        </th>
-                      ))}
+                      {Array.from({ length: installmentsCount }).map((_, index) => {
+                        const monthLabel = getInstallmentMonthLabel(
+                          tripData?.firstDueDate,
+                          index,
+                        );
+
+                        return (
+                          <th key={index} className={`${styles.th} ${styles.quotaHeader}`}>
+                            <span className={styles.quotaNumber}>Cuota {index + 1}</span>
+                            {monthLabel ? (
+                              <span className={styles.quotaMonth}>{monthLabel}</span>
+                            ) : null}
+                          </th>
+                        );
+                      })}
                     </tr>
                   </thead>
                   <tbody>

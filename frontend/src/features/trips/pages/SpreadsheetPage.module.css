@@ -417,6 +417,20 @@
   letter-spacing: 0.02em;
 }
 
+.quotaNumber,
+.quotaMonth {
+  display: block;
+}
+
+.quotaMonth {
+  margin-top: 0.15rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: capitalize;
+  color: #64748b;
+}
+
 .skeletonRow {
   height: 2.2rem;
 }

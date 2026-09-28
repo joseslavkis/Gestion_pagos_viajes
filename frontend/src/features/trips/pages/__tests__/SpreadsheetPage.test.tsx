@@ -30,7 +30,7 @@ vi.mock("@/features/payments/components/PaymentDrawer", () => ({
 describe("SpreadsheetPage", () => {
   beforeEach(() => {
     useTripMock.mockReturnValue({
-      data: { currency: "ARS" },
+      data: { currency: "ARS", firstDueDate: "2026-05-10" },
     });
 
     useSpreadsheetMock.mockReturnValue({
@@ -84,6 +84,13 @@ describe("SpreadsheetPage", () => {
 
     const badge = screen.getByText("Al día").parentElement;
     expect(badge).toHaveClass(styles.statusNeutral);
+  });
+
+  it("muestra el mes correspondiente debajo del número de cuota", async () => {
+    renderWithProviders(<SpreadsheetPage tripId={1} />, "ROLE_ADMIN");
+
+    expect(await screen.findByText("Cuota 1")).toBeInTheDocument();
+    expect(screen.getByText("Mayo")).toBeInTheDocument();
   });
 
   it("accepts sortBy date in SpreadsheetParamsSchema", () => {
