@@ -81,20 +81,28 @@ class PaymentRestController {
             @RequestParam("paymentMethod") PaymentMethod paymentMethod,
             @RequestParam("bankAccountId") Long bankAccountId,
             @RequestParam(value = "file", required = false) MultipartFile file,
+            @RequestParam(value = "files", required = false) List<MultipartFile> files,
             @RequestParam(value = "previewToken", required = false) String previewToken,
             @AuthenticationPrincipal(expression = "username") String email
     ) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(paymentService.registerPayment(
+                .body(paymentService.registerPaymentWithAttachments(
                         anchorInstallmentId,
                         reportedAmount,
                         reportedPaymentDate,
                         paymentCurrency,
                         paymentMethod,
                         bankAccountId,
-                        file,
+                        mergeFiles(files, file),
                         previewToken,
                         email));
+    }
+
+    private List<MultipartFile> mergeFiles(List<MultipartFile> files, MultipartFile file) {
+        List<MultipartFile> merged = new java.util.ArrayList<>();
+        if (files != null) merged.addAll(files);
+        if (file != null && !file.isEmpty()) merged.add(file);
+        return merged;
     }
 
     @PreAuthorize("hasRole('ADMIN')")

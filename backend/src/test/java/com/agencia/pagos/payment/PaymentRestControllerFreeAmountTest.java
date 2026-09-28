@@ -47,6 +47,8 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.Date;
+import java.util.List;
+import java.util.stream.IntStream;
 
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
@@ -120,6 +122,9 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
 
     @Autowired
     private PaymentSubmissionRepository paymentSubmissionRepository;
+
+    @Autowired
+    private org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     @Autowired
     private PaymentOutcomeRepository paymentOutcomeRepository;
@@ -995,6 +1000,98 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                 "receipts/trip-1/user-2/test.jpg",
                 paymentSubmissionRepository.findById(submissionId).orElseThrow().getFileKey()
         );
+    }
+
+    @Test
+    void registrationSupportsZeroOneTwoAndFiveOrderedFiles() throws Exception {
+        for (int count : List.of(0, 1, 2, 5)) {
+            PaymentFixture fixture = createPaymentFixture("attachments-count-" + count, Currency.ARS);
+            Installment first = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+            BankAccount account = createBankAccount(Currency.ARS);
+            org.mockito.BDDMockito.given(paymentAttachmentStorageService.storeReceipt(any(), anyLong(), anyLong(), any()))
+                    .willAnswer(invocation -> "receipt-" + invocation.<MockMultipartFile>getArgument(0).getOriginalFilename());
+            given(paymentAttachmentStorageService.resolveFileReference(any())).willAnswer(invocation -> "url/" + invocation.getArgument(0));
+            var request = multipart("/api/v1/payments");
+            request.header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                    .param("anchorInstallmentId", String.valueOf(first.getId()))
+                    .param("reportedAmount", "50.00")
+                    .param("reportedPaymentDate", BUSINESS_TODAY.toString())
+                    .param("paymentCurrency", "ARS")
+                    .param("paymentMethod", "BANK_TRANSFER")
+                    .param("bankAccountId", String.valueOf(account.getId()));
+            IntStream.range(0, count).forEach(index -> request.file(
+                    new MockMultipartFile("files", "file-" + index + ".png", "image/png", new byte[]{1})));
+            var result = mockMvc.perform(request).andExpect(status().isCreated())
+                    .andExpect(jsonPath("$.fileKeys.length()").value(count))
+                    .andExpect(jsonPath("$.fileKey").value(count == 0 ? "" : "url/receipt-file-0.png"));
+            if (count > 0) {
+                result.andExpect(jsonPath("$.fileKeys[" + (count - 1) + "]")
+                        .value("url/receipt-file-" + (count - 1) + ".png"));
+            }
+        }
+    }
+
+    @Test
+    void sixFilesRejectBeforeStorageWrite() throws Exception {
+        PaymentFixture fixture = createPaymentFixture("attachments-six", Currency.ARS);
+        Installment first = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+        BankAccount account = createBankAccount(Currency.ARS);
+        var request = multipart("/api/v1/payments");
+        request.header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                .param("anchorInstallmentId", String.valueOf(first.getId()))
+                .param("reportedAmount", "50.00")
+                .param("reportedPaymentDate", BUSINESS_TODAY.toString())
+                .param("paymentCurrency", "ARS")
+                .param("paymentMethod", "BANK_TRANSFER")
+                .param("bankAccountId", String.valueOf(account.getId()));
+        IntStream.range(0, 6).forEach(index -> request.file(new MockMultipartFile("files", "receipt.png", "image/png", new byte[]{1})));
+        mockMvc.perform(request).andExpect(status().isBadRequest());
+        org.mockito.Mockito.verify(paymentAttachmentStorageService, org.mockito.Mockito.never())
+                .storeReceipt(any(), anyLong(), anyLong(), any());
+    }
+
+    @Test
+    void midBatchFailureRemovesOnlyNewFilesAndRollsBackSubmission() throws Exception {
+        PaymentFixture fixture = createPaymentFixture("attachments-failure", Currency.ARS);
+        Installment first = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+        BankAccount account = createBankAccount(Currency.ARS);
+        long before = paymentSubmissionRepository.count();
+        given(paymentAttachmentStorageService.storeReceipt(any(), anyLong(), anyLong(), any()))
+                .willReturn("new-file.png")
+                .willThrow(new IllegalStateException("storage failure"));
+        given(paymentAttachmentStorageService.deleteReceipt("new-file.png"))
+                .willReturn(false, true);
+        List<org.springframework.web.multipart.MultipartFile> files = List.of(
+                new MockMultipartFile("files", "first.png", "image/png", new byte[]{1}),
+                new MockMultipartFile("files", "second.png", "image/png", new byte[]{2}));
+
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                () -> paymentService.registerPaymentWithAttachments(first.getId(), new BigDecimal("50.00"),
+                        BUSINESS_TODAY, Currency.ARS, PaymentMethod.BANK_TRANSFER,
+                        account.getId(), files, null, fixture.user().getEmail()));
+        assertEquals(before, paymentSubmissionRepository.count());
+        org.mockito.Mockito.verify(paymentAttachmentStorageService, org.mockito.Mockito.times(2))
+                .deleteReceipt("new-file.png");
+    }
+
+    @Test
+    void lateRollbackCompensatesWrittenAttachment() throws Exception {
+        PaymentFixture fixture = createPaymentFixture("attachments-rollback", Currency.ARS);
+        Installment first = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+        BankAccount account = createBankAccount(Currency.ARS);
+        long before = paymentSubmissionRepository.count();
+        given(paymentAttachmentStorageService.storeReceipt(any(), anyLong(), anyLong(), any()))
+                .willReturn("new-rollback.png");
+        given(paymentAttachmentStorageService.deleteReceipt("new-rollback.png")).willReturn(true);
+        new org.springframework.transaction.support.TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            paymentService.registerPaymentWithAttachments(first.getId(), new BigDecimal("50.00"),
+                    BUSINESS_TODAY, Currency.ARS, PaymentMethod.BANK_TRANSFER, account.getId(),
+                    List.of(new MockMultipartFile("files", "rollback.png", "image/png", new byte[]{1})),
+                    null, fixture.user().getEmail());
+            status.setRollbackOnly();
+        });
+        assertEquals(before, paymentSubmissionRepository.count());
+        org.mockito.Mockito.verify(paymentAttachmentStorageService).deleteReceipt("new-rollback.png");
     }
 
     @Test

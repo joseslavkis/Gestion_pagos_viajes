@@ -24,6 +24,8 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.LinkedHashSet;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 
 @Entity
@@ -111,6 +113,10 @@ public class PaymentSubmission {
 
     @Column(nullable = false, columnDefinition = "TEXT")
     private String fileKey;
+
+    @OneToMany(mappedBy = "submission", cascade = jakarta.persistence.CascadeType.ALL, orphanRemoval = true)
+    @jakarta.persistence.OrderBy("position ASC")
+    private List<PaymentSubmissionAttachment> attachments = new ArrayList<>();
 
     @Column(nullable = false)
     private LocalDateTime createdAt;
@@ -296,6 +302,14 @@ public class PaymentSubmission {
 
     public void setFileKey(String fileKey) {
         this.fileKey = fileKey;
+    }
+
+    public List<PaymentSubmissionAttachment> getAttachments() {
+        return attachments;
+    }
+
+    public void addAttachment(String fileKey) {
+        attachments.add(new PaymentSubmissionAttachment(this, attachments.size(), fileKey));
     }
 
     public LocalDateTime getCreatedAt() {

@@ -38,6 +38,7 @@ public record PaymentSubmissionDTO(
         Long studentId,
         String studentName,
         String studentDni,
-        List<PaymentBatchInstallmentDTO> installments
+        List<PaymentBatchInstallmentDTO> installments,
+        List<String> fileKeys
 ) {
 }

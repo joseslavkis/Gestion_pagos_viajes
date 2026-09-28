@@ -57,6 +57,11 @@ public class FilesystemPaymentAttachmentStorageService implements PaymentAttachm
             Files.copy(file.getInputStream(), absolutePath, StandardCopyOption.REPLACE_EXISTING);
             return storedValue;
         } catch (IOException exception) {
+            try {
+                Files.deleteIfExists(absolutePath);
+            } catch (IOException cleanupFailure) {
+                exception.addSuppressed(cleanupFailure);
+            }
             throw new IllegalStateException("No se pudo guardar el archivo adjunto en el filesystem del servidor", exception);
         }
     }

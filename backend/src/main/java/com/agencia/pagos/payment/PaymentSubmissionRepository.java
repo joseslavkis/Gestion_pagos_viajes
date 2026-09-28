@@ -128,8 +128,8 @@ public interface PaymentSubmissionRepository extends JpaRepository<PaymentSubmis
         SELECT p
         FROM PaymentSubmission p
         WHERE p.createdAt < :cutoff
-          AND p.fileKey IS NOT NULL
-          AND p.fileKey <> ''
+          AND ((p.fileKey IS NOT NULL AND p.fileKey <> '')
+               OR EXISTS (SELECT a.id FROM PaymentSubmissionAttachment a WHERE a.submission = p))
         ORDER BY p.createdAt ASC, p.id ASC
         """)
     List<PaymentSubmission> findExpiredWithStoredFileKey(

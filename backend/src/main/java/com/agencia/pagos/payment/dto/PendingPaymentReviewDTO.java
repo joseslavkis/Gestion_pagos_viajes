@@ -37,6 +37,7 @@ public record PendingPaymentReviewDTO(
         String userEmail,
         String studentName,
         String studentDni,
-        List<PaymentBatchInstallmentDTO> allocations
+        List<PaymentBatchInstallmentDTO> allocations,
+        List<String> fileKeys
 ) {
 }
