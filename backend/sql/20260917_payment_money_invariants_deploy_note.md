@@ -12,8 +12,9 @@ backend/frontend money behavior until this migration and preflight are complete.
    `exchange_rate_provider_timestamp`. The new migration fails with a named
    prerequisite error if any are missing. Do not assume Hibernate created them.
 2. Schedule a maintenance window, stop payment registration/review/void writes
-   on **all** application instances, and drain in-flight transactions. Take a
-   backup and verify a restore on a disposable database.
+   on **all** application instances, and drain in-flight transactions. Pause
+   production frontend promotion. Take a backup and verify a restore on a
+   disposable database.
 3. Apply `backend/sql/20260917_payment_money_invariants.sql` manually on the
    approved database. Widening `NUMERIC(10,2)` to `NUMERIC(18,8)` acquires an
    `ACCESS EXCLUSIVE` table lock: it blocks reads and writes while held and
@@ -28,9 +29,22 @@ backend/frontend money behavior until this migration and preflight are complete.
 5. Only after those checks, deploy the tested backend SHA with the explicit
    `production` profile and `SPRING_JPA_HIBERNATE_DDL_AUTO=validate`. The CI
    deploy path now gates startup on schema readiness; it does **not** apply SQL.
-   Verify backend health before restoring writes. Do not run a standalone
-   Compose deployment with its local development defaults (`ddl-auto=update`)
-   against the migrated database; that setting may try to narrow the column.
+   Verify the deployed SHA and backend health before promoting the compatible
+   frontend. Do not run a standalone Compose deployment with its local
+   development defaults (`ddl-auto=update`) against the migrated database;
+   that setting may try to narrow the column.
+6. Only after the compatible backend is healthy, promote the intended frontend
+   release. Smoke-test preview, registration, admin review, history/balances,
+   and void in both same-currency and cross-currency flows while writes remain
+   paused for general traffic.
+7. Restore payment writes only after all smoke checks pass; backend health alone
+   is not sufficient to reopen general traffic.
+
+When the compatible backend is deployed, preview tokens issued before this
+calculation-version rollout without the required `cv=2` claim become invalid
+immediately, even if they have not expired. Users must recalculate the payment
+preview to obtain a new token before registering a payment. Include this
+recalculation step in the registration smoke check before restoring writes.
 
 For an **explicitly disposable local** Compose database, the manual migration
 command is:
