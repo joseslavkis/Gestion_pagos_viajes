@@ -2,8 +2,8 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it, vi } from "vitest";
 
-import { UserDashboardPage } from "@/features/users/pages/UserDashboardPage";
 import { PaymentSubmissionDTOSchema } from "@/features/payments/types/payments-dtos";
+import { UserDashboardPage } from "@/features/users/pages/UserDashboardPage";
 import { server } from "@/test/msw-server";
 import { renderWithProviders } from "@/test/test-utils";
 
@@ -113,13 +113,49 @@ const usdBankAccount = {
 };
 
 describe("UserDashboardPage", () => {
+  it("shows up to five selected files and rejects a sixth or an oversize file before upload", async () => {
+    server.use(
+      http.get(INSTALLMENTS_URL, () => HttpResponse.json([makeInstallment()])),
+      http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount])),
+      http.post(CALCULATION_URL, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json(
+          makeCalculationResponse({
+            body,
+            tripCurrency: "ARS",
+            remainingAmount: "200.00",
+            reportedAmount: "200.00",
+            amountInTripCurrency: "200.00",
+          }),
+        );
+      }),
+    );
+    renderWithProviders(<UserDashboardPage />);
+    const input = document.querySelector("input[type='file']") as HTMLInputElement;
+    expect(input).toHaveAttribute("multiple");
+    expect(await screen.findByText("Adjuntar comprobantes (opcional, hasta 5)")).toBeInTheDocument();
+    const files = Array.from(
+      { length: 5 },
+      (_, index) => new File(["x"], `receipt-${index}.png`, { type: "image/png" }),
+    );
+    fireEvent.change(input, { target: { files } });
+    expect(screen.getByText("5 de 5 archivos seleccionados")).toBeInTheDocument();
+    expect(screen.getByText("receipt-4.png")).toBeInTheDocument();
+    fireEvent.change(input, { target: { files: [...files, new File(["x"], "sixth.png", { type: "image/png" })] } });
+    expect(screen.getByRole("alert")).toHaveTextContent("hasta 5 comprobantes");
+    fireEvent.change(input, {
+      target: { files: [new File([new Uint8Array(5 * 1024 * 1024 + 1)], "big.pdf", { type: "application/pdf" })] },
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("5 MB");
+  });
+
   it("blocks registration when a cached READY calculation fails on refetch after a context reset", async () => {
     let anchorCalculationRequests = 0;
     let registrations = 0;
     server.use(
-      http.get(INSTALLMENTS_URL, () => HttpResponse.json([
-        makeInstallment({ installmentId: 901, remainingAmount: "200.00" }),
-      ])),
+      http.get(INSTALLMENTS_URL, () =>
+        HttpResponse.json([makeInstallment({ installmentId: 901, remainingAmount: "200.00" })]),
+      ),
       http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount])),
       http.post(CALCULATION_URL, async ({ request }) => {
         const body = (await request.json()) as Record<string, unknown>;
@@ -130,13 +166,15 @@ describe("UserDashboardPage", () => {
         if (anchorCalculationRequests > 1) {
           return HttpResponse.json({ message: "Calculation unavailable" }, { status: 503 });
         }
-        return HttpResponse.json(makeCalculationResponse({
-          body,
-          tripCurrency: "ARS",
-          remainingAmount: "200.00",
-          reportedAmount: "200.00",
-          amountInTripCurrency: "200.00",
-        }));
+        return HttpResponse.json(
+          makeCalculationResponse({
+            body,
+            tripCurrency: "ARS",
+            remainingAmount: "200.00",
+            reportedAmount: "200.00",
+            amountInTripCurrency: "200.00",
+          }),
+        );
       }),
       http.post(PAYMENTS_URL, () => {
         registrations += 1;
@@ -153,15 +191,18 @@ describe("UserDashboardPage", () => {
     });
     await waitFor(() => expect(submit).not.toBeDisabled());
     expect(anchorCalculationRequests).toBe(1);
-    const originalQuery = queryClient.getQueryCache().findAll({ queryKey: ["payments", "calculation"] })
+    const originalQuery = queryClient
+      .getQueryCache()
+      .findAll({ queryKey: ["payments", "calculation"] })
       .find((query) => query.queryKey[2] === 901 && query.state.status === "success");
     expect(originalQuery).toBeDefined();
 
     queryClient.setQueryData(["payments", "my", "installments"], []);
     await waitFor(() => expect(screen.queryByText("Primera cuota pendiente", { exact: false })).toBeNull());
-    queryClient.setQueryData(["payments", "my", "installments"], [
-      makeInstallment({ installmentId: 901, remainingAmount: "200.00" }),
-    ]);
+    queryClient.setQueryData(
+      ["payments", "my", "installments"],
+      [makeInstallment({ installmentId: 901, remainingAmount: "200.00" })],
+    );
     await waitFor(() => expect(anchorCalculationRequests).toBe(2));
     await waitFor(() => expect(originalQuery?.state.status).toBe("error"));
     expect(originalQuery?.state.fetchStatus).toBe("idle");
@@ -175,22 +216,24 @@ describe("UserDashboardPage", () => {
   it("uses the backend's remaining 240 and preserves a manual 500 without local conversion", async () => {
     const requests: Record<string, unknown>[] = [];
     server.use(
-      http.get(INSTALLMENTS_URL, () => HttpResponse.json([
-        makeInstallment({ remainingAmount: "240.00", totalDue: 500, paidAmount: 260 }),
-      ])),
+      http.get(INSTALLMENTS_URL, () =>
+        HttpResponse.json([makeInstallment({ remainingAmount: "240.00", totalDue: 500, paidAmount: 260 })]),
+      ),
       http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount])),
       http.post(CALCULATION_URL, async ({ request }) => {
         const body = (await request.json()) as Record<string, unknown>;
         requests.push(body);
-        return HttpResponse.json(makeCalculationResponse({
-          body,
-          tripCurrency: "ARS",
-          remainingAmount: "240.00",
-          totalPendingAmountInTripCurrency: "500.00",
-          reportedAmount: body.intent === "MANUAL" ? "500.00" : "240.00",
-          amountInTripCurrency: body.intent === "MANUAL" ? "500.00" : "240.00",
-          maxAllowedAmount: "500.00",
-        }));
+        return HttpResponse.json(
+          makeCalculationResponse({
+            body,
+            tripCurrency: "ARS",
+            remainingAmount: "240.00",
+            totalPendingAmountInTripCurrency: "500.00",
+            reportedAmount: body.intent === "MANUAL" ? "500.00" : "240.00",
+            amountInTripCurrency: body.intent === "MANUAL" ? "500.00" : "240.00",
+            maxAllowedAmount: "500.00",
+          }),
+        );
       }),
     );
 
@@ -199,9 +242,14 @@ describe("UserDashboardPage", () => {
     await waitFor(() => expect(amount).toHaveValue(240));
     await waitFor(() => expect(requests).toContainEqual(expect.objectContaining({ intent: "REMAINING" })));
     fireEvent.change(amount, { target: { value: "500" } });
-    await waitFor(() => expect(requests).toContainEqual(expect.objectContaining({
-      intent: "MANUAL", reportedAmount: "500",
-    })));
+    await waitFor(() =>
+      expect(requests).toContainEqual(
+        expect.objectContaining({
+          intent: "MANUAL",
+          reportedAmount: "500",
+        }),
+      ),
+    );
     expect(amount).toHaveValue(500);
   });
 
@@ -214,10 +262,17 @@ describe("UserDashboardPage", () => {
         http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount])),
         http.post(CALCULATION_URL, async ({ request }) => {
           const body = (await request.json()) as Record<string, unknown>;
-          return HttpResponse.json(makeCalculationResponse({
-            body, tripCurrency: "ARS", remainingAmount: "200.00", reportedAmount: "200.00",
-            amountInTripCurrency: "200.00", status, message: `Calculation ${status}`,
-          }));
+          return HttpResponse.json(
+            makeCalculationResponse({
+              body,
+              tripCurrency: "ARS",
+              remainingAmount: "200.00",
+              reportedAmount: "200.00",
+              amountInTripCurrency: "200.00",
+              status,
+              message: `Calculation ${status}`,
+            }),
+          );
         }),
         http.post(PAYMENTS_URL, () => {
           registrations += 1;
@@ -260,13 +315,15 @@ describe("UserDashboardPage", () => {
         const body = (await request.json()) as Record<string, unknown>;
         signalCalculationStarted?.();
         await calculationBlocked;
-        return HttpResponse.json(makeCalculationResponse({
-          body,
-          tripCurrency: "ARS",
-          remainingAmount: "199.99",
-          reportedAmount: "199.99",
-          amountInTripCurrency: "199.99",
-        }));
+        return HttpResponse.json(
+          makeCalculationResponse({
+            body,
+            tripCurrency: "ARS",
+            remainingAmount: "199.99",
+            reportedAmount: "199.99",
+            amountInTripCurrency: "199.99",
+          }),
+        );
       }),
     );
 
@@ -293,23 +350,27 @@ describe("UserDashboardPage", () => {
         const body = (await request.json()) as Record<string, unknown>;
         if (body.intent === "MANUAL") {
           manualRequests += 1;
-          return HttpResponse.json(makeCalculationResponse({
-            body,
-            tripCurrency: "ARS",
-            remainingAmount: "200.00",
-            reportedAmount: String(body.reportedAmount),
-            amountInTripCurrency: String(body.reportedAmount),
-          }));
+          return HttpResponse.json(
+            makeCalculationResponse({
+              body,
+              tripCurrency: "ARS",
+              remainingAmount: "200.00",
+              reportedAmount: String(body.reportedAmount),
+              amountInTripCurrency: String(body.reportedAmount),
+            }),
+          );
         }
 
         remainingRequests += 1;
-        return HttpResponse.json(makeCalculationResponse({
-          body,
-          tripCurrency: "ARS",
-          remainingAmount: "200.00",
-          reportedAmount: "200.00",
-          amountInTripCurrency: "200.00",
-        }));
+        return HttpResponse.json(
+          makeCalculationResponse({
+            body,
+            tripCurrency: "ARS",
+            remainingAmount: "200.00",
+            reportedAmount: "200.00",
+            amountInTripCurrency: "200.00",
+          }),
+        );
       }),
     );
 
@@ -398,41 +459,43 @@ describe("UserDashboardPage", () => {
         calculationPayload = body;
         const reportedAmount = String(body.reportedAmount ?? 200);
 
-        return HttpResponse.json(makeCalculationResponse({
-          body,
-          tripCurrency: "ARS",
-          remainingAmount: "200.00",
-          totalPendingAmountInTripCurrency: "400.00",
-          reportedAmount,
-          amountInTripCurrency: reportedAmount,
-          maxAllowedAmount: "400.00",
-          installments: [
-            {
-              receiptId: null,
-              installmentId: 201,
-              installmentNumber: 1,
-              dueDate: "2026-06-25",
-              totalDue: "200.00",
-              paidAmount: "0.00",
-              remainingAmount: "200.00",
-              reportedAmount: "200.00",
-              amountInTripCurrency: "200.00",
-              status: null,
-            },
-            {
-              receiptId: null,
-              installmentId: 202,
-              installmentNumber: 2,
-              dueDate: "2026-07-25",
-              totalDue: "200.00",
-              paidAmount: "0.00",
-              remainingAmount: "200.00",
-               reportedAmount: "150.00",
-               amountInTripCurrency: "150.00",
-              status: null,
-            },
-          ],
-        }));
+        return HttpResponse.json(
+          makeCalculationResponse({
+            body,
+            tripCurrency: "ARS",
+            remainingAmount: "200.00",
+            totalPendingAmountInTripCurrency: "400.00",
+            reportedAmount,
+            amountInTripCurrency: reportedAmount,
+            maxAllowedAmount: "400.00",
+            installments: [
+              {
+                receiptId: null,
+                installmentId: 201,
+                installmentNumber: 1,
+                dueDate: "2026-06-25",
+                totalDue: "200.00",
+                paidAmount: "0.00",
+                remainingAmount: "200.00",
+                reportedAmount: "200.00",
+                amountInTripCurrency: "200.00",
+                status: null,
+              },
+              {
+                receiptId: null,
+                installmentId: 202,
+                installmentNumber: 2,
+                dueDate: "2026-07-25",
+                totalDue: "200.00",
+                paidAmount: "0.00",
+                remainingAmount: "200.00",
+                reportedAmount: "150.00",
+                amountInTripCurrency: "150.00",
+                status: null,
+              },
+            ],
+          }),
+        );
       }),
       http.post(PAYMENTS_URL, async ({ request }) => {
         const multipartBody = await request.clone().text();
@@ -445,55 +508,55 @@ describe("UserDashboardPage", () => {
         };
 
         const response = {
-            submissionId: 999,
-            status: "PENDING",
-            reportedAmount: "350.00",
-            approvedAmount: "0.00",
-            rejectedAmount: "0.00",
-            paymentCurrency: "ARS",
-            exchangeRate: null,
-            amountInTripCurrency: "350.00",
-            approvedAmountInTripCurrency: "0.00",
-            reportedPaymentDate: "2026-03-31",
-            paymentMethod: "BANK_TRANSFER",
-            fileKey: "",
-            adminObservation: null,
-            bankAccountId: 1,
-            bankAccountDisplayName: "ICBC - Cuenta en pesos",
-            bankAccountAlias: "ICBC.PESOS",
-            tripId: 88,
-            tripName: "Bariloche 2026",
-            tripCurrency: "ARS",
-            studentId: 502,
-            studentName: "Bruno Slavkis",
-            studentDni: "45678902",
-            installments: [
-              {
-                receiptId: null,
-                installmentId: 201,
-                installmentNumber: 1,
-                dueDate: "2026-06-25",
-                totalDue: "200.00",
-                paidAmount: "0.00",
-                remainingAmount: "200.00",
-                reportedAmount: "200.00",
-                amountInTripCurrency: "200.00",
-                status: "PENDING",
-              },
-              {
-                receiptId: null,
-                installmentId: 202,
-                installmentNumber: 2,
-                dueDate: "2026-07-25",
-                totalDue: "200.00",
-                paidAmount: "0.00",
-                remainingAmount: "200.00",
-                reportedAmount: "150.00",
-                amountInTripCurrency: "150.00",
-                status: "PENDING",
-              },
-            ],
-          };
+          submissionId: 999,
+          status: "PENDING",
+          reportedAmount: "350.00",
+          approvedAmount: "0.00",
+          rejectedAmount: "0.00",
+          paymentCurrency: "ARS",
+          exchangeRate: null,
+          amountInTripCurrency: "350.00",
+          approvedAmountInTripCurrency: "0.00",
+          reportedPaymentDate: "2026-03-31",
+          paymentMethod: "BANK_TRANSFER",
+          fileKey: "",
+          adminObservation: null,
+          bankAccountId: 1,
+          bankAccountDisplayName: "ICBC - Cuenta en pesos",
+          bankAccountAlias: "ICBC.PESOS",
+          tripId: 88,
+          tripName: "Bariloche 2026",
+          tripCurrency: "ARS",
+          studentId: 502,
+          studentName: "Bruno Slavkis",
+          studentDni: "45678902",
+          installments: [
+            {
+              receiptId: null,
+              installmentId: 201,
+              installmentNumber: 1,
+              dueDate: "2026-06-25",
+              totalDue: "200.00",
+              paidAmount: "0.00",
+              remainingAmount: "200.00",
+              reportedAmount: "200.00",
+              amountInTripCurrency: "200.00",
+              status: "PENDING",
+            },
+            {
+              receiptId: null,
+              installmentId: 202,
+              installmentNumber: 2,
+              dueDate: "2026-07-25",
+              totalDue: "200.00",
+              paidAmount: "0.00",
+              remainingAmount: "200.00",
+              reportedAmount: "150.00",
+              amountInTripCurrency: "150.00",
+              status: "PENDING",
+            },
+          ],
+        };
         PaymentSubmissionDTOSchema.parse(response);
         return HttpResponse.json(response, { status: 201 });
       }),
@@ -504,9 +567,7 @@ describe("UserDashboardPage", () => {
     expect(await screen.findByText("En revisión")).toBeInTheDocument();
     expect(screen.getByText("Comprobante rechazado")).toBeInTheDocument();
     expect(screen.getByText("⚠ El comprobante está borroso.")).toBeInTheDocument();
-    expect(
-      screen.getByText("Tu comprobante está siendo revisado por el administrador"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Tu comprobante está siendo revisado por el administrador")).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("Seleccioná el viaje"), {
       target: { value: "88:502" },
@@ -537,7 +598,7 @@ describe("UserDashboardPage", () => {
     fireEvent.submit(submitBtn.closest("form") as HTMLFormElement);
 
     await waitFor(() => expect(paymentPayload).not.toBeNull());
-    await screen.findByText("¡Comprobante adjuntado!");
+    await screen.findByText("¡Pago reportado!");
     expect(screen.getAllByText("Bariloche 2026 - Bruno Slavkis").length).toBeGreaterThan(0);
     expect(screen.getAllByText("#1, #2").length).toBeGreaterThan(0);
     expect(screen.getByText("comprobante.jpg")).toBeInTheDocument();
@@ -570,14 +631,42 @@ describe("UserDashboardPage", () => {
         const paymentCurrency = body.paymentCurrency;
 
         if (paymentCurrency === "USD") {
-          return HttpResponse.json(makeCalculationResponse({
+          return HttpResponse.json(
+            makeCalculationResponse({
+              body,
+              tripCurrency: "ARS",
+              remainingAmount: "200.00",
+              reportedAmount: "0.20",
+              maxAllowedAmount: "0.20",
+              exchangeRate: "1000.00",
+              amountInTripCurrency: "200.00",
+              installments: [
+                {
+                  receiptId: null,
+                  installmentId: 201,
+                  installmentNumber: 1,
+                  dueDate: "2026-06-25",
+                  totalDue: "200.00",
+                  paidAmount: "0.00",
+                  remainingAmount: "200.00",
+                  reportedAmount: "0.20",
+                  amountInTripCurrency: "200.00",
+                  status: null,
+                },
+              ],
+            }),
+          );
+        }
+
+        const reportedAmount = String(body.reportedAmount ?? 200);
+        return HttpResponse.json(
+          makeCalculationResponse({
             body,
             tripCurrency: "ARS",
             remainingAmount: "200.00",
-            reportedAmount: "0.20",
-            maxAllowedAmount: "0.20",
-            exchangeRate: "1000.00",
-            amountInTripCurrency: "200.00",
+            reportedAmount,
+            maxAllowedAmount: "200.00",
+            amountInTripCurrency: reportedAmount,
             installments: [
               {
                 receiptId: null,
@@ -587,37 +676,13 @@ describe("UserDashboardPage", () => {
                 totalDue: "200.00",
                 paidAmount: "0.00",
                 remainingAmount: "200.00",
-                reportedAmount: "0.20",
-                amountInTripCurrency: "200.00",
+                reportedAmount,
+                amountInTripCurrency: reportedAmount,
                 status: null,
               },
             ],
-          }));
-        }
-
-        const reportedAmount = String(body.reportedAmount ?? 200);
-        return HttpResponse.json(makeCalculationResponse({
-          body,
-          tripCurrency: "ARS",
-          remainingAmount: "200.00",
-          reportedAmount,
-          maxAllowedAmount: "200.00",
-          amountInTripCurrency: reportedAmount,
-          installments: [
-            {
-              receiptId: null,
-              installmentId: 201,
-              installmentNumber: 1,
-              dueDate: "2026-06-25",
-              totalDue: "200.00",
-              paidAmount: "0.00",
-              remainingAmount: "200.00",
-              reportedAmount,
-              amountInTripCurrency: reportedAmount,
-              status: null,
-            },
-          ],
-        }));
+          }),
+        );
       }),
     );
 
@@ -660,14 +725,42 @@ describe("UserDashboardPage", () => {
         const paymentCurrency = body.paymentCurrency;
 
         if (paymentCurrency === "ARS") {
-          return HttpResponse.json(makeCalculationResponse({
+          return HttpResponse.json(
+            makeCalculationResponse({
+              body,
+              tripCurrency: "USD",
+              remainingAmount: "300.00",
+              reportedAmount: "420000.00",
+              maxAllowedAmount: "420000.00",
+              exchangeRate: decimal(exchangeRate),
+              amountInTripCurrency: "300.00",
+              installments: [
+                {
+                  receiptId: null,
+                  installmentId: 301,
+                  installmentNumber: 1,
+                  dueDate: "2026-06-25",
+                  totalDue: "300.00",
+                  paidAmount: "0.00",
+                  remainingAmount: "300.00",
+                  reportedAmount: "420000.00",
+                  amountInTripCurrency: "300.00",
+                  status: null,
+                },
+              ],
+            }),
+          );
+        }
+
+        const reportedAmount = String(body.reportedAmount ?? 300);
+        return HttpResponse.json(
+          makeCalculationResponse({
             body,
             tripCurrency: "USD",
             remainingAmount: "300.00",
-            reportedAmount: "420000.00",
-            maxAllowedAmount: "420000.00",
-            exchangeRate: decimal(exchangeRate),
-            amountInTripCurrency: "300.00",
+            reportedAmount,
+            maxAllowedAmount: "300.00",
+            amountInTripCurrency: reportedAmount,
             installments: [
               {
                 receiptId: null,
@@ -677,37 +770,13 @@ describe("UserDashboardPage", () => {
                 totalDue: "300.00",
                 paidAmount: "0.00",
                 remainingAmount: "300.00",
-                reportedAmount: "420000.00",
-                amountInTripCurrency: "300.00",
+                reportedAmount,
+                amountInTripCurrency: reportedAmount,
                 status: null,
               },
             ],
-          }));
-        }
-
-        const reportedAmount = String(body.reportedAmount ?? 300);
-        return HttpResponse.json(makeCalculationResponse({
-          body,
-          tripCurrency: "USD",
-          remainingAmount: "300.00",
-          reportedAmount,
-          maxAllowedAmount: "300.00",
-          amountInTripCurrency: reportedAmount,
-          installments: [
-            {
-              receiptId: null,
-              installmentId: 301,
-              installmentNumber: 1,
-              dueDate: "2026-06-25",
-              totalDue: "300.00",
-              paidAmount: "0.00",
-              remainingAmount: "300.00",
-              reportedAmount,
-              amountInTripCurrency: reportedAmount,
-              status: null,
-            },
-          ],
-        }));
+          }),
+        );
       }),
     );
 
@@ -759,27 +828,31 @@ describe("UserDashboardPage", () => {
 
         if (paymentCurrency === "USD" && body.intent === "REMAINING") {
           await usdPreviewBlocked;
-          return HttpResponse.json(makeCalculationResponse({
-            body,
-            tripCurrency: "ARS",
-            remainingAmount: "20000.00",
-            reportedAmount: "16.20",
-            maxAllowedAmount: "16.20",
-            exchangeRate: "1234.56",
-            amountInTripCurrency: "19999.87",
-          }));
+          return HttpResponse.json(
+            makeCalculationResponse({
+              body,
+              tripCurrency: "ARS",
+              remainingAmount: "20000.00",
+              reportedAmount: "16.20",
+              maxAllowedAmount: "16.20",
+              exchangeRate: "1234.56",
+              amountInTripCurrency: "19999.87",
+            }),
+          );
         }
 
         const reportedAmount = String(body.reportedAmount ?? 20000);
-        return HttpResponse.json(makeCalculationResponse({
-          body,
-          tripCurrency: "ARS",
-          remainingAmount: "20000.00",
-          reportedAmount,
-          maxAllowedAmount: paymentCurrency === "USD" ? "16.20" : "20000.00",
-          exchangeRate: paymentCurrency === "USD" ? "1234.56" : null,
-          amountInTripCurrency: paymentCurrency === "USD" ? "15234.47" : reportedAmount,
-        }));
+        return HttpResponse.json(
+          makeCalculationResponse({
+            body,
+            tripCurrency: "ARS",
+            remainingAmount: "20000.00",
+            reportedAmount,
+            maxAllowedAmount: paymentCurrency === "USD" ? "16.20" : "20000.00",
+            exchangeRate: paymentCurrency === "USD" ? "1234.56" : null,
+            amountInTripCurrency: paymentCurrency === "USD" ? "15234.47" : reportedAmount,
+          }),
+        );
       }),
     );
 
@@ -820,15 +893,17 @@ describe("UserDashboardPage", () => {
         }
 
         const reportedAmount = String(body.reportedAmount ?? (body.paymentCurrency === "USD" ? "16.20" : "20000.00"));
-        return HttpResponse.json(makeCalculationResponse({
-          body,
-          tripCurrency: "ARS",
-          remainingAmount: "20000.00",
-          reportedAmount,
-          maxAllowedAmount: body.paymentCurrency === "USD" ? "16.20" : "20000.00",
-          exchangeRate: body.paymentCurrency === "USD" ? "1234.56" : null,
-          amountInTripCurrency: body.paymentCurrency === "USD" ? "19999.87" : reportedAmount,
-        }));
+        return HttpResponse.json(
+          makeCalculationResponse({
+            body,
+            tripCurrency: "ARS",
+            remainingAmount: "20000.00",
+            reportedAmount,
+            maxAllowedAmount: body.paymentCurrency === "USD" ? "16.20" : "20000.00",
+            exchangeRate: body.paymentCurrency === "USD" ? "1234.56" : null,
+            amountInTripCurrency: body.paymentCurrency === "USD" ? "19999.87" : reportedAmount,
+          }),
+        );
       }),
     );
 
@@ -882,26 +957,30 @@ describe("UserDashboardPage", () => {
         if (paymentCurrency === "USD") {
           signalUsdRequest?.();
           await usdPreviewBlocked;
-          return HttpResponse.json(makeCalculationResponse({
-            body,
-            tripCurrency: "ARS",
-            remainingAmount: "20000.00",
-            reportedAmount: "16.20",
-            maxAllowedAmount: "16.20",
-            exchangeRate: "1234.56",
-            amountInTripCurrency: "19999.87",
-          }));
+          return HttpResponse.json(
+            makeCalculationResponse({
+              body,
+              tripCurrency: "ARS",
+              remainingAmount: "20000.00",
+              reportedAmount: "16.20",
+              maxAllowedAmount: "16.20",
+              exchangeRate: "1234.56",
+              amountInTripCurrency: "19999.87",
+            }),
+          );
         }
 
         const reportedAmount = String(body.reportedAmount ?? 20000);
-        return HttpResponse.json(makeCalculationResponse({
-          body,
-          tripCurrency: "ARS",
-          remainingAmount: "20000.00",
-          reportedAmount,
-          maxAllowedAmount: "20000.00",
-          amountInTripCurrency: reportedAmount,
-        }));
+        return HttpResponse.json(
+          makeCalculationResponse({
+            body,
+            tripCurrency: "ARS",
+            remainingAmount: "20000.00",
+            reportedAmount,
+            maxAllowedAmount: "20000.00",
+            amountInTripCurrency: reportedAmount,
+          }),
+        );
       }),
     );
 
@@ -962,26 +1041,30 @@ describe("UserDashboardPage", () => {
         if (body.anchorInstallmentId === 601 && paymentCurrency === "USD") {
           signalOldRequest?.();
           await oldRequestBlocked;
-          return HttpResponse.json(makeCalculationResponse({
-            body,
-            tripCurrency: "ARS",
-            remainingAmount: "20000.00",
-            reportedAmount: "16.20",
-            maxAllowedAmount: "16.20",
-            exchangeRate: "1234.56",
-            amountInTripCurrency: "19999.87",
-          }));
+          return HttpResponse.json(
+            makeCalculationResponse({
+              body,
+              tripCurrency: "ARS",
+              remainingAmount: "20000.00",
+              reportedAmount: "16.20",
+              maxAllowedAmount: "16.20",
+              exchangeRate: "1234.56",
+              amountInTripCurrency: "19999.87",
+            }),
+          );
         }
 
         const remainingAmount = body.anchorInstallmentId === 602 ? "99.29" : "20000.00";
-        return HttpResponse.json(makeCalculationResponse({
-          body,
-          tripCurrency: "ARS",
-          remainingAmount,
-          reportedAmount: remainingAmount,
-          maxAllowedAmount: remainingAmount,
-          amountInTripCurrency: remainingAmount,
-        }));
+        return HttpResponse.json(
+          makeCalculationResponse({
+            body,
+            tripCurrency: "ARS",
+            remainingAmount,
+            reportedAmount: remainingAmount,
+            maxAllowedAmount: remainingAmount,
+            amountInTripCurrency: remainingAmount,
+          }),
+        );
       }),
     );
 
@@ -1028,15 +1111,17 @@ describe("UserDashboardPage", () => {
         }
 
         const reportedAmount = String(body.reportedAmount ?? (body.paymentCurrency === "USD" ? "16.20" : "20000.00"));
-        return HttpResponse.json(makeCalculationResponse({
-          body,
-          tripCurrency: "ARS",
-          remainingAmount: "20000.00",
-          reportedAmount,
-          maxAllowedAmount: body.paymentCurrency === "USD" ? "16.20" : "20000.00",
-          exchangeRate: body.paymentCurrency === "USD" ? "1234.56" : null,
-          amountInTripCurrency: body.paymentCurrency === "USD" ? "19999.87" : reportedAmount,
-        }));
+        return HttpResponse.json(
+          makeCalculationResponse({
+            body,
+            tripCurrency: "ARS",
+            remainingAmount: "20000.00",
+            reportedAmount,
+            maxAllowedAmount: body.paymentCurrency === "USD" ? "16.20" : "20000.00",
+            exchangeRate: body.paymentCurrency === "USD" ? "1234.56" : null,
+            amountInTripCurrency: body.paymentCurrency === "USD" ? "19999.87" : reportedAmount,
+          }),
+        );
       }),
     );
 
@@ -1089,26 +1174,30 @@ describe("UserDashboardPage", () => {
 
         if (isCaseG && body.paymentCurrency === "ARS") {
           arsCalculationRequests += 1;
-          return HttpResponse.json(makeCalculationResponse({
-            body,
-            tripCurrency: "USD",
-            remainingAmount: "0.01",
-            reportedAmount: "10.16",
-            amountInTripCurrency: "0.01",
-            maxAllowedAmount: "15.23",
-            exchangeRate: "1015.50",
-          }));
+          return HttpResponse.json(
+            makeCalculationResponse({
+              body,
+              tripCurrency: "USD",
+              remainingAmount: "0.01",
+              reportedAmount: "10.16",
+              amountInTripCurrency: "0.01",
+              maxAllowedAmount: "15.23",
+              exchangeRate: "1015.50",
+            }),
+          );
         }
 
         const remainingAmount = isCaseG ? "0.01" : "99.29";
-        return HttpResponse.json(makeCalculationResponse({
-          body,
-          tripCurrency: "USD",
-          remainingAmount,
-          reportedAmount: remainingAmount,
-          amountInTripCurrency: remainingAmount,
-          maxAllowedAmount: remainingAmount,
-        }));
+        return HttpResponse.json(
+          makeCalculationResponse({
+            body,
+            tripCurrency: "USD",
+            remainingAmount,
+            reportedAmount: remainingAmount,
+            amountInTripCurrency: remainingAmount,
+            maxAllowedAmount: remainingAmount,
+          }),
+        );
       }),
     );
 
@@ -1140,14 +1229,16 @@ describe("UserDashboardPage", () => {
         http.post(CALCULATION_URL, async ({ request }) => {
           const body = (await request.json()) as Record<string, unknown>;
 
-          return HttpResponse.json(makeCalculationResponse({
-            body,
-            tripCurrency: "ARS",
-            remainingAmount: "200.00",
-            reportedAmount: "200.00",
-            maxAllowedAmount: "200.00",
-            amountInTripCurrency: "200.00",
-          }));
+          return HttpResponse.json(
+            makeCalculationResponse({
+              body,
+              tripCurrency: "ARS",
+              remainingAmount: "200.00",
+              reportedAmount: "200.00",
+              maxAllowedAmount: "200.00",
+              amountInTripCurrency: "200.00",
+            }),
+          );
         }),
       );
 

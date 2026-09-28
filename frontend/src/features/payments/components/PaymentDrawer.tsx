@@ -1,26 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import {
-  useInstallmentReceipts,
-  useVoidPayment,
-} from "@/features/payments/services/payments-service";
-import { isImageAttachment } from "@/features/payments/lib/attachment-preview";
-import type {
-  PaymentHistoryStatus,
-  PaymentInstallmentHistoryDTO,
-} from "@/features/payments/types/payments-dtos";
-import type {
-  SpreadsheetRowDTO,
-  SpreadsheetRowInstallmentDTO,
-} from "@/features/trips/types/trips-dtos";
+import { AttachmentList } from "@/features/payments/components/AttachmentList";
+import { useInstallmentReceipts, useVoidPayment } from "@/features/payments/services/payments-service";
+import type { PaymentHistoryStatus, PaymentInstallmentHistoryDTO } from "@/features/payments/types/payments-dtos";
 import {
   getSpreadsheetParticipantParentLabel,
   getSpreadsheetParticipantPrimaryLabel,
   getSpreadsheetStatusVariant,
 } from "@/features/trips/lib/spreadsheet-ui";
-import { createGsapMatchMedia, getMotionProfile, gsap, useGSAP } from "@/lib/gsap";
-
 import styles from "@/features/trips/pages/SpreadsheetPage.module.css";
+import type { SpreadsheetRowDTO, SpreadsheetRowInstallmentDTO } from "@/features/trips/types/trips-dtos";
+import { createGsapMatchMedia, getMotionProfile, gsap, useGSAP } from "@/lib/gsap";
 
 const currencyFormatter = new Intl.NumberFormat("es-AR", {
   style: "currency",
@@ -68,11 +58,7 @@ type PaymentDrawerProps = {
 };
 
 export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps) {
-  const {
-    data: history,
-    isLoading: isHistoryLoading,
-    error: historyError,
-  } = useInstallmentReceipts(installment.id);
+  const { data: history, isLoading: isHistoryLoading, error: historyError } = useInstallmentReceipts(installment.id);
   const voidPayment = useVoidPayment();
 
   const [voidError, setVoidError] = useState<string | null>(null);
@@ -172,13 +158,7 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
         }
       }}
     >
-      <aside
-        ref={drawerRef}
-        className={styles.drawer}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-      >
+      <aside ref={drawerRef} className={styles.drawer} role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <header className={styles.drawerHeader}>
           <h2 id={titleId} className={styles.drawerTitle}>
             Cuota {installment.installmentNumber} · {currencyFormatter.format(installment.totalDue)}
@@ -192,9 +172,7 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
           <section className={styles.drawerSection}>
             <div className={styles.drawerLabel}>Info de la cuota</div>
             <div>
-              <div className={styles.strong}>
-                {getSpreadsheetParticipantPrimaryLabel(row)}
-              </div>
+              <div className={styles.strong}>{getSpreadsheetParticipantPrimaryLabel(row)}</div>
               {getSpreadsheetParticipantParentLabel(row) ? (
                 <div>{getSpreadsheetParticipantParentLabel(row)}</div>
               ) : null}
@@ -227,7 +205,8 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
                   <span className={styles.strong}>Estado:</span> {historyStatusLabels[entry.status] ?? entry.status}
                 </div>
                 <div>
-                  <span className={styles.strong}>Monto reportado:</span> {formatMoneyByCurrency(entry.reportedAmount, entry.paymentCurrency)}
+                  <span className={styles.strong}>Monto reportado:</span>{" "}
+                  {formatMoneyByCurrency(entry.reportedAmount, entry.paymentCurrency)}
                 </div>
                 <div>
                   <span className={styles.strong}>Equivalente viaje:</span> {entry.amountInTripCurrency}
@@ -236,7 +215,8 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
                   <span className={styles.strong}>Fecha:</span> {formatDate(entry.reportedPaymentDate)}
                 </div>
                 <div>
-                  <span className={styles.strong}>Método:</span> {paymentMethodLabels[entry.paymentMethod] ?? entry.paymentMethod}
+                  <span className={styles.strong}>Método:</span>{" "}
+                  {paymentMethodLabels[entry.paymentMethod] ?? entry.paymentMethod}
                 </div>
                 <div>
                   <span className={styles.strong}>Cuenta acreditada:</span>{" "}
@@ -249,27 +229,7 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
                   </div>
                 ) : null}
 
-                {entry.fileKey ? (
-                  <div style={{ marginTop: 8 }}>
-                    {isImageAttachment(entry.fileKey) ? (
-                      <img
-                        src={entry.fileKey}
-                        alt="Comprobante"
-                        style={{
-                          maxWidth: "100%",
-                          maxHeight: 200,
-                          borderRadius: 8,
-                          objectFit: "contain",
-                          border: "1px solid #e2e8f0",
-                        }}
-                      />
-                    ) : (
-                      <a href={entry.fileKey} target="_blank" rel="noreferrer">
-                        Ver comprobante adjunto
-                      </a>
-                    )}
-                  </div>
-                ) : null}
+                <AttachmentList receipt={entry} />
 
                 {entry.status === "APPROVED" && entry.submissionId != null ? (
                   <div style={{ marginTop: 8 }}>
@@ -309,9 +269,7 @@ function StatusBadge({ installment, label }: StatusBadgeProps) {
   );
 }
 
-function getStatusClass(
-  tone: ReturnType<typeof getSpreadsheetStatusVariant>,
-): { pill: string; dot: string } {
+function getStatusClass(tone: ReturnType<typeof getSpreadsheetStatusVariant>): { pill: string; dot: string } {
   switch (tone) {
     case "green":
       return { pill: styles.statusGreen, dot: styles.statusGreenDot };

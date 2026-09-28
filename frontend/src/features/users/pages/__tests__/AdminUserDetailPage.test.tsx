@@ -99,6 +99,6 @@ describe("AdminUserDetailPage", () => {
     expect(screen.getByText("Viaje a Mendoza")).toBeInTheDocument();
     expect(screen.getAllByText(/Pago verificado/)).toHaveLength(2);
     expect(screen.getByText("Pago #501")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Ver comprobante adjunto" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Ver comprobante adjunto 1" })).toBeInTheDocument();
   });
 });

@@ -2,11 +2,8 @@ import { useMemo, useState } from "react";
 
 import { CommonLayout } from "@/components/CommonLayout/CommonLayout";
 import { RequestState } from "@/components/ui/RequestState/RequestState";
-import {
-  usePendingReviewPayments,
-  useReviewPayment,
-} from "@/features/payments/services/payments-service";
-import { isImageAttachment } from "@/features/payments/lib/attachment-preview";
+import { AttachmentList } from "@/features/payments/components/AttachmentList";
+import { usePendingReviewPayments, useReviewPayment } from "@/features/payments/services/payments-service";
 import {
   compareNonNegativeDecimalStrings,
   normalizePaymentMoneyInput,
@@ -102,9 +99,7 @@ export function PendingReviewPage() {
 
   const toggleSubmission = (submissionId: number) => {
     setExpandedSubmissionIds((current) =>
-      current.includes(submissionId)
-        ? current.filter((item) => item !== submissionId)
-        : [...current, submissionId],
+      current.includes(submissionId) ? current.filter((item) => item !== submissionId) : [...current, submissionId],
     );
   };
 
@@ -157,7 +152,9 @@ export function PendingReviewPage() {
           </header>
 
           <RequestState isLoading={isLoading} error={error ?? null} loadingLabel="Cargando pendientes...">
-            {items.length === 0 ? <p className={styles.emptyText}>No hay comprobantes pendientes de revisión.</p> : null}
+            {items.length === 0 ? (
+              <p className={styles.emptyText}>No hay comprobantes pendientes de revisión.</p>
+            ) : null}
             <div className={styles.list}>
               {items.map((item) => {
                 const isExpanded = expandedSubmissionIds.includes(item.submissionId);
@@ -169,7 +166,9 @@ export function PendingReviewPage() {
                   <article key={item.submissionId} className={styles.card}>
                     <div className={styles.cardHeader}>
                       <div>
-                        <h2 className={styles.cardTitle}>{item.userLastname}, {item.userName}</h2>
+                        <h2 className={styles.cardTitle}>
+                          {item.userLastname}, {item.userName}
+                        </h2>
                         <p className={styles.cardSubtitle}>
                           {item.userEmail} · {item.studentName || "Sin alumno informado"}
                           {item.studentDni ? ` · DNI ${item.studentDni}` : ""}
@@ -189,7 +188,9 @@ export function PendingReviewPage() {
                       </div>
                       <div>
                         <span className={styles.label}>Monto informado</span>
-                        <p className={styles.value}>{formatMoneyByCurrency(item.reportedAmount, item.paymentCurrency)}</p>
+                        <p className={styles.value}>
+                          {formatMoneyByCurrency(item.reportedAmount, item.paymentCurrency)}
+                        </p>
                       </div>
                       <div>
                         <span className={styles.label}>Método</span>
@@ -215,17 +216,11 @@ export function PendingReviewPage() {
                         : ""}
                     </p>
 
-                    {item.fileKey ? (
-                      <div className={styles.attachmentBox}>
-                        {isImageAttachment(item.fileKey) ? (
-                          <img src={item.fileKey} alt="Comprobante" className={styles.attachmentImage} />
-                        ) : (
-                          <a href={item.fileKey} target="_blank" rel="noreferrer" className={styles.linkButton}>
-                            Ver comprobante adjunto
-                          </a>
-                        )}
-                      </div>
-                    ) : null}
+                    <AttachmentList
+                      receipt={item}
+                      className={styles.attachmentBox}
+                      imageClassName={styles.attachmentImage}
+                    />
 
                     <div className={styles.actionsRow}>
                       <button
@@ -263,7 +258,8 @@ export function PendingReviewPage() {
                               <div>
                                 <h3 className={styles.cardTitle}>Cuota #{allocation.installmentNumber}</h3>
                                 <p className={styles.cardSubtitle}>
-                                  Vence {formatDate(allocation.dueDate)} · total {formatMoneyByCurrency(allocation.totalDue, item.tripCurrency)}
+                                  Vence {formatDate(allocation.dueDate)} · total{" "}
+                                  {formatMoneyByCurrency(allocation.totalDue, item.tripCurrency)}
                                 </p>
                               </div>
                               <span className={styles.pendingBadge}>
@@ -273,11 +269,15 @@ export function PendingReviewPage() {
                             <div className={styles.grid}>
                               <div>
                                 <span className={styles.label}>Saldo previo</span>
-                                <p className={styles.value}>{formatMoneyByCurrency(allocation.remainingAmount, item.tripCurrency)}</p>
+                                <p className={styles.value}>
+                                  {formatMoneyByCurrency(allocation.remainingAmount, item.tripCurrency)}
+                                </p>
                               </div>
                               <div>
                                 <span className={styles.label}>Monto imputado</span>
-                                <p className={styles.value}>{formatMoneyByCurrency(allocation.amountInTripCurrency, item.tripCurrency)}</p>
+                                <p className={styles.value}>
+                                  {formatMoneyByCurrency(allocation.amountInTripCurrency, item.tripCurrency)}
+                                </p>
                               </div>
                             </div>
                           </div>
@@ -290,9 +290,9 @@ export function PendingReviewPage() {
                               id={`approved-amount-${item.submissionId}`}
                               value={approvedAmountInput}
                               aria-invalid={approvalValidation.error != null}
-                              aria-describedby={approvalValidation.error
-                                ? `approved-amount-error-${item.submissionId}`
-                                : undefined}
+                              aria-describedby={
+                                approvalValidation.error ? `approved-amount-error-${item.submissionId}` : undefined
+                              }
                               onChange={(event) =>
                                 setApprovedAmounts((current) => ({
                                   ...current,

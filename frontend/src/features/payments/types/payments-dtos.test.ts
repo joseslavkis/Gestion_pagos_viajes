@@ -1,13 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import { compareNonNegativeDecimalStrings, normalizePaymentDecimalInput } from "./decimal-strings";
 import {
-  compareNonNegativeDecimalStrings,
-  normalizePaymentDecimalInput,
-} from "./decimal-strings";
-import {
+  PaymentBatchPreviewDTOSchema,
   PaymentCalculationRequestDTOSchema,
   PaymentCalculationResponseDTOSchema,
-  PaymentBatchPreviewDTOSchema,
   PaymentInstallmentHistoryDTOSchema,
   PaymentSubmissionDTOSchema,
   PendingPaymentReviewDTOSchema,
@@ -93,6 +90,7 @@ describe("payment decimal contracts", () => {
       calculationVersion: "2",
       paymentMethod: "BANK_TRANSFER",
       fileKey: "receipt",
+      fileKeys: ["first", "second"],
       adminObservation: null,
       bankAccountId: 1,
       bankAccountDisplayName: "Account",
@@ -111,6 +109,7 @@ describe("payment decimal contracts", () => {
       expect(result.data.quoteSource).toBe("official");
       expect(result.data.quoteProvider).toBe("provider-a");
       expect(result.data.calculationVersion).toBe("2");
+      expect(result.data.fileKeys).toEqual(["first", "second"]);
     }
   });
 
@@ -134,6 +133,7 @@ describe("payment decimal contracts", () => {
       ...quoteIdentity,
       paymentMethod: "BANK_TRANSFER",
       fileKey: "receipt",
+      fileKeys: ["first", "second"],
       bankAccountId: 1,
       bankAccountDisplayName: "Account",
       bankAccountAlias: "ACCOUNT",
@@ -162,6 +162,7 @@ describe("payment decimal contracts", () => {
       paymentMethod: "BANK_TRANSFER",
       status: "APPROVED",
       fileKey: "receipt",
+      fileKeys: ["first", "second"],
       adminObservation: null,
       bankAccountId: 1,
       bankAccountDisplayName: "Account",
@@ -172,6 +173,8 @@ describe("payment decimal contracts", () => {
     expect(pending.quoteProvider).toBe("provider-a");
     expect(history.exchangeRate).toBe("1234.567");
     expect(history).toMatchObject(quoteIdentity);
+    expect(pending.fileKeys).toEqual(["first", "second"]);
+    expect(history.fileKeys).toEqual(["first", "second"]);
   });
 
   it("models authoritative calculation states with explicit currencies and decimal strings", () => {

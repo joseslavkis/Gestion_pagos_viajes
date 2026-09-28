@@ -1,11 +1,14 @@
-import type { ReactNode } from "react";
-
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
+import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { usePaymentCalculation, useRegisterPayment, useReviewPayment } from "@/features/payments/services/payments-service";
+import {
+  usePaymentCalculation,
+  useRegisterPayment,
+  useReviewPayment,
+} from "@/features/payments/services/payments-service";
 import { server } from "@/test/msw-server";
 
 vi.mock("@/lib/session", () => ({
@@ -92,10 +95,12 @@ describe("payments-service", () => {
 
   it("sends the canonical amount and current preview token in multipart registration", async () => {
     let fields: FormData | null = null;
-    server.use(http.post("http://localhost:30002/api/v1/payments", async ({ request }) => {
-      fields = await request.formData();
-      return HttpResponse.json(pendingSubmission, { status: 201 });
-    }));
+    server.use(
+      http.post("http://localhost:30002/api/v1/payments", async ({ request }) => {
+        fields = await request.formData();
+        return HttpResponse.json(pendingSubmission, { status: 201 });
+      }),
+    );
 
     const { result } = renderHook(useRegisterPayment, { wrapper: createWrapper() });
     await act(async () => {
@@ -116,16 +121,52 @@ describe("payments-service", () => {
     await waitFor(() => expect(result.current.data?.reportedAmount).toBe("500.00"));
   });
 
+  it("sends repeated files in selection order without changing payment fields", async () => {
+    let fields: FormData | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      fields = init?.body as FormData;
+      return new Response(JSON.stringify({ ...pendingSubmission, fileKeys: ["first", "second"] }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const files = [
+      new File(["a"], "first.png", { type: "image/png" }),
+      new File(["b"], "second.pdf", { type: "application/pdf" }),
+    ];
+    const { result } = renderHook(useRegisterPayment, { wrapper: createWrapper() });
+    await act(async () => {
+      await result.current.mutateAsync({
+        anchorInstallmentId: 1,
+        reportedAmount: "500.00",
+        reportedPaymentDate: "2026-09-18",
+        paymentCurrency: "ARS",
+        paymentMethod: "BANK_TRANSFER",
+        bankAccountId: 1,
+        files,
+      });
+    });
+    expect(fields?.getAll("files")).toHaveLength(2);
+    expect((fields?.getAll("files")[1] as File).name).toBe("second.pdf");
+    expect(fields?.get("file")).toBeNull();
+    await waitFor(() => expect(result.current.data?.fileKeys).toEqual(["first", "second"]));
+  });
+
   it("sends the exact admin approval decimal without rounding or fallback", async () => {
     let capturedBody: unknown;
-    server.use(http.patch("http://localhost:30002/api/v1/payments/7/review", async ({ request }) => {
-      capturedBody = await request.json();
-      return HttpResponse.json({ ...pendingSubmission, status: "PARTIALLY_APPROVED", approvedAmount: "99.29" });
-    }));
+    server.use(
+      http.patch("http://localhost:30002/api/v1/payments/7/review", async ({ request }) => {
+        capturedBody = await request.json();
+        return HttpResponse.json({ ...pendingSubmission, status: "PARTIALLY_APPROVED", approvedAmount: "99.29" });
+      }),
+    );
 
     const { result } = renderHook(useReviewPayment, { wrapper: createWrapper() });
     await act(async () => {
-      await result.current.mutateAsync({ id: 7, data: { approvedAmount: "99.29", adminObservation: "Partial approval" } });
+      await result.current.mutateAsync({
+        id: 7,
+        data: { approvedAmount: "99.29", adminObservation: "Partial approval" },
+      });
     });
 
     expect(capturedBody).toEqual({ approvedAmount: "99.29", adminObservation: "Partial approval" });

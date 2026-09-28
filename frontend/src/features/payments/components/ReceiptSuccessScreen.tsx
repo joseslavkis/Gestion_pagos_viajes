@@ -34,10 +34,8 @@ export function ReceiptSuccessScreen({ data, onBack }: Props) {
           </svg>
         </div>
 
-        <h1 className={styles.title}>¡Comprobante adjuntado!</h1>
-        <p className={styles.subtitle}>
-          Tu comprobante fue enviado al administrador y será revisado pronto.
-        </p>
+        <h1 className={styles.title}>¡Pago reportado!</h1>
+        <p className={styles.subtitle}>Tu pago fue enviado al administrador y será revisado pronto.</p>
 
         <div className={styles.detailsGrid}>
           <div className={styles.detailRow}>
@@ -58,16 +56,14 @@ export function ReceiptSuccessScreen({ data, onBack }: Props) {
           </div>
           <div className={styles.detailRow}>
             <span className={styles.detailLabel}>Método</span>
-            <span className={styles.detailValue}>
-              {paymentMethodLabels[data.paymentMethod] ?? data.paymentMethod}
-            </span>
+            <span className={styles.detailValue}>{paymentMethodLabels[data.paymentMethod] ?? data.paymentMethod}</span>
           </div>
           <div className={styles.detailRow}>
             <span className={styles.detailLabel}>Cuenta acreditada</span>
             <span className={styles.detailValue}>{data.bankAccountName}</span>
           </div>
           <div className={styles.detailRow}>
-            <span className={styles.detailLabel}>Archivo</span>
+            <span className={styles.detailLabel}>Archivos</span>
             <span className={styles.detailValue}>{data.fileName}</span>
           </div>
         </div>

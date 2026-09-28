@@ -17,3 +17,7 @@ export function isImageAttachment(fileKey: string): boolean {
     return IMAGE_ATTACHMENT_PATTERN.test(normalized);
   }
 }
+
+export function attachmentKeys(receipt: { fileKey: string; fileKeys?: string[] }): string[] {
+  return receipt.fileKeys ?? (receipt.fileKey ? [receipt.fileKey] : []);
+}
