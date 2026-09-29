@@ -135,6 +135,8 @@ describe("UserDashboardPage", () => {
     expect(input).toHaveAttribute("multiple");
     expect(await screen.findByText("Adjuntar comprobantes (hasta 5)")).toBeInTheDocument();
     await screen.findByText("Primera cuota pendiente", { exact: false });
+    await screen.findByText("Se imputa en", { exact: false });
+    await waitFor(() => expect(screen.getByLabelText("Cuenta donde acreditaste el pago")).toHaveValue("1"));
     const submit = screen.getByRole("button", { name: "Enviar comprobante" });
     expect(submit).toBeDisabled();
     fireEvent.submit(submit.closest("form") as HTMLFormElement);
