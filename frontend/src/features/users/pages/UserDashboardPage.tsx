@@ -358,7 +358,10 @@ export function UserDashboardPage() {
     if (!readyPaymentCalculation) return;
     // Expire locally before the server's 300-second token lifetime; never reuse a cached token.
     const expiresAt = Date.now() + 240_000;
-    const timeout = window.setTimeout(() => setFinalExpiresAt(0), 240_000);
+    const timeout = window.setTimeout(() => {
+      setFinalExpiresAt(0);
+      setConfirmation(null);
+    }, 240_000);
     setFinalExpiresAt(expiresAt);
     return () => window.clearTimeout(timeout);
   }, [readyPaymentCalculation]);
@@ -368,6 +371,7 @@ export function UserDashboardPage() {
     const remaining = Math.max(0, auxiliary.dataUpdatedAt + 240_000 - Date.now());
     const timeout = window.setTimeout(() => {
       authorityRevision.current += 1;
+      setIsVerifyingConversion(false);
       setConfirmation(null);
       setFinalExpiresAt(0);
       setReceiptRevision((revision) => revision + 1);
@@ -518,31 +522,25 @@ export function UserDashboardPage() {
   };
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []);
+    const files = Array.from(event.target.files ?? []).slice(0, 5 - receipts.length);
+    event.target.value = "";
+    if (files.length === 0) return;
     revokeConfirmation();
-    const error =
-      files.length + receipts.length > 5
-        ? "Podés adjuntar hasta 5 comprobantes."
-        : files.some(
-              (file) =>
-                !["image/jpeg", "image/png", "image/webp", "application/pdf"].includes(file.type) ||
-                file.size > 5 * 1024 * 1024,
-            )
-          ? "Cada archivo debe ser JPG, PNG, WEBP o PDF y no superar 5 MB."
-          : null;
-    if (receiptPreviewUrl) {
-      URL.revokeObjectURL(receiptPreviewUrl);
-    }
+    const error = files.some((file) =>
+      !["image/jpeg", "image/png", "image/webp", "application/pdf"].includes(file.type) ||
+      file.size > 5 * 1024 * 1024,
+    ) ? "Cada archivo debe ser JPG, PNG, WEBP o PDF y no superar 5 MB." : null;
     setFileError(error);
-    if (!error) setReceipts((current) => [...current, ...files.map((file) => ({
-      id: ++nextReceiptId.current, file, currency: tripCurrency, amount: "",
-    }))]);
-    const preview = !error && (receipts[0]?.file ?? files[0])?.type.startsWith("image/")
-      ? (receipts[0]?.file ?? files[0]) : null;
-    setReceiptPreviewUrl(preview ? URL.createObjectURL(preview) : null);
+    if (!error) {
+      setReceipts((current) => [...current, ...files.map((file) => ({
+        id: ++nextReceiptId.current, file, currency: tripCurrency, amount: "",
+      }))]);
+      if (receipts.length === 0 && files[0].type.startsWith("image/")) {
+        setReceiptPreviewUrl(URL.createObjectURL(files[0]));
+      }
+    }
     setCloseFolderSignal(true);
     setTimeout(() => setCloseFolderSignal(false), 200);
-    event.target.value = "";
   };
 
   const updateReceipt = (id: number, update: Partial<Pick<ReceiptAmount, "amount" | "currency">>) => {
@@ -554,7 +552,8 @@ export function UserDashboardPage() {
     revokeConfirmation();
     setReceipts((current) => current.filter((receipt) => receipt.id !== id));
     if (receipts[0]?.id === id) {
-      setReceiptPreviewUrl(null);
+      const next = receipts[1]?.file;
+      setReceiptPreviewUrl(next?.type.startsWith("image/") ? URL.createObjectURL(next) : null);
     }
     setFileError(null);
   };
@@ -627,7 +626,6 @@ export function UserDashboardPage() {
       setReceipts([]);
       revokeConfirmation();
       setFileError(null);
-      if (receiptPreviewUrl) URL.revokeObjectURL(receiptPreviewUrl);
       setReceiptPreviewUrl(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
 
@@ -858,7 +856,7 @@ export function UserDashboardPage() {
 
               <label
                 className={styles.folderContainer}
-                style={{ cursor: "pointer" }}
+                style={{ cursor: receipts.length === 5 ? "not-allowed" : "pointer" }}
                 onMouseEnter={() => setIsDropzoneHovered(true)}
                 onMouseLeave={() => setIsDropzoneHovered(false)}
               >
@@ -867,6 +865,7 @@ export function UserDashboardPage() {
                   type="file"
                   accept="image/jpeg,image/png,image/webp,application/pdf"
                   multiple
+                  disabled={receipts.length === 5}
                   className={styles.fileInput}
                   onChange={handleFileChange}
                 />
@@ -889,7 +888,9 @@ export function UserDashboardPage() {
                   }
                 />
                 <p className={styles.folderHint}>
-                  {receipts.length
+                  {receipts.length === 5
+                    ? "Máximo de 5 comprobantes alcanzado"
+                    : receipts.length
                     ? `${receipts.length} de 5 archivos seleccionados · agregar más`
                     : "Adjuntar comprobantes (hasta 5)"}
                 </p>

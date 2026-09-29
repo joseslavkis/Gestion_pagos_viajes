@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it, vi } from "vitest";
 
@@ -268,18 +268,44 @@ describe("receipt amount payment", () => {
     expect(requests).toHaveLength(0);
   });
 
-  it("rejects a sixth receipt, oversize receipt and unsupported MIME without losing existing files", async () => {
+  it("caps receipts at five by disabling upload instead of raising a file error", async () => {
     setup(); await screen.findByText("Adjuntar comprobantes (hasta 5)");
-    upload(...Array.from({ length: 5 }, (_, i) => file(`${i}.png`)));
-    expect(screen.getByText("5 de 5 archivos seleccionados · agregar más")).toBeInTheDocument();
+    expect(input()).toBeEnabled();
+    upload(...Array.from({ length: 4 }, (_, i) => file(`${i}.png`)));
+    expect(input()).toBeEnabled();
+
+    // 4 receipts + a two-file selection accepts only what completes five, with no persistent error.
+    upload(file("four.png"), file("five.png"));
+    expect(screen.getByText("Máximo de 5 comprobantes alcanzado")).toBeInTheDocument();
+    expect(input()).toBeDisabled();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getAllByRole("button", { name: /^Quitar / })).toHaveLength(5);
+    expect(screen.getByLabelText("Monto de four.png")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Monto de five.png")).toBeNull();
+
+    // There is no normal way to select a sixth receipt once the cap is reached.
     upload(file("six.png"));
-    expect(screen.getByRole("alert")).toHaveTextContent("hasta 5 comprobantes");
-    expect(screen.getByLabelText("Monto de 0.png")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Quitar 4.png" }));
+    expect(screen.getAllByRole("button", { name: /^Quitar / })).toHaveLength(5);
+    expect(screen.queryByLabelText("Monto de six.png")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    // Removing one receipt re-enables uploading.
+    fireEvent.click(screen.getByRole("button", { name: "Quitar four.png" }));
+    expect(input()).toBeEnabled();
+    expect(screen.queryByText("Máximo de 5 comprobantes alcanzado")).toBeNull();
+    upload(file("six.png"));
+    expect(screen.getByLabelText("Monto de six.png")).toBeInTheDocument();
+  });
+
+  it("keeps fileError reserved for real file errors and preserves already selected files", async () => {
+    setup(); await screen.findByText("Adjuntar comprobantes (hasta 5)");
+    upload(file("a.png"));
     upload(new File([new Uint8Array(5 * 1024 * 1024 + 1)], "huge.pdf", { type: "application/pdf" }));
     expect(screen.getByRole("alert")).toHaveTextContent("5 MB");
+    expect(screen.getByLabelText("Monto de a.png")).toBeInTheDocument();
     upload(file("bad.txt", "text/plain"));
     expect(screen.getByRole("alert")).toHaveTextContent("JPG, PNG, WEBP o PDF");
+    expect(screen.getByLabelText("Monto de a.png")).toBeInTheDocument();
   });
 
   it("removes a receipt, clears confirmation and recomputes the total", async () => {
@@ -469,6 +495,102 @@ describe("receipt amount payment", () => {
       fireEvent.submit(submit().closest("form")!);
       expect(submit()).toBeDisabled();
     } finally { clock.mockRestore(); }
+  });
+
+  it("clears the explicit confirmation when the final token's local safety window elapses", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      setup(); await screen.findByText("Primera cuota pendiente", { exact: false });
+      upload(file("a.png")); amount("a.png", "10"); fireEvent.click(confirm());
+      await waitFor(() => expect(submit()).toBeEnabled());
+      expect(confirm()).toBeChecked();
+      await act(async () => { await vi.advanceTimersByTimeAsync(240_001); });
+      expect(confirm()).not.toBeChecked();
+      expect(submit()).toBeDisabled();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("does not leave the conversion verification stuck when the auxiliary quote expires mid-refetch", async () => {
+    let release: (() => void) | undefined;
+    const delayed = new Promise<void>((resolve) => { release = resolve; });
+    let usdCalls = 0;
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      setup({ reply: (body) => {
+        if (body.paymentCurrency !== "USD") return {};
+        usdCalls += 1;
+        // The display quote resolves; the confirmation-time refetch stays in flight.
+        return usdCalls === 1 ? { equivalent: "20.00" } : { delay: delayed, equivalent: "20.00" };
+      } });
+      await screen.findByText("Primera cuota pendiente", { exact: false });
+      upload(file("a.png"));
+      fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "USD" } });
+      amount("a.png", "2");
+      await screen.findByText("Total en ARS: 20.00");
+      fireEvent.click(confirm());
+      await waitFor(() => expect(screen.getByText(/Verificando la cotización/)).toBeInTheDocument());
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(240_001); });
+      await waitFor(() => expect(screen.queryByText(/Verificando la cotización/)).toBeNull());
+      // The expired quote drops the total, so the confirmation block is either gone or unchecked.
+      const checkbox = screen.queryByRole("checkbox", { name: /Confirmo el total/ });
+      if (checkbox) expect(checkbox).not.toBeChecked();
+      expect(submit()).toBeDisabled();
+    } finally { release?.(); vi.useRealTimers(); }
+  });
+
+  it("revokes the previous preview object URL and promotes the next image when the first receipt is removed", async () => {
+    const created: string[] = [];
+    const revoked: string[] = [];
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = vi.fn(() => {
+      const url = `blob:preview/${created.length + 1}`;
+      created.push(url);
+      return url;
+    }) as unknown as typeof URL.createObjectURL;
+    URL.revokeObjectURL = vi.fn((url: string | URL) => {
+      revoked.push(String(url));
+    }) as unknown as typeof URL.revokeObjectURL;
+    try {
+      setup(); await screen.findByText("Primera cuota pendiente", { exact: false });
+      upload(file("a.png"), file("b.png"));
+      expect(created).toEqual(["blob:preview/1"]);
+      expect(screen.getByAltText("Vista previa")).toHaveAttribute("src", "blob:preview/1");
+
+      fireEvent.click(screen.getByRole("button", { name: "Quitar a.png" }));
+      expect(revoked).toContain("blob:preview/1");
+      expect(screen.getByAltText("Vista previa")).toHaveAttribute("src", "blob:preview/2");
+
+      // Removing the promoted preview leaves no stale object URL and no preview element.
+      fireEvent.click(screen.getByRole("button", { name: "Quitar b.png" }));
+      expect(revoked).toContain("blob:preview/2");
+      expect(screen.queryByAltText("Vista previa")).toBeNull();
+    } finally {
+      URL.createObjectURL = originalCreate;
+      URL.revokeObjectURL = originalRevoke;
+    }
+  });
+
+  it("drops the preview when the next receipt is not an image and keeps revoke discipline", async () => {
+    const revoked: string[] = [];
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = vi.fn(() => "blob:preview/1") as unknown as typeof URL.createObjectURL;
+    URL.revokeObjectURL = vi.fn((url: string | URL) => {
+      revoked.push(String(url));
+    }) as unknown as typeof URL.revokeObjectURL;
+    try {
+      setup(); await screen.findByText("Primera cuota pendiente", { exact: false });
+      upload(file("a.png"), file("b.pdf", "application/pdf"));
+      expect(screen.getByAltText("Vista previa")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Quitar a.png" }));
+      expect(revoked).toContain("blob:preview/1");
+      expect(screen.queryByAltText("Vista previa")).toBeNull();
+    } finally {
+      URL.createObjectURL = originalCreate;
+      URL.revokeObjectURL = originalRevoke;
+    }
   });
 
   it("uses Argentina's calendar date as the initial reported date", async () => {
