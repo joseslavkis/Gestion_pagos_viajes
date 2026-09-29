@@ -697,7 +697,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
         assertEquals(paidBefore, installmentRepository.findById(anchor.getId()).orElseThrow().getPaidAmount(), variant);
         assertEquals(secondPaidBefore, installmentRepository.findById(second.getId()).orElseThrow().getPaidAmount(), variant);
         org.mockito.Mockito.verifyNoInteractions(exchangeRateService);
-        org.mockito.Mockito.verify(paymentAttachmentStorageService, org.mockito.Mockito.times(expectedStatus == 201 ? 1 : 0))
+        org.mockito.Mockito.verify(paymentAttachmentStorageService, org.mockito.Mockito.never())
                 .storeReceipt(any(), anyLong(), anyLong(), any());
     }
 
@@ -1005,6 +1005,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
     @Test
     void registrationSupportsZeroOneTwoAndFiveOrderedFiles() throws Exception {
         for (int count : List.of(0, 1, 2, 5)) {
+            org.mockito.Mockito.reset(paymentAttachmentStorageService);
             PaymentFixture fixture = createPaymentFixture("attachments-count-" + count, Currency.ARS);
             Installment first = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
             BankAccount account = createBankAccount(Currency.ARS);
@@ -1028,6 +1029,71 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                 result.andExpect(jsonPath("$.fileKeys[" + (count - 1) + "]")
                         .value("url/receipt-file-" + (count - 1) + ".png"));
             }
+            org.mockito.Mockito.verify(paymentAttachmentStorageService, org.mockito.Mockito.times(count))
+                    .storeReceipt(any(), anyLong(), anyLong(), any());
+        }
+    }
+
+    @Test
+    void unresolvedStoredAttachmentNeverLeaksNullToResponse() throws Exception {
+        PaymentFixture fixture = createPaymentFixture("attachments-null-reference", Currency.ARS);
+        Installment first = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+        BankAccount account = createBankAccount(Currency.ARS);
+        given(paymentAttachmentStorageService.storeReceipt(any(), anyLong(), anyLong(), any())).willReturn("stored.png");
+        // Mockito returns null when the storage resolver has no mapping.
+        var response = mockMvc.perform(multipart("/api/v1/payments")
+                .file(new MockMultipartFile("files", "receipt.png", "image/png", new byte[]{1}))
+                .header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                .param("anchorInstallmentId", String.valueOf(first.getId()))
+                .param("reportedAmount", "50.00").param("reportedPaymentDate", BUSINESS_TODAY.toString())
+                .param("paymentCurrency", "ARS").param("paymentMethod", "BANK_TRANSFER")
+                .param("bankAccountId", String.valueOf(account.getId())))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.fileKey").value(""))
+                .andExpect(jsonPath("$.fileKeys.length()").value(0))
+                .andReturn().getResponse().getContentAsString();
+        Long id = objectMapper.readTree(response).path("submissionId").asLong();
+        assertEquals("stored.png", paymentSubmissionRepository.findById(id).orElseThrow().getFileKey());
+    }
+
+    @Test
+    void multipartLegacyAliasIsDeduplicatedOnlyAgainstFirstModernFile() throws Exception {
+        for (String mode : List.of("legacy", "modern", "overlap", "mixed", "overflow")) {
+            org.mockito.Mockito.reset(paymentAttachmentStorageService);
+            PaymentFixture fixture = createPaymentFixture("attachments-merge-" + mode, Currency.ARS);
+            Installment first = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
+            BankAccount account = createBankAccount(Currency.ARS);
+            long before = paymentSubmissionRepository.count();
+            given(paymentAttachmentStorageService.storeReceipt(any(), anyLong(), anyLong(), any()))
+                    .willAnswer(invocation -> "stored-" + invocation.<org.springframework.web.multipart.MultipartFile>getArgument(0).getOriginalFilename());
+            given(paymentAttachmentStorageService.resolveFileReference(any())).willAnswer(invocation -> "url/" + invocation.getArgument(0));
+            var request = multipart("/api/v1/payments");
+            request.header("Authorization", "Bearer " + fixture.userTokens().accessToken())
+                    .param("anchorInstallmentId", String.valueOf(first.getId()))
+                    .param("reportedAmount", "50.00")
+                    .param("reportedPaymentDate", BUSINESS_TODAY.toString())
+                    .param("paymentCurrency", "ARS").param("paymentMethod", "BANK_TRANSFER")
+                    .param("bankAccountId", String.valueOf(account.getId()));
+            MockMultipartFile firstModern = new MockMultipartFile("files", "first.png", "image/png", new byte[]{1});
+            if (!mode.equals("legacy")) request.file(firstModern);
+            if (mode.equals("overflow")) {
+                for (int index = 1; index < 6; index++) request.file(new MockMultipartFile("files", "next-" + index + ".png", "image/png", new byte[]{2}));
+            }
+            if (mode.equals("legacy") || mode.equals("overlap") || mode.equals("mixed") || mode.equals("overflow")) {
+                request.file(new MockMultipartFile("file", mode.equals("mixed") || mode.equals("overflow") ? "extra.png" : "first.png", "image/png", new byte[]{mode.equals("mixed") || mode.equals("overflow") ? (byte) 3 : (byte) 1}));
+            }
+            if (mode.equals("mixed")) request.file(new MockMultipartFile("files", "second.png", "image/png", new byte[]{2}));
+            int expected = mode.equals("mixed") ? 3 : 1;
+            if (mode.equals("overflow")) {
+                mockMvc.perform(request).andExpect(status().isBadRequest());
+                assertEquals(before, paymentSubmissionRepository.count());
+                org.mockito.Mockito.verify(paymentAttachmentStorageService, org.mockito.Mockito.never()).storeReceipt(any(), anyLong(), anyLong(), any());
+            } else {
+                mockMvc.perform(request).andExpect(status().isCreated())
+                        .andExpect(jsonPath("$.fileKeys.length()").value(expected))
+                        .andExpect(jsonPath("$.fileKeys[0]").value("url/stored-first.png"));
+                org.mockito.Mockito.verify(paymentAttachmentStorageService, org.mockito.Mockito.times(expected)).storeReceipt(any(), anyLong(), anyLong(), any());
+            }
         }
     }
 
@@ -1036,6 +1102,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
         PaymentFixture fixture = createPaymentFixture("attachments-six", Currency.ARS);
         Installment first = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "100.00", InstallmentStatus.YELLOW);
         BankAccount account = createBankAccount(Currency.ARS);
+        long before = paymentSubmissionRepository.count();
         var request = multipart("/api/v1/payments");
         request.header("Authorization", "Bearer " + fixture.userTokens().accessToken())
                 .param("anchorInstallmentId", String.valueOf(first.getId()))
@@ -1046,6 +1113,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                 .param("bankAccountId", String.valueOf(account.getId()));
         IntStream.range(0, 6).forEach(index -> request.file(new MockMultipartFile("files", "receipt.png", "image/png", new byte[]{1})));
         mockMvc.perform(request).andExpect(status().isBadRequest());
+        assertEquals(before, paymentSubmissionRepository.count());
         org.mockito.Mockito.verify(paymentAttachmentStorageService, org.mockito.Mockito.never())
                 .storeReceipt(any(), anyLong(), anyLong(), any());
     }
@@ -1057,13 +1125,15 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
         BankAccount account = createBankAccount(Currency.ARS);
         long before = paymentSubmissionRepository.count();
         given(paymentAttachmentStorageService.storeReceipt(any(), anyLong(), anyLong(), any()))
-                .willReturn("new-file.png")
+                .willReturn("first-new.png", "second-new.png")
                 .willThrow(new IllegalStateException("storage failure"));
-        given(paymentAttachmentStorageService.deleteReceipt("new-file.png"))
+        given(paymentAttachmentStorageService.deleteReceipt("first-new.png"))
                 .willReturn(false, true);
+        given(paymentAttachmentStorageService.deleteReceipt("second-new.png")).willReturn(true);
         List<org.springframework.web.multipart.MultipartFile> files = List.of(
                 new MockMultipartFile("files", "first.png", "image/png", new byte[]{1}),
-                new MockMultipartFile("files", "second.png", "image/png", new byte[]{2}));
+                new MockMultipartFile("files", "second.png", "image/png", new byte[]{2}),
+                new MockMultipartFile("files", "third.png", "image/png", new byte[]{3}));
 
         org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
                 () -> paymentService.registerPaymentWithAttachments(first.getId(), new BigDecimal("50.00"),
@@ -1071,7 +1141,8 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                         account.getId(), files, null, fixture.user().getEmail()));
         assertEquals(before, paymentSubmissionRepository.count());
         org.mockito.Mockito.verify(paymentAttachmentStorageService, org.mockito.Mockito.times(2))
-                .deleteReceipt("new-file.png");
+                .deleteReceipt("first-new.png");
+        org.mockito.Mockito.verify(paymentAttachmentStorageService).deleteReceipt("second-new.png");
     }
 
     @Test

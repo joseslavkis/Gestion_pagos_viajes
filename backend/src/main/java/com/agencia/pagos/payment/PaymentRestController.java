@@ -101,8 +101,22 @@ class PaymentRestController {
     private List<MultipartFile> mergeFiles(List<MultipartFile> files, MultipartFile file) {
         List<MultipartFile> merged = new java.util.ArrayList<>();
         if (files != null) merged.addAll(files);
-        if (file != null && !file.isEmpty()) merged.add(file);
+        // Only the legacy alias of the first modern part is redundant; identical
+        // items within 'files' are independent attachments and must be retained.
+        if (file != null && !file.isEmpty() &&
+                (merged.isEmpty() || !sameFirstPart(merged.get(0), file))) merged.add(file);
         return merged;
+    }
+
+    private boolean sameFirstPart(MultipartFile first, MultipartFile legacy) {
+        if (first == null || first.isEmpty()) return false;
+        try {
+            return java.util.Objects.equals(first.getOriginalFilename(), legacy.getOriginalFilename())
+                    && java.util.Objects.equals(first.getContentType(), legacy.getContentType())
+                    && java.util.Arrays.equals(first.getBytes(), legacy.getBytes());
+        } catch (java.io.IOException exception) {
+            throw new IllegalArgumentException("No se pudo leer el comprobante", exception);
+        }
     }
 
     @PreAuthorize("hasRole('ADMIN')")

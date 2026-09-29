@@ -25,6 +25,7 @@ class PaymentSubmissionAttachmentsSqlTest {
         String readiness = Files.readString(Path.of("sql/payment_submission_attachments_readiness.sql"));
         assertTrue(readiness.contains("a.submission_id = p.id AND a.file_key = p.file_key"));
         assertTrue(readiness.contains("COUNT(*) > 5 OR MIN(position) < 0 OR MAX(position) >= 5"));
+        assertTrue(readiness.contains("to_regclass('payment_submission_attachments')"));
         assertFalse(readiness.contains("MAX(position) <> COUNT(*) - 1"));
     }
 }

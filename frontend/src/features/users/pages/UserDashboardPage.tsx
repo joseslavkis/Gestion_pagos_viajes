@@ -350,6 +350,7 @@ export function UserDashboardPage() {
     availableBankAccounts.length > 0 &&
     selectedBankAccountId != null &&
     fileError == null &&
+    receiptFiles.length >= 1 &&
     receiptFiles.length <= 5;
 
   useEffect(() => {
@@ -461,6 +462,11 @@ export function UserDashboardPage() {
 
     if (selectedBankAccountId == null) {
       toast.error("Selecciona la cuenta donde acreditaste el pago.");
+      return;
+    }
+
+    if (receiptFiles.length === 0 && !fileError) {
+      toast.error("Debés adjuntar al menos un comprobante de pago.");
       return;
     }
 
@@ -774,7 +780,7 @@ export function UserDashboardPage() {
                 <p className={styles.folderHint}>
                   {receiptFiles.length
                     ? `${receiptFiles.length} de 5 archivos seleccionados`
-                    : "Adjuntar comprobantes (opcional, hasta 5)"}
+                    : "Adjuntar comprobantes (hasta 5)"}
                 </p>
               </label>
               {receiptFiles.length > 0 ? (

@@ -575,6 +575,10 @@ public class PaymentService {
             return toSubmissionDTO(saved, toInstallmentDTOs(plan.allocations(), null));
         } catch (RuntimeException exception) {
             cleanupWrittenAttachments(written);
+            if (!written.isEmpty()) {
+                LOGGER.error("Payment attachment storage failed; cleanup remains incomplete for {} newly written attachment(s), which rollback cleanup must retry or reconcile: {}",
+                        written.size(), written);
+            }
             throw exception;
         }
     }
@@ -632,13 +636,28 @@ public class PaymentService {
     }
 
     private List<String> attachmentReferences(PaymentSubmission submission) {
-        if (!submission.getAttachments().isEmpty()) {
-            return submission.getAttachments().stream()
+        if (submission == null) {
+            return List.of();
+        }
+        List<PaymentSubmissionAttachment> children = submission.getAttachments();
+        if (children != null && !children.isEmpty()) {
+            return children.stream()
+                    .filter(java.util.Objects::nonNull)
                     .map(PaymentSubmissionAttachment::getFileKey)
-                    .map(this::resolveFileReference).toList();
+                    .filter(key -> key != null && !key.isBlank())
+                    .map(this::resolveFileReference)
+                    .filter(reference -> reference != null && !reference.isBlank()).toList();
         }
         String legacy = submission.getFileKey();
-        return legacy == null || legacy.isBlank() ? List.of() : List.of(resolveFileReference(legacy));
+        return attachmentReferences(legacy);
+    }
+
+    private List<String> attachmentReferences(String storedKey) {
+        if (storedKey == null || storedKey.isBlank()) {
+            return List.of();
+        }
+        String reference = resolveFileReference(storedKey);
+        return reference == null || reference.isBlank() ? List.of() : List.of(reference);
     }
 
     private String primaryAttachmentReference(PaymentSubmission submission) {
@@ -1352,6 +1371,7 @@ public class PaymentService {
     }
 
     private PaymentInstallmentHistoryDTO toInstallmentHistoryDTO(PaymentReceipt receipt) {
+        List<String> references = attachmentReferences(resolveFileKey(receipt));
         return new PaymentInstallmentHistoryDTO(
                 receipt.getId(),
                 null,
@@ -1370,12 +1390,12 @@ public class PaymentService {
                 null,
                 receipt.getPaymentMethod(),
                 toHistoryStatus(receipt.getStatus()),
-                resolveFileReference(resolveFileKey(receipt)),
+                references.isEmpty() ? "" : references.get(0),
                 receipt.getAdminObservation(),
                 resolveBankAccountId(receipt),
                 resolveBankAccountDisplayName(receipt),
                 resolveBankAccountAlias(receipt),
-                resolveFileKey(receipt).isBlank() ? List.of() : List.of(resolveFileReference(resolveFileKey(receipt)))
+                references
         );
     }
 
@@ -1465,6 +1485,7 @@ public class PaymentService {
 
         Installment installment = firstReceipt.getInstallment();
         Student student = installment.getStudent();
+        List<String> references = attachmentReferences(batch != null ? batch.getFileKey() : firstReceipt.getFileKey());
         return new PaymentSubmissionDTO(
                 batch != null ? -batch.getId() : -firstReceipt.getId(),
                 status,
@@ -1483,7 +1504,7 @@ public class PaymentService {
                 null,
                 null,
                 batch != null ? batch.getPaymentMethod() : firstReceipt.getPaymentMethod(),
-                resolveFileReference(batch != null ? batch.getFileKey() : firstReceipt.getFileKey()),
+                references.isEmpty() ? "" : references.get(0),
                 sortedReceipts.stream()
                         .map(PaymentReceipt::getAdminObservation)
                         .filter(value -> value != null && !value.isBlank())
@@ -1505,8 +1526,7 @@ public class PaymentService {
                 StudentNameFormatter.displayName(student),
                 student != null ? student.getDni() : null,
                 sortedReceipts.stream().map(this::toLegacyInstallmentDTO).toList(),
-                (batch != null ? batch.getFileKey() : firstReceipt.getFileKey()).isBlank()
-                        ? List.of() : List.of(resolveFileReference(batch != null ? batch.getFileKey() : firstReceipt.getFileKey()))
+                references
         );
     }
 
@@ -1603,7 +1623,11 @@ public class PaymentService {
     }
 
     private String resolveFileReference(String storedValue) {
-        return paymentAttachmentStorageService.resolveFileReference(storedValue);
+        if (storedValue == null || storedValue.isBlank()) {
+            return "";
+        }
+        String reference = paymentAttachmentStorageService.resolveFileReference(storedValue);
+        return reference == null || reference.isBlank() ? "" : reference;
     }
 
     private Long resolveBankAccountId(PaymentReceipt receipt) {

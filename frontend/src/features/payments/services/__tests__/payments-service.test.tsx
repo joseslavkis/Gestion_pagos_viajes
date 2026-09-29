@@ -148,7 +148,7 @@ describe("payments-service", () => {
     });
     expect(fields?.getAll("files")).toHaveLength(2);
     expect((fields?.getAll("files")[1] as File).name).toBe("second.pdf");
-    expect(fields?.get("file")).toBeNull();
+    expect((fields?.get("file") as File).name).toBe("first.png");
     await waitFor(() => expect(result.current.data?.fileKeys).toEqual(["first", "second"]));
   });
 

@@ -133,7 +133,16 @@ describe("UserDashboardPage", () => {
     renderWithProviders(<UserDashboardPage />);
     const input = document.querySelector("input[type='file']") as HTMLInputElement;
     expect(input).toHaveAttribute("multiple");
-    expect(await screen.findByText("Adjuntar comprobantes (opcional, hasta 5)")).toBeInTheDocument();
+    expect(await screen.findByText("Adjuntar comprobantes (hasta 5)")).toBeInTheDocument();
+    await screen.findByText("Primera cuota pendiente", { exact: false });
+    const submit = screen.getByRole("button", { name: "Enviar comprobante" });
+    expect(submit).toBeDisabled();
+    fireEvent.submit(submit.closest("form") as HTMLFormElement);
+    expect(await screen.findByText("Debés adjuntar al menos un comprobante de pago.")).toBeInTheDocument();
+    fireEvent.change(input, {
+      target: { files: [new File(["x"], "receipt.png", { type: "image/png" })] },
+    });
+    await waitFor(() => expect(submit).not.toBeDisabled());
     const files = Array.from(
       { length: 5 },
       (_, index) => new File(["x"], `receipt-${index}.png`, { type: "image/png" }),
@@ -141,8 +150,10 @@ describe("UserDashboardPage", () => {
     fireEvent.change(input, { target: { files } });
     expect(screen.getByText("5 de 5 archivos seleccionados")).toBeInTheDocument();
     expect(screen.getByText("receipt-4.png")).toBeInTheDocument();
+    await waitFor(() => expect(submit).not.toBeDisabled());
     fireEvent.change(input, { target: { files: [...files, new File(["x"], "sixth.png", { type: "image/png" })] } });
     expect(screen.getByRole("alert")).toHaveTextContent("hasta 5 comprobantes");
+    expect(submit).toBeDisabled();
     fireEvent.change(input, {
       target: { files: [new File([new Uint8Array(5 * 1024 * 1024 + 1)], "big.pdf", { type: "application/pdf" })] },
     });

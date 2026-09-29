@@ -38,6 +38,9 @@ export function useRegisterPayment() {
       formData.append("paymentCurrency", payload.paymentCurrency);
       formData.append("paymentMethod", payload.paymentMethod);
       formData.append("bankAccountId", String(payload.bankAccountId));
+      if (payload.files?.[0]) {
+        formData.append("file", payload.files[0]);
+      }
       for (const file of payload.files ?? []) {
         formData.append("files", file);
       }
