@@ -7,9 +7,8 @@ import { useBankAccounts } from "@/features/bank-accounts/services/bank-accounts
 import type { BankAccountDTO } from "@/features/bank-accounts/types/bank-accounts-dtos";
 import { Folder } from "@/features/payments/components/Folder";
 import { type ReceiptSuccessData, ReceiptSuccessScreen } from "@/features/payments/components/ReceiptSuccessScreen";
-import { usePaymentCalculationForm } from "@/features/payments/hooks/use-payment-calculation-form";
-import { useMyInstallments, useRegisterPayment } from "@/features/payments/services/payments-service";
-import { normalizePaymentMoneyInput } from "@/features/payments/types/decimal-strings";
+import { useMyInstallments, usePaymentCalculation, useRegisterPayment } from "@/features/payments/services/payments-service";
+import { centsToMoney, moneyCents, receiptSubtotals, type ReceiptAmount } from "@/features/payments/types/receipt-amounts";
 import type {
   Currency,
   PaymentCalculationResponseDTO,
@@ -257,7 +256,14 @@ export function UserDashboardPage() {
   const [reportedPaymentDate, setReportedPaymentDate] = useState(getTodayDate);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("BANK_TRANSFER");
   const [selectedBankAccountId, setSelectedBankAccountId] = useState<number | null>(null);
-  const [receiptFiles, setReceiptFiles] = useState<File[]>([]);
+  const [receipts, setReceipts] = useState<ReceiptAmount[]>([]);
+  const nextReceiptId = useRef(0);
+  const [receiptRevision, setReceiptRevision] = useState(0);
+  const [confirmation, setConfirmation] = useState<{ key: string; revision: number } | null>(null);
+  const nextConfirmationRevision = useRef(0);
+  const authorityRevision = useRef(0);
+  const [isVerifyingConversion, setIsVerifyingConversion] = useState(false);
+  const [finalExpiresAt, setFinalExpiresAt] = useState(0);
   const [fileError, setFileError] = useState<string | null>(null);
   const [receiptPreviewUrl, setReceiptPreviewUrl] = useState<string | null>(null);
   const [closeFolderSignal, setCloseFolderSignal] = useState(false);
@@ -296,37 +302,124 @@ export function UserDashboardPage() {
   const selectedGroupHasPendingReview = selectedGroup != null ? groupHasPendingReview(selectedGroup) : false;
   const selectableInstallments = selectedGroup != null ? getPayableInstallments(selectedGroup) : [];
   const selectedTripHasPending = selectableInstallments.length > 0;
-  const paymentFormContext = useMemo(
-    () =>
-      selectedInstallment != null && !selectedGroupHasPendingReview
-        ? {
-            anchorInstallmentId: selectedInstallment.installmentId,
-            tripCurrency: selectedInstallment.tripCurrency,
-            remainingAmount: selectedInstallmentRemaining,
-            reportedPaymentDate,
-          }
-        : null,
-    [selectedGroupHasPendingReview, selectedInstallment, selectedInstallmentRemaining, reportedPaymentDate],
-  );
-  const {
-    amountInput: reportedAmountInput,
-    paymentCurrency,
-    calculation: paymentCalculation,
-    calculationError,
-    amountCurrencyMismatch,
-    isCalculating: isPaymentCalculationLoading,
-    setAmountInput: setReportedAmountInput,
-    setPaymentCurrency,
-    setReportedPaymentDate: invalidatePaymentCalculationDate,
-  } = usePaymentCalculationForm(paymentFormContext);
-  const reportedAmountDecimal = normalizePaymentMoneyInput(reportedAmountInput);
-  const hasPositiveReportedAmount = reportedAmountDecimal != null && /[1-9]/.test(reportedAmountDecimal);
-  const readyPaymentCalculation = paymentCalculation?.status === "READY" ? paymentCalculation : null;
-  const calculationStatusMessage = paymentCalculation ? getCalculationStatusMessage(paymentCalculation) : null;
+  const tripCurrency = selectedInstallment?.tripCurrency ?? "ARS";
+  const oppositeCurrency: Currency = tripCurrency === "ARS" ? "USD" : "ARS";
+  const subtotals = receiptSubtotals(receipts);
+  const tripSubtotal = subtotals?.[tripCurrency] ?? null;
+  const oppositeSubtotal = subtotals?.[oppositeCurrency] ?? null;
+  const anchorId = selectedGroupHasPendingReview ? null : selectedInstallment?.installmentId ?? null;
+  const auxiliaryPayload = anchorId != null && oppositeSubtotal != null && moneyCents(oppositeSubtotal) != null
+    ? { anchorInstallmentId: anchorId, paymentCurrency: oppositeCurrency, reportedPaymentDate,
+        intent: "MANUAL" as const, reportedAmount: oppositeSubtotal }
+    : null;
+  const auxiliaryAnchorId = auxiliaryPayload?.anchorInstallmentId;
+  const auxiliaryAmount = auxiliaryPayload?.reportedAmount;
+  const auxiliaryDate = auxiliaryPayload?.reportedPaymentDate;
+  const auxiliary = usePaymentCalculation(auxiliaryPayload, {
+    sourceCurrency: oppositeCurrency, sourceAmount: oppositeSubtotal ?? "", intentRevision: receiptRevision,
+  });
+  const auxiliaryReady = auxiliaryPayload != null && !auxiliary.isFetching && auxiliary.error == null &&
+    auxiliary.dataUpdatedAt > 0 && Date.now() - auxiliary.dataUpdatedAt < 240_000 &&
+    auxiliary.data?.status === "READY" && auxiliary.data.anchorInstallmentId === anchorId &&
+    auxiliary.data.paymentCurrency === oppositeCurrency && auxiliary.data.tripCurrency === tripCurrency &&
+    auxiliary.data.reportedPaymentDate === reportedPaymentDate &&
+    moneyCents(auxiliary.data.reportedAmount ?? "") === moneyCents(oppositeSubtotal ?? "")
+      ? auxiliary.data : null;
+  const convertedCents = auxiliaryReady ? moneyCents(auxiliaryReady.amountInTripCurrency ?? "") : null;
+  const tripCents = tripSubtotal != null ? moneyCents(tripSubtotal) ?? 0n : null;
+  const total = subtotals != null && tripCents != null &&
+    (oppositeSubtotal === "0.00" || convertedCents != null)
+    ? centsToMoney(tripCents + (convertedCents ?? 0n)) : null;
+  const currentKey = JSON.stringify([anchorId, tripCurrency, reportedPaymentDate, receiptRevision, total]);
+  const contextKey = JSON.stringify([anchorId, tripCurrency, reportedPaymentDate, receiptRevision,
+    tripSubtotal, oppositeSubtotal]);
+  const contextKeyRef = useRef(contextKey);
+  contextKeyRef.current = contextKey;
+  const isConfirmed = confirmation?.key === currentKey && total != null;
+  const finalPayload = isConfirmed && anchorId != null && total != null
+    ? { anchorInstallmentId: anchorId, paymentCurrency: tripCurrency, reportedPaymentDate,
+        intent: "MANUAL" as const, reportedAmount: total }
+    : null;
+  const finalCalculation = usePaymentCalculation(finalPayload, {
+    sourceCurrency: tripCurrency, sourceAmount: total ?? "", intentRevision: confirmation?.revision ?? 0,
+  });
+  const readyPaymentCalculation = finalPayload != null && !finalCalculation.isFetching &&
+    finalCalculation.error == null && finalCalculation.data?.status === "READY" &&
+    finalCalculation.data.previewToken && finalCalculation.data.anchorInstallmentId === anchorId &&
+    finalCalculation.data.paymentCurrency === tripCurrency && finalCalculation.data.tripCurrency === tripCurrency &&
+    finalCalculation.data.reportedPaymentDate === reportedPaymentDate &&
+    moneyCents(finalCalculation.data.reportedAmount ?? "") === moneyCents(total ?? "")
+      ? finalCalculation.data : null;
+  const calculationStatusMessage = finalCalculation.data && isConfirmed
+    ? getCalculationStatusMessage(finalCalculation.data) : auxiliary.data && auxiliaryPayload
+      ? getCalculationStatusMessage(auxiliary.data) : null;
+
+  useEffect(() => {
+    if (!readyPaymentCalculation) return;
+    // Expire locally before the server's 300-second token lifetime; never reuse a cached token.
+    const expiresAt = Date.now() + 240_000;
+    const timeout = window.setTimeout(() => setFinalExpiresAt(0), 240_000);
+    setFinalExpiresAt(expiresAt);
+    return () => window.clearTimeout(timeout);
+  }, [readyPaymentCalculation]);
+
+  useEffect(() => {
+    if (auxiliaryAnchorId == null || auxiliary.dataUpdatedAt === 0) return;
+    const remaining = Math.max(0, auxiliary.dataUpdatedAt + 240_000 - Date.now());
+    const timeout = window.setTimeout(() => {
+      authorityRevision.current += 1;
+      setConfirmation(null);
+      setFinalExpiresAt(0);
+      setReceiptRevision((revision) => revision + 1);
+    }, remaining);
+    return () => window.clearTimeout(timeout);
+  }, [auxiliaryAnchorId, auxiliaryAmount, auxiliaryDate, auxiliary.dataUpdatedAt]);
+
+  const revokeConfirmation = () => {
+    authorityRevision.current += 1;
+    setIsVerifyingConversion(false);
+    setConfirmation(null);
+    setFinalExpiresAt(0);
+    setReceiptRevision((revision) => revision + 1);
+  };
+
+  const handleConfirmationChange = async (checked: boolean) => {
+    const authority = ++authorityRevision.current;
+    setConfirmation(null);
+    setFinalExpiresAt(0);
+    if (!checked || total == null) return;
+    const key = currentKey;
+    const context = contextKey;
+    const confirmedCents = moneyCents(total);
+    const revision = ++nextConfirmationRevision.current;
+    if (auxiliaryPayload != null) {
+      setIsVerifyingConversion(true);
+      // A final same-currency calculation cannot validate the FX equivalence.
+      // Re-fetch it before granting confirmation, even when the displayed quote is recent.
+      try {
+        const result = await auxiliary.refetch();
+        if (authorityRevision.current !== authority || contextKeyRef.current !== context ||
+            result.isError || result.data?.status !== "READY" ||
+            result.data.anchorInstallmentId !== auxiliaryPayload.anchorInstallmentId ||
+            result.data.paymentCurrency !== oppositeCurrency || result.data.tripCurrency !== tripCurrency ||
+            result.data.reportedPaymentDate !== reportedPaymentDate ||
+            moneyCents(result.data.reportedAmount ?? "") !== moneyCents(oppositeSubtotal ?? "")) return;
+        const newEquivalent = moneyCents(result.data.amountInTripCurrency ?? "");
+        const originalCents = tripSubtotal === "0.00" ? 0n : moneyCents(tripSubtotal ?? "");
+        if (newEquivalent == null || originalCents == null ||
+            confirmedCents !== originalCents + newEquivalent) return;
+      } finally {
+        if (authorityRevision.current === authority) setIsVerifyingConversion(false);
+      }
+    }
+    if (authorityRevision.current === authority && contextKeyRef.current === context) {
+      setConfirmation({ key, revision });
+    }
+  };
 
   const availableBankAccounts = useMemo(
-    () => bankAccountItems.filter((account) => account.currency === paymentCurrency),
-    [bankAccountItems, paymentCurrency],
+    () => bankAccountItems.filter((account) => account.currency === tripCurrency),
+    [bankAccountItems, tripCurrency],
   );
 
   const groupedBankAccounts = useMemo(
@@ -341,17 +434,17 @@ export function UserDashboardPage() {
     selectedTripHasPending &&
     !selectedGroupHasPendingReview &&
     !registerPayment.isPending &&
-    !isPaymentCalculationLoading &&
-    calculationError == null &&
+    isConfirmed &&
+    finalExpiresAt > Date.now() &&
     readyPaymentCalculation != null &&
     readyPaymentCalculation.previewToken != null &&
-    hasPositiveReportedAmount &&
+    total != null &&
     !isBankAccountsLoading &&
     availableBankAccounts.length > 0 &&
     selectedBankAccountId != null &&
     fileError == null &&
-    receiptFiles.length >= 1 &&
-    receiptFiles.length <= 5;
+    receipts.length >= 1 &&
+    receipts.length <= 5;
 
   useEffect(() => {
     if (groups.length === 0) {
@@ -426,8 +519,9 @@ export function UserDashboardPage() {
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? []);
+    revokeConfirmation();
     const error =
-      files.length > 5
+      files.length + receipts.length > 5
         ? "Podés adjuntar hasta 5 comprobantes."
         : files.some(
               (file) =>
@@ -440,15 +534,38 @@ export function UserDashboardPage() {
       URL.revokeObjectURL(receiptPreviewUrl);
     }
     setFileError(error);
-    setReceiptFiles(error ? [] : files);
-    const preview = !error && files[0]?.type.startsWith("image/") ? files[0] : null;
+    if (!error) setReceipts((current) => [...current, ...files.map((file) => ({
+      id: ++nextReceiptId.current, file, currency: tripCurrency, amount: "",
+    }))]);
+    const preview = !error && (receipts[0]?.file ?? files[0])?.type.startsWith("image/")
+      ? (receipts[0]?.file ?? files[0]) : null;
     setReceiptPreviewUrl(preview ? URL.createObjectURL(preview) : null);
     setCloseFolderSignal(true);
     setTimeout(() => setCloseFolderSignal(false), 200);
+    event.target.value = "";
+  };
+
+  const updateReceipt = (id: number, update: Partial<Pick<ReceiptAmount, "amount" | "currency">>) => {
+    revokeConfirmation();
+    setReceipts((current) => current.map((receipt) => receipt.id === id ? { ...receipt, ...update } : receipt));
+  };
+
+  const removeReceipt = (id: number) => {
+    revokeConfirmation();
+    setReceipts((current) => current.filter((receipt) => receipt.id !== id));
+    if (receipts[0]?.id === id) {
+      setReceiptPreviewUrl(null);
+    }
+    setFileError(null);
   };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+
+    if (receipts.length === 0 && !fileError) {
+      toast.error("Debés adjuntar al menos un comprobante de pago.");
+      return;
+    }
 
     if (selectedAnchorInstallmentId == null) {
       toast.error("Seleccioná una inscripción con cuotas pendientes antes de enviar el comprobante.");
@@ -465,23 +582,13 @@ export function UserDashboardPage() {
       return;
     }
 
-    if (receiptFiles.length === 0 && !fileError) {
-      toast.error("Debés adjuntar al menos un comprobante de pago.");
-      return;
-    }
-
-    if (fileError || receiptFiles.length > 5) {
+    if (fileError || receipts.length > 5) {
       toast.error(fileError ?? "Podés adjuntar hasta 5 comprobantes.");
       return;
     }
 
-    if (calculationError || !readyPaymentCalculation || readyPaymentCalculation.previewToken == null) {
+    if (!canSubmitPayment || !readyPaymentCalculation || readyPaymentCalculation.previewToken == null) {
       toast.error("Todavía no pudimos calcular la imputación del pago. Reintentá en unos segundos.");
-      return;
-    }
-
-    if (!hasPositiveReportedAmount || reportedAmountDecimal == null) {
-      toast.error("Ingresá un monto válido antes de enviar el comprobante.");
       return;
     }
 
@@ -491,7 +598,7 @@ export function UserDashboardPage() {
     const installmentsLabelSnapshot = formatInstallmentsLabel(readyPaymentCalculation.installments);
     const amountSnapshot = formatAmountByCurrency(
       readyPaymentCalculation.paymentCurrency,
-      readyPaymentCalculation.reportedAmount ?? reportedAmountDecimal,
+      readyPaymentCalculation.reportedAmount ?? total ?? "0",
     );
     const dateSnapshot = formatReportedDate(reportedPaymentDate);
     const methodSnapshot = paymentMethod;
@@ -499,17 +606,17 @@ export function UserDashboardPage() {
       availableBankAccounts.find((a) => a.id === selectedBankAccountId)?.accountLabel ??
       availableBankAccounts.find((a) => a.id === selectedBankAccountId)?.bankName ??
       "";
-    const fileNameSnapshot = receiptFiles.map((file) => file.name).join(", ") || "Sin archivos";
+    const fileNameSnapshot = receipts.map(({ file }) => file.name).join(", ") || "Sin archivos";
 
     try {
       await registerPayment.mutateAsync({
         anchorInstallmentId: selectedAnchorInstallmentId,
-        reportedAmount: reportedAmountDecimal,
+        reportedAmount: total!,
         reportedPaymentDate,
-        paymentCurrency,
+        paymentCurrency: tripCurrency,
         paymentMethod,
         bankAccountId: selectedBankAccountId,
-        files: receiptFiles,
+        files: receipts.map(({ file }) => file),
         previewToken: readyPaymentCalculation.previewToken,
       });
 
@@ -517,7 +624,8 @@ export function UserDashboardPage() {
       setReportedPaymentDate(getTodayDate());
       setPaymentMethod("BANK_TRANSFER");
       setSelectedBankAccountId(null);
-      setReceiptFiles([]);
+      setReceipts([]);
+      revokeConfirmation();
       setFileError(null);
       if (receiptPreviewUrl) URL.revokeObjectURL(receiptPreviewUrl);
       setReceiptPreviewUrl(null);
@@ -705,7 +813,10 @@ export function UserDashboardPage() {
                 <span className={styles.label}>Seleccioná el viaje</span>
                 <select
                   value={selectedGroupKey ?? ""}
-                  onChange={(event) => setSelectedGroupKey(event.target.value === "" ? null : event.target.value)}
+                  onChange={(event) => {
+                    revokeConfirmation();
+                    setSelectedGroupKey(event.target.value === "" ? null : event.target.value);
+                  }}
                   className={styles.select}
                 >
                   <option value="">Elegí una opción</option>
@@ -756,7 +867,7 @@ export function UserDashboardPage() {
                   type="file"
                   accept="image/jpeg,image/png,image/webp,application/pdf"
                   multiple
-                  style={{ display: "none" }}
+                  className={styles.fileInput}
                   onChange={handleFileChange}
                 />
                 <Folder
@@ -778,15 +889,36 @@ export function UserDashboardPage() {
                   }
                 />
                 <p className={styles.folderHint}>
-                  {receiptFiles.length
-                    ? `${receiptFiles.length} de 5 archivos seleccionados`
+                  {receipts.length
+                    ? `${receipts.length} de 5 archivos seleccionados · agregar más`
                     : "Adjuntar comprobantes (hasta 5)"}
                 </p>
               </label>
-              {receiptFiles.length > 0 ? (
-                <ul className={styles.helperText}>
-                  {receiptFiles.map((file, index) => (
-                    <li key={`${index}-${file.name}`}>{file.name}</li>
+              {receipts.length > 0 ? (
+                <ul className={styles.receiptList}>
+                  {receipts.map((receipt) => (
+                    <li key={receipt.id} className={styles.receiptItem}>
+                      <strong>{receipt.file.name}</strong>
+                      <label className={styles.formField}>
+                        <span className={styles.label}>Moneda de {receipt.file.name}</span>
+                        <select className={styles.select} value={receipt.currency}
+                          onChange={(event) => updateReceipt(receipt.id, { currency: event.target.value as Currency })}>
+                          <option value="ARS">Pesos (ARS)</option>
+                          <option value="USD">Dólares (USD)</option>
+                        </select>
+                      </label>
+                      <label className={styles.formField}>
+                        <span className={styles.label}>Monto de {receipt.file.name}</span>
+                        <input className={styles.input} type="text" inputMode="decimal" value={receipt.amount}
+                          aria-invalid={receipt.amount !== "" && moneyCents(receipt.amount) == null}
+                          onChange={(event) => updateReceipt(receipt.id, { amount: event.target.value })} />
+                      </label>
+                      {receipt.amount !== "" && moneyCents(receipt.amount) == null ? (
+                        <span className={styles.errorText}>Ingresá un monto positivo con hasta dos decimales.</span>
+                      ) : null}
+                      <button type="button" className={styles.removeReceipt} onClick={() => removeReceipt(receipt.id)}
+                        aria-label={`Quitar ${receipt.file.name}`}>Quitar</button>
+                    </li>
                   ))}
                 </ul>
               ) : null}
@@ -796,19 +928,27 @@ export function UserDashboardPage() {
                 </p>
               ) : null}
 
-              <label className={styles.formField}>
-                <span className={styles.label}>Monto a reportar</span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  inputMode="decimal"
-                  value={reportedAmountInput}
-                  onChange={(event) => setReportedAmountInput(event.target.value)}
-                  className={styles.input}
-                  disabled={!selectedTripHasPending || selectedGroupHasPendingReview}
-                />
-              </label>
+              {subtotals ? (
+                <div className={styles.selectedInfoBox}>
+                  <p>Subtotal ARS: {subtotals.ARS} · Subtotal USD: {subtotals.USD}</p>
+                  {oppositeSubtotal !== "0.00" && auxiliaryReady && convertedCents != null ? (
+                    <p>Equivalente en {tripCurrency} calculado por el servidor: {auxiliaryReady.amountInTripCurrency}</p>
+                  ) : null}
+                  <strong>Total en {tripCurrency}: {total ?? "Pendiente de cálculo"}</strong>
+                </div>
+              ) : receipts.length > 0 ? (
+                <p className={styles.helperWarning}>Ingresá un monto válido para cada comprobante.</p>
+              ) : null}
+              {total != null && !selectedGroupHasPendingReview ? (
+                <label className={styles.confirmation}>
+                  <input type="checkbox" checked={isConfirmed} disabled={isVerifyingConversion}
+                    onChange={(event) => { void handleConfirmationChange(event.target.checked); }} />
+                  Confirmo el total de {total} {tripCurrency} para estos comprobantes.
+                </label>
+              ) : null}
+              {isVerifyingConversion ? (
+                <p className={styles.helperText}>Verificando la cotización antes de confirmar el total...</p>
+              ) : null}
               {readyPaymentCalculation ? (
                 <div className={styles.selectedInfoBox}>
                   <div className={styles.selectedInfoHeader}>
@@ -816,7 +956,7 @@ export function UserDashboardPage() {
                       Se imputa en {formatInstallmentsLabel(readyPaymentCalculation.installments)} · monto reportado{" "}
                       {formatAmountByCurrency(
                         readyPaymentCalculation.paymentCurrency,
-                        readyPaymentCalculation.reportedAmount ?? reportedAmountInput,
+                        readyPaymentCalculation.reportedAmount ?? total ?? "0",
                       )}
                     </span>
                     <span className={`${styles.statusBadge} ${styles.statusgreen}`}>Monto libre</span>
@@ -854,18 +994,12 @@ export function UserDashboardPage() {
                   {calculationStatusMessage}
                 </p>
               ) : null}
-              {amountCurrencyMismatch ? (
+              {auxiliary.error || (isConfirmed && finalCalculation.error) ? (
                 <p className={styles.errorText} role="alert">
-                  El monto ingresado corresponde a {amountCurrencyMismatch.sourceCurrency}. Ingresalo nuevamente para
-                  calcular en {amountCurrencyMismatch.paymentCurrency}.
+                  No pudimos calcular el monto. Revisá los comprobantes o reintentá.
                 </p>
               ) : null}
-              {calculationError ? (
-                <p className={styles.errorText} role="alert">
-                  No pudimos calcular el monto. Conservamos lo que ingresaste para que puedas reintentar.
-                </p>
-              ) : null}
-              {isPaymentCalculationLoading && !calculationError ? (
+              {(auxiliary.isFetching || finalCalculation.isFetching) ? (
                 <p className={styles.helperText}>Calculando el monto con el servidor...</p>
               ) : null}
 
@@ -883,7 +1017,7 @@ export function UserDashboardPage() {
                   value={reportedPaymentDate}
                   onChange={(event) => {
                     const nextDate = event.target.value;
-                    invalidatePaymentCalculationDate(nextDate);
+                    revokeConfirmation();
                     setReportedPaymentDate(nextDate);
                   }}
                   className={styles.input}
@@ -892,20 +1026,7 @@ export function UserDashboardPage() {
                 />
               </label>
 
-              <label className={styles.formField}>
-                <span className={styles.label}>Moneda en que pagaste</span>
-                <select
-                  value={paymentCurrency}
-                  onChange={(event) => setPaymentCurrency(event.target.value as Currency)}
-                  className={styles.select}
-                  disabled={!selectedTripHasPending || selectedGroupHasPendingReview}
-                >
-                  <option value="ARS">Pesos (ARS)</option>
-                  <option value="USD">Dólares (USD)</option>
-                </select>
-              </label>
-
-              {selectedInstallment && paymentCurrency !== selectedInstallment.tripCurrency ? (
+              {oppositeSubtotal != null && oppositeSubtotal !== "0.00" ? (
                 <p className={styles.helperWarning}>
                   Se usará la cotización oficial correspondiente a la fecha informada. Si ese día no tiene cotización,
                   se usará la última disponible anterior.
