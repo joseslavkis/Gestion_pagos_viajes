@@ -2,6 +2,7 @@ import { Link } from "wouter";
 
 import { CommonLayout } from "@/components/CommonLayout/CommonLayout";
 import { RequestState } from "@/components/ui/RequestState/RequestState";
+import { AttachmentList } from "@/features/payments/components/AttachmentList";
 import { useAdminUserDetail } from "@/features/users/services/users-service";
 
 import styles from "./AdminUserDetailPage.module.css";
@@ -164,18 +165,12 @@ export function AdminUserDetailPage({ userId }: AdminUserDetailPageProps) {
                             </div>
                           </div>
                           {payment.installments.length > 0 ? (
-                            <p className={styles.observation}>
-                              Imputación: {formatInstallments(payment.installments)}
-                            </p>
+                            <p className={styles.observation}>Imputación: {formatInstallments(payment.installments)}</p>
                           ) : null}
                           {payment.adminObservation ? (
                             <p className={styles.observation}>Observación: {payment.adminObservation}</p>
                           ) : null}
-                          {payment.fileKey ? (
-                            <a href={payment.fileKey} target="_blank" rel="noreferrer" className={styles.attachmentLink}>
-                              Ver comprobante adjunto
-                            </a>
-                          ) : null}
+                          <AttachmentList receipt={payment} className={styles.attachmentLink} />
                         </article>
                       ))}
                     </div>

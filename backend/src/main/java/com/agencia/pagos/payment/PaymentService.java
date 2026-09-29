@@ -46,9 +46,13 @@ import com.agencia.pagos.trip.InstallmentUiStatus;
 import com.agencia.pagos.user.StudentNameFormatter;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
@@ -67,6 +71,8 @@ import java.util.stream.Collectors;
 @Service
 @Transactional
 public class PaymentService {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(PaymentService.class);
 
     private static final String LEGACY_RECONCILIATION_OBSERVATION =
             "Aprobación conciliada con los valores históricos v1 persistidos";
@@ -408,6 +414,26 @@ public class PaymentService {
             String previewToken,
             String email
     ) {
+        return registerPaymentWithAttachments(anchorInstallmentId, reportedAmount, reportedPaymentDate, paymentCurrency,
+                paymentMethod, bankAccountId, file == null ? List.of() : List.of(file), previewToken, email);
+    }
+
+    public PaymentSubmissionDTO registerPaymentWithAttachments(
+            Long anchorInstallmentId,
+            BigDecimal reportedAmount,
+            LocalDate reportedPaymentDate,
+            Currency paymentCurrency,
+            PaymentMethod paymentMethod,
+            Long bankAccountId,
+            List<MultipartFile> files,
+            String previewToken,
+            String email
+    ) {
+        if (files != null && files.size() > 5) {
+            throw new IllegalArgumentException("Se permiten hasta 5 comprobantes por pago");
+        }
+        List<MultipartFile> attachments = files == null ? List.of() : files.stream()
+                .filter(file -> file != null && !file.isEmpty()).toList();
         BigDecimal normalizedReportedAmount = paymentMoneyPolicy.requirePositiveMoney(reportedAmount, "reportedAmount");
         paymentBusinessDatePolicy.requireNotFuture(reportedPaymentDate);
         User user = getUserByEmail(email);
@@ -454,7 +480,7 @@ public class PaymentService {
                 reportedPaymentDate,
                 paymentCurrency,
                 paymentMethod,
-                file,
+                attachments,
                 quote,
                 intent
         );
@@ -467,7 +493,7 @@ public class PaymentService {
             LocalDate reportedPaymentDate,
             Currency paymentCurrency,
             PaymentMethod paymentMethod,
-            MultipartFile file,
+            List<MultipartFile> files,
             ExchangeRateQuote quote,
             PaymentCalculationIntent intent
     ) {
@@ -516,17 +542,60 @@ public class PaymentService {
         submission.setCalculationVersion(PaymentPreviewTokenService.CURRENT_CALCULATION_VERSION);
         submission.setPaymentMethod(paymentMethod);
         submission.setStatus(PaymentSubmissionStatus.PENDING);
-        submission.setFileKey(paymentAttachmentStorageService.storeReceipt(
-                file,
-                selection.anchorInstallment().getTrip().getId(),
-                selection.anchorInstallment().getUser().getId(),
-                selection.anchorInstallment().getStudent() != null
-                        ? selection.anchorInstallment().getStudent().getId()
-                        : null
-        ));
+        List<String> written = new ArrayList<>();
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCompletion(int status) {
+                    if (status != STATUS_COMMITTED) {
+                        cleanupWrittenAttachments(written);
+                        if (!written.isEmpty()) {
+                            LOGGER.error("Payment submission rolled back but {} attachment(s) could not be deleted; manual reconciliation required: {}",
+                                    written.size(), written);
+                        }
+                    }
+                }
+            });
+        }
+        try {
+            for (MultipartFile file : files) {
+                String key = paymentAttachmentStorageService.storeReceipt(file,
+                        selection.anchorInstallment().getTrip().getId(),
+                        selection.anchorInstallment().getUser().getId(),
+                        selection.anchorInstallment().getStudent() != null
+                                ? selection.anchorInstallment().getStudent().getId() : null);
+                if (key.isEmpty()) {
+                    throw new IllegalStateException("No se pudo guardar el comprobante");
+                }
+                written.add(key);
+                submission.addAttachment(key);
+            }
+            submission.setFileKey(written.isEmpty() ? "" : written.get(0));
+            PaymentSubmission saved = paymentSubmissionRepository.save(submission);
+            return toSubmissionDTO(saved, toInstallmentDTOs(plan.allocations(), null));
+        } catch (RuntimeException exception) {
+            cleanupWrittenAttachments(written);
+            if (!written.isEmpty()) {
+                LOGGER.error("Payment attachment storage failed; cleanup remains incomplete for {} newly written attachment(s), which rollback cleanup must retry or reconcile: {}",
+                        written.size(), written);
+            }
+            throw exception;
+        }
+    }
 
-        PaymentSubmission saved = paymentSubmissionRepository.save(submission);
-        return toSubmissionDTO(saved, toInstallmentDTOs(plan.allocations(), null));
+    private void cleanupWrittenAttachments(List<String> written) {
+        for (var iterator = written.iterator(); iterator.hasNext();) {
+            String key = iterator.next();
+            try {
+                if (paymentAttachmentStorageService.deleteReceipt(key)) {
+                    iterator.remove();
+                } else {
+                    LOGGER.warn("Could not delete newly written payment attachment '{}'; retry on rollback if available", key);
+                }
+            } catch (RuntimeException exception) {
+                LOGGER.warn("Could not delete newly written payment attachment '{}'; retry on rollback if available", key, exception);
+            }
+        }
     }
 
     public PaymentSubmissionDTO registerPayment(
@@ -564,6 +633,36 @@ public class PaymentService {
                 dto.previewToken(),
                 email
         );
+    }
+
+    private List<String> attachmentReferences(PaymentSubmission submission) {
+        if (submission == null) {
+            return List.of();
+        }
+        List<PaymentSubmissionAttachment> children = submission.getAttachments();
+        if (children != null && !children.isEmpty()) {
+            return children.stream()
+                    .filter(java.util.Objects::nonNull)
+                    .map(PaymentSubmissionAttachment::getFileKey)
+                    .filter(key -> key != null && !key.isBlank())
+                    .map(this::resolveFileReference)
+                    .filter(reference -> reference != null && !reference.isBlank()).toList();
+        }
+        String legacy = submission.getFileKey();
+        return attachmentReferences(legacy);
+    }
+
+    private List<String> attachmentReferences(String storedKey) {
+        if (storedKey == null || storedKey.isBlank()) {
+            return List.of();
+        }
+        String reference = resolveFileReference(storedKey);
+        return reference == null || reference.isBlank() ? List.of() : List.of(reference);
+    }
+
+    private String primaryAttachmentReference(PaymentSubmission submission) {
+        List<String> keys = attachmentReferences(submission);
+        return keys.isEmpty() ? "" : keys.get(0);
     }
 
     public PaymentSubmissionDTO reviewPayment(Long submissionId, ReviewPaymentDTO dto, String reviewerEmail) {
@@ -1160,7 +1259,7 @@ public class PaymentService {
                 submission.getExchangeRateProviderTimestamp(),
                 submission.getCalculationVersion(),
                 submission.getPaymentMethod(),
-                resolveFileReference(submission.getFileKey()),
+                primaryAttachmentReference(submission),
                 adminObservation,
                 submission.getBankAccount() != null ? submission.getBankAccount().getId() : null,
                 submission.getBankAccount() != null ? formatBankAccountDisplay(submission.getBankAccount()) : null,
@@ -1171,7 +1270,8 @@ public class PaymentService {
                 submission.getStudent() != null ? submission.getStudent().getId() : null,
                 StudentNameFormatter.displayName(submission.getStudent()),
                 submission.getStudent() != null ? submission.getStudent().getDni() : null,
-                installments
+                installments,
+                attachmentReferences(submission)
         );
     }
 
@@ -1252,7 +1352,7 @@ public class PaymentService {
                 submission.getExchangeRateProviderTimestamp(),
                 submission.getCalculationVersion(),
                 submission.getPaymentMethod(),
-                resolveFileReference(submission.getFileKey()),
+                primaryAttachmentReference(submission),
                 submission.getBankAccount() != null ? submission.getBankAccount().getId() : null,
                 submission.getBankAccount() != null ? formatBankAccountDisplay(submission.getBankAccount()) : null,
                 submission.getBankAccount() != null ? submission.getBankAccount().getAlias() : null,
@@ -1265,11 +1365,13 @@ public class PaymentService {
                 submission.getUser().getEmail(),
                 StudentNameFormatter.displayName(submission.getStudent()),
                 submission.getStudent() != null ? submission.getStudent().getDni() : null,
-                resolveSubmissionInstallments(submission, PaymentHistoryStatus.PENDING)
+                resolveSubmissionInstallments(submission, PaymentHistoryStatus.PENDING),
+                attachmentReferences(submission)
         );
     }
 
     private PaymentInstallmentHistoryDTO toInstallmentHistoryDTO(PaymentReceipt receipt) {
+        List<String> references = attachmentReferences(resolveFileKey(receipt));
         return new PaymentInstallmentHistoryDTO(
                 receipt.getId(),
                 null,
@@ -1288,11 +1390,12 @@ public class PaymentService {
                 null,
                 receipt.getPaymentMethod(),
                 toHistoryStatus(receipt.getStatus()),
-                resolveFileReference(resolveFileKey(receipt)),
+                references.isEmpty() ? "" : references.get(0),
                 receipt.getAdminObservation(),
                 resolveBankAccountId(receipt),
                 resolveBankAccountDisplayName(receipt),
-                resolveBankAccountAlias(receipt)
+                resolveBankAccountAlias(receipt),
+                references
         );
     }
 
@@ -1316,11 +1419,12 @@ public class PaymentService {
                 submission.getCalculationVersion(),
                 submission.getPaymentMethod(),
                 submission.getStatus() == PaymentSubmissionStatus.VOIDED ? PaymentHistoryStatus.VOIDED : PaymentHistoryStatus.APPROVED,
-                resolveFileReference(submission.getFileKey()),
+                primaryAttachmentReference(submission),
                 allocation.getOutcome().getAdminObservation(),
                 submission.getBankAccount() != null ? submission.getBankAccount().getId() : null,
                 submission.getBankAccount() != null ? formatBankAccountDisplay(submission.getBankAccount()) : null,
-                submission.getBankAccount() != null ? submission.getBankAccount().getAlias() : null
+                submission.getBankAccount() != null ? submission.getBankAccount().getAlias() : null,
+                attachmentReferences(submission)
         );
     }
 
@@ -1381,6 +1485,7 @@ public class PaymentService {
 
         Installment installment = firstReceipt.getInstallment();
         Student student = installment.getStudent();
+        List<String> references = attachmentReferences(batch != null ? batch.getFileKey() : firstReceipt.getFileKey());
         return new PaymentSubmissionDTO(
                 batch != null ? -batch.getId() : -firstReceipt.getId(),
                 status,
@@ -1399,7 +1504,7 @@ public class PaymentService {
                 null,
                 null,
                 batch != null ? batch.getPaymentMethod() : firstReceipt.getPaymentMethod(),
-                resolveFileReference(batch != null ? batch.getFileKey() : firstReceipt.getFileKey()),
+                references.isEmpty() ? "" : references.get(0),
                 sortedReceipts.stream()
                         .map(PaymentReceipt::getAdminObservation)
                         .filter(value -> value != null && !value.isBlank())
@@ -1420,7 +1525,8 @@ public class PaymentService {
                 student != null ? student.getId() : null,
                 StudentNameFormatter.displayName(student),
                 student != null ? student.getDni() : null,
-                sortedReceipts.stream().map(this::toLegacyInstallmentDTO).toList()
+                sortedReceipts.stream().map(this::toLegacyInstallmentDTO).toList(),
+                references
         );
     }
 
@@ -1517,7 +1623,11 @@ public class PaymentService {
     }
 
     private String resolveFileReference(String storedValue) {
-        return paymentAttachmentStorageService.resolveFileReference(storedValue);
+        if (storedValue == null || storedValue.isBlank()) {
+            return "";
+        }
+        String reference = paymentAttachmentStorageService.resolveFileReference(storedValue);
+        return reference == null || reference.isBlank() ? "" : reference;
     }
 
     private Long resolveBankAccountId(PaymentReceipt receipt) {

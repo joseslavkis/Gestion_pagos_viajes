@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 
 public record PaymentInstallmentHistoryDTO(
         Long id,
@@ -30,6 +31,7 @@ public record PaymentInstallmentHistoryDTO(
         String adminObservation,
         Long bankAccountId,
         String bankAccountDisplayName,
-        String bankAccountAlias
+        String bankAccountAlias,
+        List<String> fileKeys
 ) {
 }

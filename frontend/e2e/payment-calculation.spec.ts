@@ -209,8 +209,7 @@ test("CASE J conserves a partial cross-currency lifecycle across installments an
   const registered = await registrationResponse.json() as Record<string, unknown>;
   const submissionId = Number(registered.submissionId);
   expect(submissionId).toBeGreaterThan(0);
-  await expect(page.getByRole("heading", { name: "¡Comprobante adjuntado!" })).toBeVisible();
-
+  await expect(page.getByRole("heading", { name: "¡Pago reportado!" }),).toBeVisible();
   const pendingPayments = await getJson(api, "/api/v1/payments/my", seeded.accessToken) as Array<Record<string, unknown>>;
   const pendingPayment = pendingPayments.find((payment) => payment.submissionId === submissionId);
   if (!pendingPayment) {

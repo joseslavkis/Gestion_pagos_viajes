@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -105,6 +106,73 @@ class PaymentAttachmentCleanupSchedulerTest {
         verify(paymentSubmissionRepository, never()).saveAll(any());
         verify(paymentSubmissionRepository, never()).flush();
         assertEquals("receipts/trip-1/user-2/student-1/broken.png", expiredSubmission.getFileKey());
+    }
+
+    @Test
+    void deleteExpiredReceipts_doesNotRetryFailedChildThroughLegacyKey() {
+        PaymentSubmission submission = expired("first.png", "first.png", "second.png");
+        when(paymentSubmissionRepository.findExpiredWithStoredFileKey(any(), any(Pageable.class)))
+                .thenReturn(List.of(submission));
+        when(paymentAttachmentStorageService.deleteReceipt("first.png")).thenReturn(false, true);
+        when(paymentAttachmentStorageService.deleteReceipt("second.png")).thenReturn(true);
+
+        scheduler().deleteExpiredReceipts();
+
+        verify(paymentAttachmentStorageService, times(1)).deleteReceipt("first.png");
+        verify(paymentAttachmentStorageService, times(1)).deleteReceipt("second.png");
+        assertEquals("first.png", submission.getFileKey());
+        assertEquals(List.of(0), submission.getAttachments().stream().map(PaymentSubmissionAttachment::getPosition).toList());
+        assertEquals(List.of("first.png"), submission.getAttachments().stream().map(PaymentSubmissionAttachment::getFileKey).toList());
+        verify(paymentSubmissionRepository).saveAll(List.of(submission));
+    }
+
+    @Test
+    void deleteExpiredReceipts_keepsSparsePositionsInUploadOrderForPartialFailure() {
+        PaymentSubmission submission = expired("first.png", "first.png", "second.png", "third.png", "fourth.png");
+        when(paymentSubmissionRepository.findExpiredWithStoredFileKey(any(), any(Pageable.class)))
+                .thenReturn(List.of(submission));
+        when(paymentAttachmentStorageService.deleteReceipt("first.png")).thenReturn(true);
+        when(paymentAttachmentStorageService.deleteReceipt("second.png")).thenReturn(false);
+        when(paymentAttachmentStorageService.deleteReceipt("third.png")).thenReturn(true);
+        when(paymentAttachmentStorageService.deleteReceipt("fourth.png")).thenReturn(false);
+
+        scheduler().deleteExpiredReceipts();
+
+        assertEquals("second.png", submission.getFileKey());
+        assertEquals(List.of(1, 3), submission.getAttachments().stream().map(PaymentSubmissionAttachment::getPosition).toList());
+        assertEquals(List.of("second.png", "fourth.png"), submission.getAttachments().stream().map(PaymentSubmissionAttachment::getFileKey).toList());
+        verify(paymentAttachmentStorageService, times(1)).deleteReceipt("second.png");
+        verify(paymentSubmissionRepository).saveAll(List.of(submission));
+    }
+
+    @Test
+    void deleteExpiredReceipts_deletesLegacyOnlyReferenceOnce() {
+        PaymentSubmission submission = expired("legacy.png");
+        when(paymentSubmissionRepository.findExpiredWithStoredFileKey(any(), any(Pageable.class)))
+                .thenReturn(List.of(submission));
+        when(paymentAttachmentStorageService.deleteReceipt("legacy.png")).thenReturn(true);
+
+        scheduler().deleteExpiredReceipts();
+
+        assertEquals("", submission.getFileKey());
+        assertTrue(submission.getAttachments().isEmpty());
+        verify(paymentAttachmentStorageService, times(1)).deleteReceipt("legacy.png");
+        verify(paymentSubmissionRepository).saveAll(List.of(submission));
+    }
+
+    private PaymentSubmission expired(String legacyKey, String... children) {
+        PaymentSubmission submission = new PaymentSubmission();
+        submission.setFileKey(legacyKey);
+        submission.setCreatedAt(LocalDateTime.of(2025, 4, 8, 0, 0));
+        for (String child : children) {
+            submission.addAttachment(child);
+        }
+        return submission;
+    }
+
+    private PaymentAttachmentCleanupScheduler scheduler() {
+        return new PaymentAttachmentCleanupScheduler(paymentSubmissionRepository,
+                paymentAttachmentStorageService, properties, FIXED_CLOCK);
     }
 
     @Test

@@ -84,8 +84,33 @@ public class PaymentAttachmentCleanupScheduler {
         List<PaymentSubmission> cleanedSubmissions = new ArrayList<>();
 
         for (PaymentSubmission submission : expiredSubmissions) {
-            if (paymentAttachmentStorageService.deleteReceipt(submission.getFileKey())) {
-                submission.setFileKey("");
+            boolean changed = false;
+            String legacyKey = submission.getFileKey();
+            boolean legacyHasChild = submission.getAttachments().stream()
+                    .anyMatch(attachment -> attachment.getFileKey().equals(legacyKey));
+            for (var iterator = submission.getAttachments().iterator(); iterator.hasNext();) {
+                PaymentSubmissionAttachment attachment = iterator.next();
+                if (paymentAttachmentStorageService.deleteReceipt(attachment.getFileKey())) {
+                    iterator.remove();
+                    changed = true;
+                } else {
+                    LOGGER.warn("Could not delete expired payment attachment '{}'; retaining its reference", attachment.getFileKey());
+                }
+            }
+            if (legacyHasChild) {
+                if (changed) {
+                    submission.setFileKey(submission.getAttachments().isEmpty()
+                            ? "" : submission.getAttachments().get(0).getFileKey());
+                }
+            } else if (legacyKey != null && !legacyKey.isBlank()) {
+                if (paymentAttachmentStorageService.deleteReceipt(legacyKey)) {
+                    submission.setFileKey("");
+                    changed = true;
+                } else {
+                    LOGGER.warn("Could not delete expired legacy payment attachment '{}'; retaining its reference", legacyKey);
+                }
+            }
+            if (changed) {
                 cleanedSubmissions.add(submission);
             }
         }

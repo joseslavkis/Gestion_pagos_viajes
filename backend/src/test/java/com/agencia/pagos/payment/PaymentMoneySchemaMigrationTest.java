@@ -41,6 +41,8 @@ class PaymentMoneySchemaMigrationTest {
     private static final Path AUDIT = Path.of("sql/payment_money_financial_audit.sql");
     private static final Path PREREQUISITE = Path.of("sql/20260608_add_exchange_rate_audit.sql");
     private static final Path PREFLIGHT = Path.of("../scripts/check-payment-schema-readiness.sh");
+    private static final Path ATTACHMENT_MIGRATION = Path.of("sql/20260928_payment_submission_attachments.sql");
+    private static final Path ATTACHMENT_READINESS = Path.of("sql/payment_submission_attachments_readiness.sql");
     private static final Path WORKFLOW = Path.of("../.github/workflows/ci-cd.yml");
 
     @TempDir
@@ -212,12 +214,27 @@ class PaymentMoneySchemaMigrationTest {
     @Test
     void preflightFailsClosedWithoutChangingTheDatabase() throws Exception {
         Path docker = temporaryDirectory.resolve("docker");
-        Files.writeString(docker, "#!/bin/sh\nprintf '%s\\n' \"$MOCK_SCHEMA_STATE\"\n");
+        Files.writeString(docker, """
+                #!/bin/sh
+                query="$(cat)"
+                case "$query" in
+                  *to_regclass*) name=attachments; state="$MOCK_ATTACHMENT_STATE" ;;
+                  *) name=money; state="$MOCK_MONEY_STATE" ;;
+                esac
+                printf '%s\\n' "$name" >> "$MOCK_QUERY_LOG"
+                [ "$state" != ERROR ] || exit 12
+                printf '%s\\n' "$state"
+                """);
         assertThat(docker.toFile().setExecutable(true)).isTrue();
-        assertThat(runPreflight(docker, "NOT_READY")).isEqualTo(1);
-        assertThat(runPreflight(docker, "READY")).isZero();
+        assertThat(runPreflight("READY", "NOT_READY")).isEqualTo(1);
+        assertThat(runPreflight("NOT_READY", "READY")).isEqualTo(1);
+        assertThat(runPreflight("READY", "ERROR")).isEqualTo(1);
+        assertThat(runPreflight("ERROR", "READY")).isEqualTo(1);
+        assertThat(runPreflight("READY", "READY\nREADY")).isEqualTo(1);
+        assertThat(runPreflight("READY", "READY")).isZero();
         String script = Files.readString(PREFLIGHT);
         assertThat(script).contains("payment_money_schema_readiness.sql")
+                .contains("payment_submission_attachments_readiness.sql")
                 .contains("psql -v ON_ERROR_STOP=1")
                 .doesNotContain("20260917_payment_money_invariants.sql");
 
@@ -232,6 +249,47 @@ class PaymentMoneySchemaMigrationTest {
         assertThat(Files.readString(Path.of("../docker-compose.yml")))
                 .contains("SPRING_PROFILES_ACTIVE: \"${SPRING_PROFILES_ACTIVE:-production}\"")
                 .contains("SPRING_JPA_HIBERNATE_DDL_AUTO: \"${SPRING_JPA_HIBERNATE_DDL_AUTO:-validate}\"");
+    }
+
+    @Test
+    void attachmentMigrationBackfillsOnceAndReadinessRejectsCorruption() throws Exception {
+        try (Connection connection = dataSource.getConnection(); Statement sql = connection.createStatement()) {
+            sql.execute("CREATE SCHEMA migration_attachments_test");
+            sql.execute("SET search_path TO migration_attachments_test");
+            sql.execute("CREATE TABLE payment_submissions (id BIGINT PRIMARY KEY, file_key TEXT)");
+            sql.execute("INSERT INTO payment_submissions VALUES (1, 'existing.png'), (2, ''), (3, NULL)");
+            assertThatThrownBy(() -> attachmentReadiness(sql)).isInstanceOf(SQLException.class);
+            sql.execute(Files.readString(ATTACHMENT_MIGRATION));
+            assertThat(sql.executeQuery("SELECT 1 FROM payment_submission_attachments WHERE submission_id = 1 AND position = 0 AND file_key = 'existing.png'").next()).isTrue();
+            assertThat(attachmentReadiness(sql)).isEqualTo("READY");
+            sql.execute("ALTER TABLE payment_submission_attachments DROP CONSTRAINT payment_submission_attachments_submission_id_fkey");
+            sql.execute("ALTER TABLE payment_submission_attachments ADD CONSTRAINT payment_submission_attachments_submission_id_fkey FOREIGN KEY (submission_id) REFERENCES payment_submissions(id)");
+            assertThat(attachmentReadiness(sql)).isEqualTo("NOT_READY");
+            sql.execute("ALTER TABLE payment_submission_attachments DROP CONSTRAINT payment_submission_attachments_submission_id_fkey");
+            sql.execute("ALTER TABLE payment_submission_attachments ADD CONSTRAINT payment_submission_attachments_submission_id_fkey FOREIGN KEY (submission_id) REFERENCES payment_submissions(id) ON DELETE CASCADE NOT VALID");
+            assertThat(attachmentReadiness(sql)).isEqualTo("NOT_READY");
+            sql.execute("ALTER TABLE payment_submission_attachments VALIDATE CONSTRAINT payment_submission_attachments_submission_id_fkey");
+            assertThat(attachmentReadiness(sql)).isEqualTo("READY");
+            sql.execute(Files.readString(ATTACHMENT_MIGRATION));
+            try (ResultSet rows = sql.executeQuery("SELECT COUNT(*) FROM payment_submission_attachments WHERE submission_id = 1")) {
+                rows.next();
+                assertThat(rows.getInt(1)).isEqualTo(1);
+            }
+            // Only stored keys are copied; migration SQL has no physical-file access.
+            sql.execute("DELETE FROM payment_submission_attachments WHERE submission_id = 1");
+            assertThat(attachmentReadiness(sql)).isEqualTo("NOT_READY");
+            sql.execute(Files.readString(ATTACHMENT_MIGRATION));
+            sql.execute("UPDATE payment_submission_attachments SET file_key = 'wrong.png' WHERE submission_id = 1");
+            assertThat(attachmentReadiness(sql)).isEqualTo("NOT_READY");
+            sql.execute("UPDATE payment_submission_attachments SET file_key = 'existing.png', position = 4 WHERE submission_id = 1");
+            assertThat(attachmentReadiness(sql)).isEqualTo("READY");
+            sql.execute("ALTER TABLE payment_submission_attachments DROP CONSTRAINT payment_submission_attachments_position_check");
+            sql.execute("UPDATE payment_submission_attachments SET position = 5 WHERE submission_id = 1");
+            assertThat(attachmentReadiness(sql)).isEqualTo("NOT_READY");
+            sql.execute("ALTER TABLE payment_submission_attachments DROP CONSTRAINT uq_payment_submission_attachment_position");
+            sql.execute("INSERT INTO payment_submission_attachments (submission_id, position, file_key) SELECT 1, n, 'extra-' || n FROM generate_series(0, 5) n");
+            assertThat(attachmentReadiness(sql)).isEqualTo("NOT_READY");
+        }
     }
 
     @Test
@@ -319,17 +377,32 @@ class PaymentMoneySchemaMigrationTest {
         return findings;
     }
 
-    private int runPreflight(Path docker, String state) throws Exception {
+    private int runPreflight(String money, String attachments) throws Exception {
+        Path log = temporaryDirectory.resolve("queries.log");
+        Files.deleteIfExists(log);
         ProcessBuilder process = new ProcessBuilder("bash", PREFLIGHT.toAbsolutePath().toString())
                 .directory(Path.of(".").toAbsolutePath().toFile())
                 .redirectErrorStream(true);
         process.environment().put("PATH", temporaryDirectory + ":" + process.environment().get("PATH"));
-        process.environment().put("MOCK_SCHEMA_STATE", state);
+        process.environment().put("MOCK_MONEY_STATE", money);
+        process.environment().put("MOCK_ATTACHMENT_STATE", attachments);
+        process.environment().put("MOCK_QUERY_LOG", log.toString());
         Process child = process.start();
         String output = new String(child.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         int exit = child.waitFor();
-        assertThat(output).contains(state.equals("READY")
+        assertThat(output).contains(money.equals("READY") && attachments.equals("READY")
                 ? "Payment schema preflight passed" : "Payment schema is incompatible");
+        assertThat(Files.readAllLines(log)).containsExactlyElementsOf(
+                money.equals("READY") ? List.of("money", "attachments") : List.of("money"));
         return exit;
+    }
+
+    private static String attachmentReadiness(Statement sql) throws Exception {
+        try (ResultSet result = sql.executeQuery(Files.readString(ATTACHMENT_READINESS))) {
+            assertThat(result.next()).isTrue();
+            String state = result.getString(1);
+            assertThat(result.next()).isFalse();
+            return state;
+        }
     }
 }

@@ -40,6 +40,16 @@ backend/frontend money behavior until this migration and preflight are complete.
 7. Restore payment writes only after all smoke checks pass; backend health alone
    is not sufficient to reopen general traffic.
 
+For the attachment rollout, apply `backend/sql/20260928_payment_submission_attachments.sql`
+before the new backend and run the single schema preflight (both money and
+attachment checks must report READY). Before promoting the parent frontend,
+manually confirm that every reverse proxy, nginx, or ingress request-body limit
+on the upload route permits at least 30 MB; do not assume the application limit
+also configures external infrastructure. If a newly written file cannot be
+deleted after a failed submission or rollback, the server logs its stored key:
+operators must reconcile persistent deletion failures manually; no durable
+cleanup queue is provided.
+
 When the compatible backend is deployed, preview tokens issued before this
 calculation-version rollout without the required `cv=2` claim become invalid
 immediately, even if they have not expired. Users must recalculate the payment

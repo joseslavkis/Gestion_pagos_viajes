@@ -246,7 +246,7 @@ describe("PendingReviewPage", () => {
 
     renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
 
-    expect(await screen.findByAltText("Comprobante")).toHaveAttribute(
+    expect(await screen.findByAltText("Comprobante 1")).toHaveAttribute(
       "src",
       "https://backend.example/api/v1/payment-attachments/receipt.jpg?token=abc",
     );

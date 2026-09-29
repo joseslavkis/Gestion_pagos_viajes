@@ -21,8 +21,8 @@ import {
   PendingPaymentReviewDTOSchema,
   UserInstallmentDTOSchema,
 } from "@/features/payments/types/payments-dtos";
-import { ApiError, handleApiResponse } from "@/lib/api-error";
 import { BASE_API_URL, apiGet, apiPatch, apiPost } from "@/lib/api-client";
+import { ApiError, handleApiResponse } from "@/lib/api-error";
 import { useToken } from "@/lib/session";
 
 export function useRegisterPayment() {
@@ -38,8 +38,11 @@ export function useRegisterPayment() {
       formData.append("paymentCurrency", payload.paymentCurrency);
       formData.append("paymentMethod", payload.paymentMethod);
       formData.append("bankAccountId", String(payload.bankAccountId));
-      if (payload.file) {
-        formData.append("file", payload.file);
+      if (payload.files?.[0]) {
+        formData.append("file", payload.files[0]);
+      }
+      for (const file of payload.files ?? []) {
+        formData.append("files", file);
       }
       if (payload.previewToken) {
         formData.append("previewToken", payload.previewToken);
@@ -99,19 +102,14 @@ export function usePaymentPreview(payload: PaymentPreviewRequestDTO | null) {
         throw new Error("Payment preview requires a payload.");
       }
 
-      return apiPost(
-        "/api/v1/payments/preview",
-        payload,
-        (json) => PaymentBatchPreviewDTOSchema.parse(json),
-        {
-          headers:
-            tokenState.state === "LOGGED_IN"
-              ? {
-                  Authorization: `Bearer ${tokenState.accessToken}`,
-                }
-              : undefined,
-        },
-      );
+      return apiPost("/api/v1/payments/preview", payload, (json) => PaymentBatchPreviewDTOSchema.parse(json), {
+        headers:
+          tokenState.state === "LOGGED_IN"
+            ? {
+                Authorization: `Bearer ${tokenState.accessToken}`,
+              }
+            : undefined,
+      });
     },
   });
 }
@@ -250,18 +248,14 @@ export function useMyInstallments() {
     queryKey: ["payments", "my", "installments"],
     staleTime: 0,
     queryFn: async () =>
-      apiGet(
-        "/api/v1/payments/my/installments",
-        (json) => UserInstallmentDTOSchema.array().parse(json),
-        {
-          headers:
-            tokenState.state === "LOGGED_IN"
-              ? {
-                  Authorization: `Bearer ${tokenState.accessToken}`,
-                }
-              : undefined,
-        },
-      ),
+      apiGet("/api/v1/payments/my/installments", (json) => UserInstallmentDTOSchema.array().parse(json), {
+        headers:
+          tokenState.state === "LOGGED_IN"
+            ? {
+                Authorization: `Bearer ${tokenState.accessToken}`,
+              }
+            : undefined,
+      }),
   });
 }
 
@@ -272,17 +266,13 @@ export function usePendingReviewPayments() {
     queryKey: ["payments", "pending-review"],
     staleTime: 0,
     queryFn: async () =>
-      apiGet(
-        "/api/v1/payments/pending-review",
-        (json) => PendingPaymentReviewDTOSchema.array().parse(json),
-        {
-          headers:
-            tokenState.state === "LOGGED_IN"
-              ? {
-                  Authorization: `Bearer ${tokenState.accessToken}`,
-                }
-              : undefined,
-        },
-      ),
+      apiGet("/api/v1/payments/pending-review", (json) => PendingPaymentReviewDTOSchema.array().parse(json), {
+        headers:
+          tokenState.state === "LOGGED_IN"
+            ? {
+                Authorization: `Bearer ${tokenState.accessToken}`,
+              }
+            : undefined,
+      }),
   });
 }

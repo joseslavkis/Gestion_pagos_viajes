@@ -12,11 +12,26 @@ import java.util.Base64;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class FilesystemPaymentAttachmentStorageServiceTest {
 
     @TempDir
     Path tempDir;
+
+    @Test
+    void rejectsUnsupportedMimeAndFilesLargerThanFiveMb() {
+        PaymentAttachmentStorageProperties properties = new PaymentAttachmentStorageProperties();
+        properties.getFilesystem().setBasePath(tempDir.toString());
+        properties.getFilesystem().setPublicBaseUrl("http://localhost:8080");
+        var storage = new FilesystemPaymentAttachmentStorageService(properties,
+                new PaymentAttachmentUrlTokenService(Base64.getEncoder().encodeToString(
+                        "cleanup-test-secret-cleanup-test-secret".getBytes(StandardCharsets.UTF_8))));
+        assertThrows(IllegalArgumentException.class, () -> storage.storeReceipt(
+                new MockMultipartFile("files", "bad.txt", "text/plain", new byte[]{1}), 1L, 2L, null));
+        assertThrows(IllegalArgumentException.class, () -> storage.storeReceipt(
+                new MockMultipartFile("files", "big.pdf", "application/pdf", new byte[5 * 1024 * 1024 + 1]), 1L, 2L, null));
+    }
 
     @Test
     void deleteReceipt_removesStoredFileAndEmptyDirectories() throws Exception {

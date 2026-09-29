@@ -1,25 +1,21 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-
-import { useQueryClient } from "@tanstack/react-query";
 
 import { CommonLayout } from "@/components/CommonLayout/CommonLayout";
 import { useBankAccounts } from "@/features/bank-accounts/services/bank-accounts-service";
 import type { BankAccountDTO } from "@/features/bank-accounts/types/bank-accounts-dtos";
 import { Folder } from "@/features/payments/components/Folder";
+import { type ReceiptSuccessData, ReceiptSuccessScreen } from "@/features/payments/components/ReceiptSuccessScreen";
 import { usePaymentCalculationForm } from "@/features/payments/hooks/use-payment-calculation-form";
-import {
-  useMyInstallments,
-  useRegisterPayment,
-} from "@/features/payments/services/payments-service";
+import { useMyInstallments, useRegisterPayment } from "@/features/payments/services/payments-service";
+import { normalizePaymentMoneyInput } from "@/features/payments/types/decimal-strings";
 import type {
   Currency,
-  PaymentMethod,
   PaymentCalculationResponseDTO,
+  PaymentMethod,
   UserInstallmentDTO,
 } from "@/features/payments/types/payments-dtos";
-import { type ReceiptSuccessData, ReceiptSuccessScreen } from "@/features/payments/components/ReceiptSuccessScreen";
-import { normalizePaymentMoneyInput } from "@/features/payments/types/decimal-strings";
 
 import styles from "./UserDashboardPage.module.css";
 
@@ -74,11 +70,7 @@ function getTodayDate() {
 
 function formatReportedDate(value: string) {
   const [year, month, day] = value.split("-").map(Number);
-  if (
-    !Number.isInteger(year) ||
-    !Number.isInteger(month) ||
-    !Number.isInteger(day)
-  ) {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
     return value;
   }
 
@@ -178,9 +170,7 @@ function roundDisplayMoney(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
-function getDisplayRemainingAmount(
-  installment: Pick<UserInstallmentDTO, "totalDue" | "paidAmount">,
-): number {
+function getDisplayRemainingAmount(installment: Pick<UserInstallmentDTO, "totalDue" | "paidAmount">): number {
   return Math.max(0, roundDisplayMoney(installment.totalDue - installment.paidAmount));
 }
 
@@ -208,17 +198,12 @@ function getGroupCurrency(group: InstallmentGroup): "ARS" | "USD" {
 }
 
 function getGroupTotalDue(group: InstallmentGroup): number {
-  return roundDisplayMoney(
-    group.installments.reduce((sum, installment) => sum + installment.totalDue, 0),
-  );
+  return roundDisplayMoney(group.installments.reduce((sum, installment) => sum + installment.totalDue, 0));
 }
 
 function getGroupRemainingAmount(group: InstallmentGroup): number {
   return roundDisplayMoney(
-    group.installments.reduce(
-      (sum, installment) => sum + getDisplayRemainingAmount(installment),
-      0,
-    ),
+    group.installments.reduce((sum, installment) => sum + getDisplayRemainingAmount(installment), 0),
   );
 }
 
@@ -264,11 +249,7 @@ export function UserDashboardPage() {
   const queryClient = useQueryClient();
   const registerPayment = useRegisterPayment();
   const { data: installments, isLoading, error } = useMyInstallments();
-  const {
-    data: bankAccounts,
-    isLoading: isBankAccountsLoading,
-    error: bankAccountsError,
-  } = useBankAccounts();
+  const { data: bankAccounts, isLoading: isBankAccountsLoading, error: bankAccountsError } = useBankAccounts();
 
   const [expandedGroupKeys, setExpandedGroupKeys] = useState<string[]>([]);
   const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null);
@@ -276,7 +257,8 @@ export function UserDashboardPage() {
   const [reportedPaymentDate, setReportedPaymentDate] = useState(getTodayDate);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("BANK_TRANSFER");
   const [selectedBankAccountId, setSelectedBankAccountId] = useState<number | null>(null);
-  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [receiptFiles, setReceiptFiles] = useState<File[]>([]);
+  const [fileError, setFileError] = useState<string | null>(null);
   const [receiptPreviewUrl, setReceiptPreviewUrl] = useState<string | null>(null);
   const [closeFolderSignal, setCloseFolderSignal] = useState(false);
   const [isDropzoneHovered, setIsDropzoneHovered] = useState(false);
@@ -296,14 +278,13 @@ export function UserDashboardPage() {
   const groups = useMemo(() => buildInstallmentGroups(installmentItems), [installmentItems]);
   const allInstallments = useMemo(() => groups.flatMap((group) => group.installments), [groups]);
 
-  const selectedGroup = selectedGroupKey != null
-    ? groups.find((group) => group.groupKey === selectedGroupKey) ?? null
-    : null;
+  const selectedGroup =
+    selectedGroupKey != null ? (groups.find((group) => group.groupKey === selectedGroupKey) ?? null) : null;
 
   const selectedInstallment = useMemo(
     () =>
       selectedAnchorInstallmentId != null
-        ? allInstallments.find((installment) => installment.installmentId === selectedAnchorInstallmentId) ?? null
+        ? (allInstallments.find((installment) => installment.installmentId === selectedAnchorInstallmentId) ?? null)
         : null,
     [selectedAnchorInstallmentId, allInstallments],
   );
@@ -368,7 +349,9 @@ export function UserDashboardPage() {
     !isBankAccountsLoading &&
     availableBankAccounts.length > 0 &&
     selectedBankAccountId != null &&
-    receiptFile != null;
+    fileError == null &&
+    receiptFiles.length >= 1 &&
+    receiptFiles.length <= 5;
 
   useEffect(() => {
     if (groups.length === 0) {
@@ -442,12 +425,24 @@ export function UserDashboardPage() {
   };
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0] ?? null;
+    const files = Array.from(event.target.files ?? []);
+    const error =
+      files.length > 5
+        ? "Podés adjuntar hasta 5 comprobantes."
+        : files.some(
+              (file) =>
+                !["image/jpeg", "image/png", "image/webp", "application/pdf"].includes(file.type) ||
+                file.size > 5 * 1024 * 1024,
+            )
+          ? "Cada archivo debe ser JPG, PNG, WEBP o PDF y no superar 5 MB."
+          : null;
     if (receiptPreviewUrl) {
       URL.revokeObjectURL(receiptPreviewUrl);
     }
-    setReceiptFile(file);
-    setReceiptPreviewUrl(file ? URL.createObjectURL(file) : null);
+    setFileError(error);
+    setReceiptFiles(error ? [] : files);
+    const preview = !error && files[0]?.type.startsWith("image/") ? files[0] : null;
+    setReceiptPreviewUrl(preview ? URL.createObjectURL(preview) : null);
     setCloseFolderSignal(true);
     setTimeout(() => setCloseFolderSignal(false), 200);
   };
@@ -470,8 +465,13 @@ export function UserDashboardPage() {
       return;
     }
 
-    if (!receiptFile) {
-      toast.error("Debés adjuntar el comprobante de pago antes de enviar.");
+    if (receiptFiles.length === 0 && !fileError) {
+      toast.error("Debés adjuntar al menos un comprobante de pago.");
+      return;
+    }
+
+    if (fileError || receiptFiles.length > 5) {
+      toast.error(fileError ?? "Podés adjuntar hasta 5 comprobantes.");
       return;
     }
 
@@ -499,7 +499,7 @@ export function UserDashboardPage() {
       availableBankAccounts.find((a) => a.id === selectedBankAccountId)?.accountLabel ??
       availableBankAccounts.find((a) => a.id === selectedBankAccountId)?.bankName ??
       "";
-    const fileNameSnapshot = receiptFile.name;
+    const fileNameSnapshot = receiptFiles.map((file) => file.name).join(", ") || "Sin archivos";
 
     try {
       await registerPayment.mutateAsync({
@@ -509,7 +509,7 @@ export function UserDashboardPage() {
         paymentCurrency,
         paymentMethod,
         bankAccountId: selectedBankAccountId,
-        file: receiptFile,
+        files: receiptFiles,
         previewToken: readyPaymentCalculation.previewToken,
       });
 
@@ -517,7 +517,8 @@ export function UserDashboardPage() {
       setReportedPaymentDate(getTodayDate());
       setPaymentMethod("BANK_TRANSFER");
       setSelectedBankAccountId(null);
-      setReceiptFile(null);
+      setReceiptFiles([]);
+      setFileError(null);
       if (receiptPreviewUrl) URL.revokeObjectURL(receiptPreviewUrl);
       setReceiptPreviewUrl(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -542,10 +543,7 @@ export function UserDashboardPage() {
   return (
     <CommonLayout>
       {receiptSuccessData ? (
-        <ReceiptSuccessScreen
-          data={receiptSuccessData}
-          onBack={() => setReceiptSuccessData(null)}
-        />
+        <ReceiptSuccessScreen data={receiptSuccessData} onBack={() => setReceiptSuccessData(null)} />
       ) : null}
       <section className={styles.page}>
         <div className={styles.container}>
@@ -587,7 +585,8 @@ export function UserDashboardPage() {
                             {nextDueDate ? ` · próximo vencimiento ${formatReportedDate(nextDueDate)}` : ""}
                           </p>
                           <p className={styles.tripGroupSummaryAccount}>
-                            Estado de cuenta: Pagado {formatAmountByCurrency(accountCurrency, totalPaid)} · Resta {formatAmountByCurrency(accountCurrency, totalRemaining)}
+                            Estado de cuenta: Pagado {formatAmountByCurrency(accountCurrency, totalPaid)} · Resta{" "}
+                            {formatAmountByCurrency(accountCurrency, totalRemaining)}
                           </p>
                           {group.studentDni ? (
                             <p className={styles.tripGroupSummary}>DNI alumno: {group.studentDni}</p>
@@ -615,20 +614,14 @@ export function UserDashboardPage() {
                                 <div key={installment.installmentId} className={styles.installmentChip}>
                                   <div className={styles.chipHeader}>
                                     <h4 className={styles.chipTitle}>Cuota {installment.installmentNumber}</h4>
-                                    <span className={`${styles.statusBadge} ${statusClass}`}>
-                                      {display.label}
-                                    </span>
+                                    <span className={`${styles.statusBadge} ${statusClass}`}>{display.label}</span>
                                   </div>
 
                                   <p className={styles.chipMeta}>{currencyFormatter.format(installment.totalDue)}</p>
-                                  {installment.paidAmount > 0 &&
-                                  installment.uiStatusCode !== "PAID" ? (
+                                  {installment.paidAmount > 0 && installment.uiStatusCode !== "PAID" ? (
                                     <p className={styles.chipMeta}>
                                       Abonado: {formatInstallmentAmount(installment, installment.paidAmount)} · Resta:{" "}
-                                      {formatInstallmentAmount(
-                                        installment,
-                                        getInstallmentRemainingAmount(installment),
-                                      )}
+                                      {formatInstallmentAmount(installment, getInstallmentRemainingAmount(installment))}
                                     </p>
                                   ) : null}
                                   <p className={styles.chipMeta}>Vence: {formatReportedDate(installment.dueDate)}</p>
@@ -653,7 +646,8 @@ export function UserDashboardPage() {
                           <div className={styles.accountSummary}>
                             <span className={styles.accountSummaryTitle}>Estado de cuenta</span>
                             <span>
-                              Pagado: {formatAmountByCurrency(accountCurrency, totalPaid)} · Resta: {formatAmountByCurrency(accountCurrency, totalRemaining)}
+                              Pagado: {formatAmountByCurrency(accountCurrency, totalPaid)} · Resta:{" "}
+                              {formatAmountByCurrency(accountCurrency, totalRemaining)}
                             </span>
                           </div>
                         </>
@@ -683,12 +677,24 @@ export function UserDashboardPage() {
                 return accountsForCurrency.map((account) => (
                   <div key={account.id} className={styles.bankCard}>
                     <h3 className={styles.bankCardTitle}>{formatBankAccountTitle(account)}</h3>
-                    <div>Moneda: <strong>{currency === "USD" ? "Dólares (USD)" : "Pesos (ARS)"}</strong></div>
-                    <div>Titular: <strong>{account.accountHolder}</strong></div>
-                    <div>Cuenta: <strong>{account.accountNumber}</strong></div>
-                    <div>CUIT: <strong>{account.taxId}</strong></div>
-                    <div>CBU: <strong>{account.cbu}</strong></div>
-                    <div>Alias: <strong>{account.alias}</strong></div>
+                    <div>
+                      Moneda: <strong>{currency === "USD" ? "Dólares (USD)" : "Pesos (ARS)"}</strong>
+                    </div>
+                    <div>
+                      Titular: <strong>{account.accountHolder}</strong>
+                    </div>
+                    <div>
+                      Cuenta: <strong>{account.accountNumber}</strong>
+                    </div>
+                    <div>
+                      CUIT: <strong>{account.taxId}</strong>
+                    </div>
+                    <div>
+                      CBU: <strong>{account.cbu}</strong>
+                    </div>
+                    <div>
+                      Alias: <strong>{account.alias}</strong>
+                    </div>
                   </div>
                 ));
               })}
@@ -716,7 +722,8 @@ export function UserDashboardPage() {
               ) : null}
               {selectedGroupHasPendingReview ? (
                 <p className={styles.helperWarning}>
-                  Esta inscripción tiene comprobantes pendientes de revisión. Hasta que el administrador los revise no podés enviar un nuevo pago.
+                  Esta inscripción tiene comprobantes pendientes de revisión. Hasta que el administrador los revise no
+                  podés enviar un nuevo pago.
                 </p>
               ) : null}
 
@@ -725,8 +732,9 @@ export function UserDashboardPage() {
                   <div className={styles.selectedInfoHeader}>
                     <span>
                       {selectedGroup?.studentName ? `${selectedGroup.studentName} · ` : ""}
-                      Primera cuota pendiente #{selectedInstallment.installmentNumber} · vence {formatReportedDate(selectedInstallment.dueDate)} ·{" "}
-                      saldo {formatInstallmentAmount(selectedInstallment, selectedInstallmentRemaining)}
+                      Primera cuota pendiente #{selectedInstallment.installmentNumber} · vence{" "}
+                      {formatReportedDate(selectedInstallment.dueDate)} · saldo{" "}
+                      {formatInstallmentAmount(selectedInstallment, selectedInstallmentRemaining)}
                     </span>
                     {selectedInstallmentDisplay ? (
                       <span className={`${styles.statusBadge} ${styles[`status${selectedInstallmentDisplay.color}`]}`}>
@@ -747,6 +755,7 @@ export function UserDashboardPage() {
                   ref={fileInputRef}
                   type="file"
                   accept="image/jpeg,image/png,image/webp,application/pdf"
+                  multiple
                   style={{ display: "none" }}
                   onChange={handleFileChange}
                 />
@@ -769,11 +778,23 @@ export function UserDashboardPage() {
                   }
                 />
                 <p className={styles.folderHint}>
-                  {receiptFile
-                    ? receiptFile.name
-                    : <span style={{ color: "#b45309", fontWeight: 600 }}>Hacé click para adjuntar el comprobante (obligatorio)</span>}
+                  {receiptFiles.length
+                    ? `${receiptFiles.length} de 5 archivos seleccionados`
+                    : "Adjuntar comprobantes (hasta 5)"}
                 </p>
               </label>
+              {receiptFiles.length > 0 ? (
+                <ul className={styles.helperText}>
+                  {receiptFiles.map((file, index) => (
+                    <li key={`${index}-${file.name}`}>{file.name}</li>
+                  ))}
+                </ul>
+              ) : null}
+              {fileError ? (
+                <p className={styles.errorText} role="alert">
+                  {fileError}
+                </p>
+              ) : null}
 
               <label className={styles.formField}>
                 <span className={styles.label}>Monto a reportar</span>
@@ -806,7 +827,8 @@ export function UserDashboardPage() {
                       {formatAmountByCurrency(
                         readyPaymentCalculation.paymentCurrency,
                         readyPaymentCalculation.maxAllowedAmount,
-                      )}.
+                      )}
+                      .
                     </p>
                   ) : null}
                   <p className={styles.helperText}>
@@ -814,12 +836,13 @@ export function UserDashboardPage() {
                     {formatAmountByCurrency(
                       readyPaymentCalculation.tripCurrency,
                       readyPaymentCalculation.totalPendingAmountInTripCurrency,
-                    )}.
-                    {" "}Equivale a{" "}
+                    )}
+                    . Equivale a{" "}
                     {formatAmountByCurrency(
                       readyPaymentCalculation.tripCurrency,
                       readyPaymentCalculation.amountInTripCurrency ?? "0",
-                    )} del viaje
+                    )}{" "}
+                    del viaje
                     {readyPaymentCalculation.exchangeRate != null
                       ? ` · cotización oficial ${formatAmountByCurrency("ARS", readyPaymentCalculation.exchangeRate)}${readyPaymentCalculation.quoteEffectiveDate ? ` correspondiente al ${formatReportedDate(readyPaymentCalculation.quoteEffectiveDate)}` : ""}`
                       : ""}
@@ -827,7 +850,9 @@ export function UserDashboardPage() {
                 </div>
               ) : null}
               {calculationStatusMessage ? (
-                <p className={styles.errorText} role="alert">{calculationStatusMessage}</p>
+                <p className={styles.errorText} role="alert">
+                  {calculationStatusMessage}
+                </p>
               ) : null}
               {amountCurrencyMismatch ? (
                 <p className={styles.errorText} role="alert">
@@ -882,7 +907,8 @@ export function UserDashboardPage() {
 
               {selectedInstallment && paymentCurrency !== selectedInstallment.tripCurrency ? (
                 <p className={styles.helperWarning}>
-                  Se usará la cotización oficial correspondiente a la fecha informada. Si ese día no tiene cotización, se usará la última disponible anterior.
+                  Se usará la cotización oficial correspondiente a la fecha informada. Si ese día no tiene cotización,
+                  se usará la última disponible anterior.
                 </p>
               ) : null}
 
@@ -890,9 +916,16 @@ export function UserDashboardPage() {
                 <span className={styles.label}>Cuenta donde acreditaste el pago</span>
                 <select
                   value={selectedBankAccountId ?? ""}
-                  onChange={(event) => setSelectedBankAccountId(event.target.value === "" ? null : Number(event.target.value))}
+                  onChange={(event) =>
+                    setSelectedBankAccountId(event.target.value === "" ? null : Number(event.target.value))
+                  }
                   className={styles.select}
-                  disabled={!selectedTripHasPending || selectedGroupHasPendingReview || isBankAccountsLoading || availableBankAccounts.length === 0}
+                  disabled={
+                    !selectedTripHasPending ||
+                    selectedGroupHasPendingReview ||
+                    isBankAccountsLoading ||
+                    availableBankAccounts.length === 0
+                  }
                 >
                   <option value="">Elegí una cuenta</option>
                   {availableBankAccounts.map((account) => (
@@ -904,9 +937,7 @@ export function UserDashboardPage() {
               </label>
 
               {selectedTripHasPending && !isBankAccountsLoading && availableBankAccounts.length === 0 ? (
-                <p className={styles.helperWarning}>
-                  No hay cuentas activas disponibles para la moneda seleccionada.
-                </p>
+                <p className={styles.helperWarning}>No hay cuentas activas disponibles para la moneda seleccionada.</p>
               ) : null}
 
               <label className={styles.formField}>

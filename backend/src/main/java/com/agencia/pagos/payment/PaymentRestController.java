@@ -81,20 +81,42 @@ class PaymentRestController {
             @RequestParam("paymentMethod") PaymentMethod paymentMethod,
             @RequestParam("bankAccountId") Long bankAccountId,
             @RequestParam(value = "file", required = false) MultipartFile file,
+            @RequestParam(value = "files", required = false) List<MultipartFile> files,
             @RequestParam(value = "previewToken", required = false) String previewToken,
             @AuthenticationPrincipal(expression = "username") String email
     ) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(paymentService.registerPayment(
+                .body(paymentService.registerPaymentWithAttachments(
                         anchorInstallmentId,
                         reportedAmount,
                         reportedPaymentDate,
                         paymentCurrency,
                         paymentMethod,
                         bankAccountId,
-                        file,
+                        mergeFiles(files, file),
                         previewToken,
                         email));
+    }
+
+    private List<MultipartFile> mergeFiles(List<MultipartFile> files, MultipartFile file) {
+        List<MultipartFile> merged = new java.util.ArrayList<>();
+        if (files != null) merged.addAll(files);
+        // Only the legacy alias of the first modern part is redundant; identical
+        // items within 'files' are independent attachments and must be retained.
+        if (file != null && !file.isEmpty() &&
+                (merged.isEmpty() || !sameFirstPart(merged.get(0), file))) merged.add(file);
+        return merged;
+    }
+
+    private boolean sameFirstPart(MultipartFile first, MultipartFile legacy) {
+        if (first == null || first.isEmpty()) return false;
+        try {
+            return java.util.Objects.equals(first.getOriginalFilename(), legacy.getOriginalFilename())
+                    && java.util.Objects.equals(first.getContentType(), legacy.getContentType())
+                    && java.util.Arrays.equals(first.getBytes(), legacy.getBytes());
+        } catch (java.io.IOException exception) {
+            throw new IllegalArgumentException("No se pudo leer el comprobante", exception);
+        }
     }
 
     @PreAuthorize("hasRole('ADMIN')")
