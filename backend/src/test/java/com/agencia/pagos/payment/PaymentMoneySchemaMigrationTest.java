@@ -263,7 +263,10 @@ class PaymentMoneySchemaMigrationTest {
             assertThat(sql.executeQuery("SELECT 1 FROM payment_submission_attachments WHERE submission_id = 1 AND position = 0 AND file_key = 'existing.png'").next()).isTrue();
             assertThat(attachmentReadiness(sql)).isEqualTo("READY");
             sql.execute("ALTER TABLE payment_submission_attachments DROP CONSTRAINT payment_submission_attachments_submission_id_fkey");
-            sql.execute("ALTER TABLE payment_submission_attachments ADD CONSTRAINT payment_submission_attachments_submission_id_fkey FOREIGN KEY (submission_id) REFERENCES payment_submissions(id) NOT VALID");
+            sql.execute("ALTER TABLE payment_submission_attachments ADD CONSTRAINT payment_submission_attachments_submission_id_fkey FOREIGN KEY (submission_id) REFERENCES payment_submissions(id)");
+            assertThat(attachmentReadiness(sql)).isEqualTo("NOT_READY");
+            sql.execute("ALTER TABLE payment_submission_attachments DROP CONSTRAINT payment_submission_attachments_submission_id_fkey");
+            sql.execute("ALTER TABLE payment_submission_attachments ADD CONSTRAINT payment_submission_attachments_submission_id_fkey FOREIGN KEY (submission_id) REFERENCES payment_submissions(id) ON DELETE CASCADE NOT VALID");
             assertThat(attachmentReadiness(sql)).isEqualTo("NOT_READY");
             sql.execute("ALTER TABLE payment_submission_attachments VALIDATE CONSTRAINT payment_submission_attachments_submission_id_fkey");
             assertThat(attachmentReadiness(sql)).isEqualTo("READY");

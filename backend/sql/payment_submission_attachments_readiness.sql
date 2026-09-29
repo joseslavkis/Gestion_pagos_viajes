@@ -15,6 +15,7 @@ SELECT CASE WHEN
         WHERE c.conrelid = 'payment_submission_attachments'::regclass AND c.contype = 'f'
           AND c.confrelid = 'payment_submissions'::regclass
           AND c.convalidated
+          AND c.confdeltype = 'c'
           AND pg_get_constraintdef(c.oid) LIKE 'FOREIGN KEY (submission_id) REFERENCES payment_submissions(id)%')
     AND EXISTS (SELECT 1 FROM pg_constraint c
         WHERE c.conrelid = 'payment_submission_attachments'::regclass AND c.contype = 'u'
