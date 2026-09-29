@@ -321,11 +321,106 @@
 
 .confirmation {
   display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  min-height: 44px;
+  align-items: flex-start;
+  gap: 0.9rem;
+  padding: 1rem 1.1rem;
+  border: 2px solid #c7dcf7;
+  border-radius: 0.9rem;
+  background: linear-gradient(180deg, #f7fbff 0%, #eef5ff 100%);
   color: #0f2f57;
   font-weight: 600;
+  line-height: 1.45;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 180ms ease, background 180ms ease, box-shadow 180ms ease;
+}
+
+.confirmation:hover {
+  border-color: #7fb2e8;
+  box-shadow: 0 0.5rem 1.1rem rgba(11, 119, 213, 0.16);
+}
+
+.confirmationActive {
+  border-color: #0b77d5;
+  background: linear-gradient(180deg, #e8f3ff 0%, #d9eaff 100%);
+  box-shadow: 0 0.6rem 1.25rem rgba(11, 119, 213, 0.22), inset 0 0 0 1px rgba(11, 119, 213, 0.18);
+}
+
+.confirmationText {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.confirmationCheckbox {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 auto;
+  display: grid;
+  place-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  margin: 0.1rem 0 0;
+  border: 2px solid #8fb6dd;
+  border-radius: 0.55rem;
+  background: #fff;
+  cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease,
+    transform 160ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.confirmationCheckbox::after {
+  content: "";
+  width: 0.45rem;
+  height: 0.8rem;
+  margin-top: -0.14rem;
+  border: solid #fff;
+  border-width: 0 3px 3px 0;
+  opacity: 0;
+  transform: rotate(45deg) scale(0.4);
+  transition: opacity 140ms ease, transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.confirmationCheckbox:hover:not(:disabled) {
+  border-color: #0b77d5;
+  box-shadow: 0 0 0 4px rgba(11, 119, 213, 0.14);
+}
+
+.confirmationCheckbox:checked {
+  border-color: #0b77d5;
+  background-color: #0b77d5;
+  animation: confirmationPop 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.confirmationCheckbox:checked::after {
+  opacity: 1;
+  transform: rotate(45deg) scale(1);
+}
+
+.confirmationCheckbox:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+@keyframes confirmationPop {
+  0% {
+    transform: scale(0.88);
+  }
+  55% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confirmation,
+  .confirmationCheckbox,
+  .confirmationCheckbox::after {
+    transition: none;
+    animation: none;
+  }
 }
 
 .form {

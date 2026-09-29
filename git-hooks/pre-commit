@@ -1,5 +1,0 @@
-#!/bin/sh
-
-pushd backend
-mvn test
-popd

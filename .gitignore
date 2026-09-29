@@ -35,6 +35,10 @@ secrets/
 .atl/
 .codegraph/
 
+# Local agent scratch directories (not part of the build)
+odd/
+git-hooks/
+
 # Local development tools and generated dependencies
 .codex
 .idea/

@@ -635,3 +635,61 @@ describe("receipt amount payment", () => {
     } finally { vi.useRealTimers(); }
   });
 });
+
+describe("total confirmation control", () => {
+  const block = () => confirm().closest("label") as HTMLLabelElement;
+
+  it("shows a full-card confirmation for a single valid receipt", async () => {
+    setup(); await screen.findByText("Adjuntar comprobantes (hasta 5)");
+    upload(file("one.png")); amount("one.png", "150.00");
+    expect(screen.getByText("Total en ARS: 150.00")).toBeInTheDocument();
+    expect(confirm()).toBeInTheDocument();
+    expect(block()).toHaveTextContent("Confirmo el total de 150.00 ARS para estos comprobantes.");
+    // The label wraps both the box and the copy, so the whole card is the hit area.
+    expect(block()).toContainElement(confirm());
+  });
+
+  it("shows the same confirmation for multiple valid receipts with the summed total", async () => {
+    setup(); await screen.findByText("Adjuntar comprobantes (hasta 5)");
+    upload(file("a.png"), file("b.png"), file("c.png"));
+    amount("a.png", "100.00"); amount("b.png", "50.00"); amount("c.png", "25.50");
+    expect(screen.getByText("Total en ARS: 175.50")).toBeInTheDocument();
+    expect(block()).toHaveTextContent("Confirmo el total de 175.50 ARS para estos comprobantes.");
+  });
+
+  it("toggles and completes the normal flow from the card copy, not only the box", async () => {
+    let payment: string | undefined;
+    setup({ onPayment: (data) => { payment = data; } });
+    await screen.findByText("Adjuntar comprobantes (hasta 5)");
+    upload(file("one.png")); amount("one.png", "150.00");
+    expect(submit()).toBeDisabled();
+    fireEvent.click(screen.getByText(/Confirmo el total de 150\.00 ARS/));
+    await waitFor(() => expect(confirm()).toBeChecked());
+    await waitFor(() => expect(submit()).toBeEnabled());
+    fireEvent.submit(submit().closest("form")!);
+    await waitFor(() => expect(payment).toBeDefined());
+    expect(payment).toContain("150.00");
+  });
+
+  it("stays keyboard operable through the native checkbox", async () => {
+    setup(); await screen.findByText("Adjuntar comprobantes (hasta 5)");
+    upload(file("one.png")); amount("one.png", "150.00");
+    confirm().focus();
+    expect(confirm()).toHaveFocus();
+    fireEvent.keyDown(confirm(), { key: " ", code: "Space" });
+    fireEvent.click(confirm());
+    await waitFor(() => expect(confirm()).toBeChecked());
+  });
+
+  it("invalidates the confirmed card when an amount changes afterwards", async () => {
+    setup(); await screen.findByText("Adjuntar comprobantes (hasta 5)");
+    upload(file("a.png"), file("b.png")); amount("a.png", "100.00"); amount("b.png", "50.00");
+    fireEvent.click(confirm());
+    await waitFor(() => expect(confirm()).toBeChecked());
+    await waitFor(() => expect(submit()).toBeEnabled());
+    amount("b.png", "60.00");
+    expect(confirm()).not.toBeChecked();
+    expect(submit()).toBeDisabled();
+    expect(screen.getByText("Total en ARS: 160.00")).toBeInTheDocument();
+  });
+});

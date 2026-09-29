@@ -941,10 +941,19 @@ export function UserDashboardPage() {
                 <p className={styles.helperWarning}>Ingresá un monto válido para cada comprobante.</p>
               ) : null}
               {total != null && !selectedGroupHasPendingReview ? (
-                <label className={styles.confirmation}>
-                  <input type="checkbox" checked={isConfirmed} disabled={isVerifyingConversion}
-                    onChange={(event) => { void handleConfirmationChange(event.target.checked); }} />
-                  Confirmo el total de {total} {tripCurrency} para estos comprobantes.
+                <label
+                  className={`${styles.confirmation}${isConfirmed ? ` ${styles.confirmationActive}` : ""}`}
+                >
+                  <input
+                    type="checkbox"
+                    className={styles.confirmationCheckbox}
+                    checked={isConfirmed}
+                    disabled={isVerifyingConversion}
+                    onChange={(event) => { void handleConfirmationChange(event.target.checked); }}
+                  />
+                  <span className={styles.confirmationText}>
+                    Confirmo el total de {total} {tripCurrency} para estos comprobantes.
+                  </span>
                 </label>
               ) : null}
               {isVerifyingConversion ? (
