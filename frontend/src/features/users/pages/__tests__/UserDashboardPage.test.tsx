@@ -308,6 +308,41 @@ describe("receipt amount payment", () => {
     expect(screen.getByLabelText("Monto de a.png")).toBeInTheDocument();
   });
 
+  it("accumulates receipts across successive picker openings instead of replacing them", async () => {
+    let payment: string | undefined;
+    setup({ onPayment: (data) => { payment = data; } });
+    await screen.findByText("Adjuntar comprobantes (hasta 5)");
+
+    // First picker opening: a single receipt.
+    upload(file("a.png"));
+    expect(screen.getByLabelText("Monto de a.png")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Monto de b.png")).toBeNull();
+
+    // Second picker opening must add to the current selection, not replace it.
+    upload(file("b.png"));
+    expect(screen.getByLabelText("Monto de a.png")).toBeInTheDocument();
+    expect(screen.getByLabelText("Monto de b.png")).toBeInTheDocument();
+    expect(screen.getByText("2 de 5 archivos seleccionados · agregar más")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    // Third picker opening keeps all three receipts visible.
+    upload(file("c.png"));
+    expect(screen.getByLabelText("Monto de a.png")).toBeInTheDocument();
+    expect(screen.getByLabelText("Monto de b.png")).toBeInTheDocument();
+    expect(screen.getByLabelText("Monto de c.png")).toBeInTheDocument();
+    expect(screen.getByText("3 de 5 archivos seleccionados · agregar más")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    // The accumulated set, not just the last selection, reaches the POST body.
+    amount("a.png", "10"); amount("b.png", "20"); amount("c.png", "30");
+    expect(screen.getByText("Total en ARS: 60.00")).toBeInTheDocument();
+    fireEvent.click(confirm());
+    await waitFor(() => expect(submit()).toBeEnabled());
+    fireEvent.submit(submit().closest("form")!);
+    await waitFor(() => expect(payment).toBeDefined());
+    expect(payment?.match(/name="files"/g)).toHaveLength(3);
+  });
+
   it("removes a receipt, clears confirmation and recomputes the total", async () => {
     setup(); await screen.findByText("Adjuntar comprobantes (hasta 5)");
     upload(file("a.png"), file("b.png")); amount("a.png", "10"); amount("b.png", "2");
