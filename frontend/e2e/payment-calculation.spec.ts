@@ -1,4 +1,4 @@
-import { expect, request, test, type APIRequestContext } from "@playwright/test";
+import { expect, request, test, type APIRequestContext, type Page } from "@playwright/test";
 import { readFile, writeFile } from "node:fs/promises";
 
 const apiUrl = requiredEnvironment("PAYMENT_E2E_API_URL");
@@ -51,65 +51,81 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Panel de pagos" })).toBeVisible();
 });
 
-test("CASE F keeps 20000 ARS through a fast ARS to USD to ARS toggle with one quote", async ({ page }) => {
+test("CASE F keeps an explicit receipt amount through a fast ARS to USD to ARS toggle with one quote", async ({ page }) => {
   await selectTrip(page, seeded.caseFTripName);
   await page.getByLabel("Fecha de pago").fill(CASE_F_FAST_DATE);
 
-  const amount = page.getByLabel("Monto a reportar");
-  const currency = page.getByLabel("Moneda en que pagaste");
-  await expect(amount).toHaveJSProperty("valueAsNumber", 20000);
+  const receipt = "case-f-fast.png";
+  await attachReceipt(page, receipt);
+  await receiptAmount(page, receipt).fill("10");
+  await expect(page.getByText("Total en ARS: 10.00")).toBeVisible();
+  // A receipt already denominated in the trip currency needs no quote at all.
+  expect(await readFxCalls()).toEqual([]);
 
-  await currency.selectOption("USD");
-  await expect(amount).not.toHaveJSProperty("valueAsNumber", 20000);
-  await currency.selectOption("ARS");
-
-  await expect(amount).toHaveJSProperty("valueAsNumber", 20000);
+  // Moving the receipt to the opposite currency costs exactly one authoritative quote.
+  await receiptCurrency(page, receipt).selectOption("USD");
   await expect.poll(readFxCalls).toEqual([CASE_F_FAST_DATE]);
+
+  // Returning to the trip currency reuses that quote instead of pricing the same date twice.
+  await receiptCurrency(page, receipt).selectOption("ARS");
+  await expect(page.getByText("Total en ARS: 10.00")).toBeVisible();
+  expect(await readFxCalls()).toEqual([CASE_F_FAST_DATE]);
 });
 
 test("CASE F ignores the delayed USD response after returning to ARS", async ({ page }) => {
   await selectTrip(page, seeded.caseFTripName);
   await page.getByLabel("Fecha de pago").fill(CASE_F_SLOW_DATE);
 
-  const amount = page.getByLabel("Monto a reportar");
-  const currency = page.getByLabel("Moneda en que pagaste");
-  await expect(amount).toHaveJSProperty("valueAsNumber", 20000);
+  const receipt = "case-f-slow.png";
+  await attachReceipt(page, receipt);
+  await receiptAmount(page, receipt).fill("10");
+  await expect(page.getByText("Total en ARS: 10.00")).toBeVisible();
 
-  await currency.selectOption("USD");
-  await currency.selectOption("ARS");
-
-  await expect(amount).toHaveJSProperty("valueAsNumber", 20000);
+  // Poll until the quote request is in flight: the provider sleeps 400ms before answering.
+  await receiptCurrency(page, receipt).selectOption("USD");
   await expect.poll(readFxCalls).toEqual([CASE_F_SLOW_DATE]);
+  await receiptCurrency(page, receipt).selectOption("ARS");
+
+  await expect(page.getByText("Total en ARS: 10.00")).toBeVisible();
+  // The abandoned USD quote lands after we are back on ARS; it must not replace the total.
   await page.waitForTimeout(600);
-  await expect(amount).toHaveJSProperty("valueAsNumber", 20000);
+  await expect(page.getByText("Total en ARS: 10.00")).toBeVisible();
+  expect(await readFxCalls()).toEqual([CASE_F_SLOW_DATE]);
 });
 
-test("CASE G displays authoritative 10.16 and preserves a valid 99.29 balance without probes", async ({ page }) => {
+test("CASE G prices an explicit amount authoritatively and keeps a valid cents balance without probes", async ({ page }) => {
   await selectTrip(page, seeded.caseGTripName);
   await page.getByLabel("Fecha de pago").fill(CASE_G_DATE);
 
-  const amount = page.getByLabel("Monto a reportar");
-  await expect(amount).toHaveJSProperty("valueAsNumber", 0.01);
-  await page.getByLabel("Moneda en que pagaste").selectOption("ARS");
-  await expect(amount).toHaveJSProperty("valueAsNumber", 10.16);
+  // 10.16 ARS is the authoritative equivalent of this trip's 0.01 USD balance at 1015.50.
+  // The conversion is asserted on the displayed trip-currency total, not on a rewritten input.
+  const crossCurrency = "case-g-cross-currency.png";
+  await attachReceipt(page, crossCurrency);
+  await receiptCurrency(page, crossCurrency).selectOption("ARS");
+  await receiptAmount(page, crossCurrency).fill("10.16");
+  await expect(page.getByText("Total en USD: 0.01")).toBeVisible();
   await expect.poll(readFxCalls).toEqual([CASE_G_DATE]);
 
+  // Drop the cross-currency receipt so the next trip is measured from a clean state.
+  await page.getByRole("button", { name: `Quitar ${crossCurrency}` }).click();
+
+  // A receipt already in the trip currency is priced without any extra quote, valid cents included.
   await selectTrip(page, seeded.validCentsTripName);
-  await expect(amount).toHaveJSProperty("valueAsNumber", 99.29);
-  await expect.poll(readFxCalls).toEqual([CASE_G_DATE]);
+  const sameCurrency = "case-g-valid-cents.png";
+  await attachReceipt(page, sameCurrency);
+  await receiptAmount(page, sameCurrency).fill("99.29");
+  await expect(page.getByText("Total en USD: 99.29")).toBeVisible();
+  expect(await readFxCalls()).toEqual([CASE_G_DATE]);
 });
 
 test("allocates a manual 500 across three 240 installments, then approves and voids the exact credits", async ({ page, context }) => {
   await selectTrip(page, seeded.threeInstallmentTripName);
-  const amount = page.getByLabel("Monto a reportar");
-  await expect(amount).toHaveJSProperty("valueAsNumber", 240);
-  await amount.fill("500");
+  const receipt = "three-installments.png";
+  await attachReceipt(page, receipt);
+  await receiptAmount(page, receipt).fill("500");
+  // #55 only requests the final allocation once the total is explicitly confirmed.
+  await confirmTotal(page, "500.00", "ARS");
   await expect(page.getByText("Se imputa en #1, #2, #3", { exact: false })).toBeVisible();
-  await page.locator('input[type="file"]').setInputFiles({
-    name: "three-installments.png",
-    mimeType: "image/png",
-    buffer: Buffer.from("synthetic payment receipt"),
-  });
 
   const registrationPromise = page.waitForResponse((response) =>
     response.url().endsWith("/api/v1/payments") && response.request().method() === "POST",
@@ -188,17 +204,18 @@ test("allocates a manual 500 across three 240 installments, then approves and vo
 test("CASE J conserves a partial cross-currency lifecycle across installments and void", async ({ page, context }) => {
   await selectTrip(page, seeded.caseJTripName);
 
-  const amount = page.getByLabel("Monto a reportar");
   await page.getByLabel("Fecha de pago").fill(CASE_J_DATE);
-  await page.getByLabel("Moneda en que pagaste").selectOption("USD");
+  const receipt = "case-j-receipt.png";
+  await attachReceipt(page, receipt);
+  // A currency with no amount yet is not priced, so the quote is only requested once the
+  // explicit amount exists.
+  await receiptCurrency(page, receipt).selectOption("USD");
+  await receiptAmount(page, receipt).fill("1.00");
   await expect.poll(readFxCalls).toEqual([CASE_J_DATE]);
-  await amount.fill("1.00");
+  await expect(page.getByText("Total en ARS: 1234.56")).toBeVisible();
+  // Confirming a cross-currency total re-fetches the equivalence before granting the preview token.
+  await confirmTotal(page, "1234.56", "ARS");
   await expect.poll(readFxCalls).toEqual([CASE_J_DATE, CASE_J_DATE]);
-  await page.locator('input[type="file"]').setInputFiles({
-    name: "case-j-receipt.png",
-    mimeType: "image/png",
-    buffer: Buffer.from("synthetic payment receipt"),
-  });
 
   const registrationResponsePromise = page.waitForResponse((response) =>
     response.url().endsWith("/api/v1/payments") && response.request().method() === "POST",
@@ -215,18 +232,20 @@ test("CASE J conserves a partial cross-currency lifecycle across installments an
   if (!pendingPayment) {
     throw new Error("The submitted payment was not reloaded from the backend history.");
   }
+  // #55 registers the payment in the trip currency using the backend-authoritative total.
+  // The receipt's USD currency is a temporary input that only feeds that conversion.
   expect(pendingPayment).toMatchObject({
     status: "PENDING",
-    reportedAmount: "1.00",
-    paymentCurrency: "USD",
-    exchangeRate: "1234.56",
+    reportedAmount: "1234.56",
+    paymentCurrency: "ARS",
+    exchangeRate: null,
     amountInTripCurrency: "1234.56",
     calculationVersion: "2",
   });
 
   const pendingAllocations = pendingPayment.installments as Array<Record<string, unknown>>;
   expect(pendingAllocations.map((allocation) => Number(allocation.installmentNumber))).toEqual([1, 2]);
-  expect(sumCents(pendingAllocations, "reportedAmount")).toBe(moneyToCents("1.00"));
+  expect(sumCents(pendingAllocations, "reportedAmount")).toBe(moneyToCents("1234.56"));
   expect(sumCents(pendingAllocations, "amountInTripCurrency")).toBe(moneyToCents("1234.56"));
 
   const installmentsBeforeReview = await getJson(
@@ -266,11 +285,11 @@ test("CASE J conserves a partial cross-currency lifecycle across installments an
   }
   expect(partiallyReviewedPayment).toMatchObject({
     status: "PARTIALLY_APPROVED",
-    reportedAmount: "1.00",
+    reportedAmount: "1234.56",
     approvedAmount: "0.50",
-    rejectedAmount: "0.50",
+    rejectedAmount: "1234.06",
     amountInTripCurrency: "1234.56",
-    approvedAmountInTripCurrency: "617.28",
+    approvedAmountInTripCurrency: "0.50",
   });
   expect(
     moneyToCents(String(partiallyReviewedPayment.approvedAmount))
@@ -282,7 +301,7 @@ test("CASE J conserves a partial cross-currency lifecycle across installments an
   expect(approvedAllocations[0]).toMatchObject({
     installmentId: firstInstallmentId,
     reportedAmount: "0.50",
-    amountInTripCurrency: "617.28",
+    amountInTripCurrency: "0.50",
   });
 
   const installmentsAfterReview = await getJson(
@@ -294,7 +313,7 @@ test("CASE J conserves a partial cross-currency lifecycle across installments an
     .filter((installment) => installment.tripId === seeded.caseJTripId)
     .sort((left, right) => Number(left.installmentNumber) - Number(right.installmentNumber));
   expect(paidCaseJInstallments.map((installment) => moneyToCents(installment.paidAmount))).toEqual([
-    moneyToCents("617.28"),
+    moneyToCents("0.50"),
     0n,
   ]);
 
@@ -314,8 +333,8 @@ test("CASE J conserves a partial cross-currency lifecycle across installments an
   }
   expect(voidedPayment).toMatchObject({
     status: "VOIDED",
-    reportedAmount: "1.00",
-    rejectedAmount: "0.50",
+    reportedAmount: "1234.56",
+    rejectedAmount: "1234.06",
   });
   expect(moneyToCents(voidedPayment.approvedAmount)).toBe(0n);
   expect(moneyToCents(voidedPayment.approvedAmountInTripCurrency)).toBe(0n);
@@ -339,13 +358,41 @@ test("CASE J conserves a partial cross-currency lifecycle across installments an
   expect(voidedAllocation).toMatchObject({
     status: "VOIDED",
     reportedAmount: "0.50",
-    paymentCurrency: "USD",
-    exchangeRate: "1234.56",
-    amountInTripCurrency: "617.28",
+    paymentCurrency: "ARS",
+    exchangeRate: null,
+    amountInTripCurrency: "0.50",
   });
   await expect.poll(readFxCalls).toEqual([CASE_J_DATE, CASE_J_DATE]);
   await adminPage.close();
 });
+
+function receiptAmount(page: Page, fileName: string) {
+  return page.getByLabel(`Monto de ${fileName}`);
+}
+
+function receiptCurrency(page: Page, fileName: string) {
+  return page.getByLabel(`Moneda de ${fileName}`);
+}
+
+/**
+ * Receipt amounts and currencies are explicit, temporary user inputs, so a receipt must be
+ * attached before any per-receipt control exists.
+ */
+async function attachReceipt(page: Page, fileName: string) {
+  await page.locator('input[type="file"]').setInputFiles({
+    name: fileName,
+    mimeType: "image/png",
+    buffer: Buffer.from("synthetic payment receipt"),
+  });
+  await expect(receiptAmount(page, fileName)).toBeVisible();
+}
+
+/** #55 requires an explicit total confirmation before the registration button unlocks. */
+async function confirmTotal(page: Page, total: string, currency: string) {
+  await page.getByRole("checkbox", { name: `Confirmo el total de ${total} ${currency} para estos comprobantes.` })
+    .check();
+  await expect(page.getByRole("button", { name: "Enviar comprobante" })).toBeEnabled();
+}
 
 async function selectTrip(page: import("@playwright/test").Page, tripName: string) {
   const select = page.getByLabel("Seleccioná el viaje");

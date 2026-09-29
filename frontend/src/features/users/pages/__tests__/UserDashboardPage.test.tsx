@@ -1,1317 +1,637 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it, vi } from "vitest";
 
-import { PaymentSubmissionDTOSchema } from "@/features/payments/types/payments-dtos";
 import { UserDashboardPage } from "@/features/users/pages/UserDashboardPage";
 import { server } from "@/test/msw-server";
 import { renderWithProviders } from "@/test/test-utils";
 
-const INSTALLMENTS_URL = "http://localhost:30002/api/v1/payments/my/installments";
-const CALCULATION_URL = "http://localhost:30002/api/v1/payments/calculation";
-const BANK_ACCOUNTS_URL = "http://localhost:30002/api/v1/bank-accounts";
-const PAYMENTS_URL = "http://localhost:30002/api/v1/payments";
+const ROOT = "http://localhost:30002/api/v1";
+const installment = (overrides: Record<string, unknown> = {}) => ({
+  tripId: 77, tripName: "Mendoza", studentId: 501, studentName: "Martina", studentDni: "45678901",
+  installmentId: 101, installmentNumber: 1, dueDate: "2026-03-25", totalDue: 200,
+  paidAmount: 0, remainingAmount: "200.00", yellowWarningDays: 5, tripCurrency: "ARS",
+  installmentStatus: "YELLOW", latestReceiptStatus: null, uiStatusCode: "DUE_SOON",
+  uiStatusLabel: "Vence pronto", uiStatusTone: "yellow", latestReceiptObservation: null,
+  userCompletedTrip: false, ...overrides,
+});
+const account = (currency: "ARS" | "USD", id: number) => ({
+  id, bankName: "ICBC", accountLabel: currency, accountHolder: "Holder", accountNumber: "123",
+  taxId: "20-123", cbu: "456", alias: `ICBC.${currency}`, currency, active: true, displayOrder: id,
+});
+const submission = {
+  submissionId: 999, status: "PENDING", reportedAmount: "12.00", approvedAmount: "0.00",
+  rejectedAmount: "0.00", paymentCurrency: "ARS", exchangeRate: null,
+  amountInTripCurrency: "12.00", approvedAmountInTripCurrency: "0.00", reportedPaymentDate: "2026-03-31",
+  paymentMethod: "BANK_TRANSFER", fileKey: "", adminObservation: null, bankAccountId: 1,
+  bankAccountDisplayName: "ICBC - ARS", bankAccountAlias: "ICBC.ARS", tripId: 77, tripName: "Mendoza",
+  tripCurrency: "ARS", studentId: 501, studentName: "Martina", studentDni: "45678901", installments: [],
+};
 
-const decimal = (value: string | number) => String(value);
-
-function makeCalculationResponse({
-  body,
-  tripCurrency,
-  remainingAmount,
-  totalPendingAmountInTripCurrency = remainingAmount,
-  reportedAmount,
-  amountInTripCurrency,
-  maxAllowedAmount = reportedAmount,
-  exchangeRate = null,
-  installments = [],
-  status = "READY",
-  message = null,
-}: {
-  body: Record<string, unknown>;
-  tripCurrency: "ARS" | "USD";
-  remainingAmount: string | number;
-  totalPendingAmountInTripCurrency?: string | number;
-  reportedAmount: string | number | null;
-  amountInTripCurrency: string | number | null;
-  maxAllowedAmount?: string | number | null;
-  exchangeRate?: string | number | null;
+type Reply = { status?: string; equivalent?: string | null; token?: string | null; delay?: Promise<void>;
   installments?: Record<string, unknown>[];
-  status?: "READY" | "AMOUNT_EXCEEDS_BALANCE" | "UNPAYABLE" | "QUOTE_UNAVAILABLE" | "EXPIRED";
-  message?: string | null;
-}) {
-  return {
-    status,
-    intent: body.intent,
-    anchorInstallmentId: body.anchorInstallmentId,
-    tripCurrency,
-    paymentCurrency: body.paymentCurrency,
-    reportedAmount: reportedAmount == null ? null : decimal(reportedAmount),
-    amountInTripCurrency: amountInTripCurrency == null ? null : decimal(amountInTripCurrency),
-    anchorRemainingAmount: decimal(remainingAmount),
-    totalPendingAmountInTripCurrency: decimal(totalPendingAmountInTripCurrency),
-    maxAllowedAmount: maxAllowedAmount == null ? null : decimal(maxAllowedAmount),
-    tripCurrencyResidual: "0.00",
-    exchangeRate: exchangeRate == null ? null : decimal(exchangeRate),
-    reportedPaymentDate: body.reportedPaymentDate,
-    calculationVersion: "2",
-    previewToken: status === "READY" ? "preview-token" : null,
-    installments,
-    message,
-  };
+  failure?: boolean };
+function setup(options: {
+  tripCurrency?: "ARS" | "USD"; reply?: (body: Record<string, unknown>) => Reply;
+  onCalculation?: (body: Record<string, unknown>) => void;
+  onPayment?: (data: string) => void;
+  paymentResponse?: Record<string, unknown>;
+  installments?: Record<string, unknown>[];
+} = {}) {
+  const tripCurrency = options.tripCurrency ?? "ARS";
+  server.use(
+    http.get(`${ROOT}/payments/my/installments`, () => HttpResponse.json(options.installments ?? [installment({ tripCurrency })])),
+    http.get(`${ROOT}/bank-accounts`, () => HttpResponse.json([account("ARS", 1), account("USD", 2)])),
+    http.post(`${ROOT}/payments/calculation`, async ({ request }) => {
+      const body = await request.json() as Record<string, unknown>;
+      options.onCalculation?.(body);
+      const reply = options.reply?.(body) ?? {};
+      if (reply.delay) await reply.delay;
+      if (reply.failure) return HttpResponse.json({ message: "Unavailable" }, { status: 503 });
+      const reportedAmount = String(body.reportedAmount);
+      return HttpResponse.json({
+        status: reply.status ?? "READY", intent: body.intent, anchorInstallmentId: body.anchorInstallmentId,
+        tripCurrency, paymentCurrency: body.paymentCurrency, reportedAmount,
+        amountInTripCurrency: reply.equivalent === undefined ? reportedAmount : reply.equivalent,
+        anchorRemainingAmount: "200.00", totalPendingAmountInTripCurrency: "200.00",
+        maxAllowedAmount: "200.00", tripCurrencyResidual: "0.00", exchangeRate: null,
+        reportedPaymentDate: body.reportedPaymentDate, calculationVersion: "2",
+        previewToken: reply.token === undefined ? `token-${body.paymentCurrency}-${reportedAmount}` : reply.token,
+        installments: reply.installments ?? [], message: reply.status && reply.status !== "READY" ? reply.status : null,
+      });
+    }),
+    http.post(`${ROOT}/payments`, async ({ request }) => {
+      options.onPayment?.(await request.clone().text());
+      return HttpResponse.json(options.paymentResponse ?? submission, { status: 201 });
+    }),
+  );
+  return renderWithProviders(<UserDashboardPage />);
 }
-
-const makeInstallment = (overrides: Record<string, unknown> = {}) => ({
-  tripId: 77,
-  tripName: "Mendoza 2026",
-  studentId: 501,
-  studentName: "Martina Slavkis",
-  studentDni: "45678901",
-  installmentId: 101,
-  installmentNumber: 1,
-  dueDate: "2026-03-25",
-  totalDue: 200,
-  paidAmount: 0,
-  remainingAmount: "200.00",
-  yellowWarningDays: 5,
-  tripCurrency: "ARS",
-  installmentStatus: "YELLOW",
-  latestReceiptStatus: null,
-  uiStatusCode: "DUE_SOON",
-  uiStatusLabel: "Vence pronto",
-  uiStatusTone: "yellow",
-  latestReceiptObservation: null,
-  userCompletedTrip: false,
-  ...overrides,
+const input = () => document.querySelector("input[type='file']") as HTMLInputElement;
+const submit = () => screen.getByRole("button", { name: "Enviar comprobante" });
+const file = (name: string, type = "image/png", bytes = "x") => new File([bytes], name, { type });
+function upload(...files: File[]) { fireEvent.change(input(), { target: { files } }); }
+function amount(name: string, value: string) {
+  fireEvent.change(screen.getByLabelText(`Monto de ${name}`), { target: { value } });
+}
+const confirm = () => screen.getByRole("checkbox", { name: /Confirmo el total/ });
+const allocation = (installmentId: number, number: number, amount: string, status: string | null) => ({
+  receiptId: null, installmentId, installmentNumber: number, dueDate: `2026-0${number + 5}-25`,
+  totalDue: "200.00", paidAmount: "0.00", remainingAmount: "200.00",
+  reportedAmount: amount, amountInTripCurrency: amount, status,
 });
 
-const bankAccount = {
-  id: 1,
-  bankName: "ICBC",
-  accountLabel: "Cuenta en pesos",
-  accountHolder: "Proyecto VA SRL",
-  accountNumber: "123",
-  taxId: "20-123",
-  cbu: "456",
-  alias: "ICBC.PESOS",
-  currency: "ARS",
-  active: true,
-  displayOrder: 1,
-};
-
-const usdBankAccount = {
-  id: 2,
-  bankName: "ICBC",
-  accountLabel: "Cuenta en dólares",
-  accountHolder: "Proyecto VA SRL",
-  accountNumber: "123-USD",
-  taxId: "20-123",
-  cbu: "456-USD",
-  alias: "ICBC.USD",
-  currency: "USD",
-  active: true,
-  displayOrder: 2,
-};
-
-describe("UserDashboardPage", () => {
-  it("shows up to five selected files and rejects a sixth or an oversize file before upload", async () => {
-    server.use(
-      http.get(INSTALLMENTS_URL, () => HttpResponse.json([makeInstallment()])),
-      http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount])),
-      http.post(CALCULATION_URL, async ({ request }) => {
-        const body = (await request.json()) as Record<string, unknown>;
-        return HttpResponse.json(
-          makeCalculationResponse({
-            body,
-            tripCurrency: "ARS",
-            remainingAmount: "200.00",
-            reportedAmount: "200.00",
-            amountInTripCurrency: "200.00",
-          }),
-        );
-      }),
-    );
-    renderWithProviders(<UserDashboardPage />);
-    const input = document.querySelector("input[type='file']") as HTMLInputElement;
-    expect(input).toHaveAttribute("multiple");
+describe("receipt amount payment", () => {
+  it("requires a receipt and an entered amount before confirmation or submission", async () => {
+    setup();
     expect(await screen.findByText("Adjuntar comprobantes (hasta 5)")).toBeInTheDocument();
     await screen.findByText("Primera cuota pendiente", { exact: false });
-    await screen.findByText("Se imputa en", { exact: false });
     await waitFor(() => expect(screen.getByLabelText("Cuenta donde acreditaste el pago")).toHaveValue("1"));
-    const submit = screen.getByRole("button", { name: "Enviar comprobante" });
-    expect(submit).toBeDisabled();
-    fireEvent.submit(submit.closest("form") as HTMLFormElement);
+    expect(submit()).toBeDisabled();
+    fireEvent.submit(submit().closest("form")!);
     expect(await screen.findByText("Debés adjuntar al menos un comprobante de pago.")).toBeInTheDocument();
-    fireEvent.change(input, {
-      target: { files: [new File(["x"], "receipt.png", { type: "image/png" })] },
-    });
-    await waitFor(() => expect(submit).not.toBeDisabled());
-    const files = Array.from(
-      { length: 5 },
-      (_, index) => new File(["x"], `receipt-${index}.png`, { type: "image/png" }),
-    );
-    fireEvent.change(input, { target: { files } });
-    expect(screen.getByText("5 de 5 archivos seleccionados")).toBeInTheDocument();
-    expect(screen.getByText("receipt-4.png")).toBeInTheDocument();
-    await waitFor(() => expect(submit).not.toBeDisabled());
-    fireEvent.change(input, { target: { files: [...files, new File(["x"], "sixth.png", { type: "image/png" })] } });
-    expect(screen.getByRole("alert")).toHaveTextContent("hasta 5 comprobantes");
-    expect(submit).toBeDisabled();
-    fireEvent.change(input, {
-      target: { files: [new File([new Uint8Array(5 * 1024 * 1024 + 1)], "big.pdf", { type: "application/pdf" })] },
-    });
-    expect(screen.getByRole("alert")).toHaveTextContent("5 MB");
+    upload(file("one.png"));
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(submit()).toBeDisabled();
   });
 
-  it("blocks registration when a cached READY calculation fails on refetch after a context reset", async () => {
-    let anchorCalculationRequests = 0;
-    let registrations = 0;
-    server.use(
-      http.get(INSTALLMENTS_URL, () =>
-        HttpResponse.json([makeInstallment({ installmentId: 901, remainingAmount: "200.00" })]),
-      ),
-      http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount])),
-      http.post(CALCULATION_URL, async ({ request }) => {
-        const body = (await request.json()) as Record<string, unknown>;
-        if (body.anchorInstallmentId !== 901) {
-          return HttpResponse.json({ message: "Calculation unavailable" }, { status: 503 });
-        }
-        anchorCalculationRequests += 1;
-        if (anchorCalculationRequests > 1) {
-          return HttpResponse.json({ message: "Calculation unavailable" }, { status: 503 });
-        }
-        return HttpResponse.json(
-          makeCalculationResponse({
-            body,
-            tripCurrency: "ARS",
-            remainingAmount: "200.00",
-            reportedAmount: "200.00",
-            amountInTripCurrency: "200.00",
-          }),
-        );
-      }),
-      http.post(PAYMENTS_URL, () => {
-        registrations += 1;
-        return HttpResponse.json({}, { status: 201 });
-      }),
-    );
-
-    const { queryClient } = renderWithProviders(<UserDashboardPage />);
-    await screen.findByLabelText("Seleccioná el viaje");
-    const submit = screen.getByRole("button", { name: "Enviar comprobante" });
-    const file = new File(["receipt"], "receipt.jpg", { type: "image/jpeg" });
-    fireEvent.change(document.querySelector("input[type='file']") as HTMLInputElement, {
-      target: { files: [file] },
-    });
-    await waitFor(() => expect(submit).not.toBeDisabled());
-    expect(anchorCalculationRequests).toBe(1);
-    const originalQuery = queryClient
-      .getQueryCache()
-      .findAll({ queryKey: ["payments", "calculation"] })
-      .find((query) => query.queryKey[2] === 901 && query.state.status === "success");
-    expect(originalQuery).toBeDefined();
-
-    queryClient.setQueryData(["payments", "my", "installments"], []);
-    await waitFor(() => expect(screen.queryByText("Primera cuota pendiente", { exact: false })).toBeNull());
-    queryClient.setQueryData(
-      ["payments", "my", "installments"],
-      [makeInstallment({ installmentId: 901, remainingAmount: "200.00" })],
-    );
-    await waitFor(() => expect(anchorCalculationRequests).toBe(2));
-    await waitFor(() => expect(originalQuery?.state.status).toBe("error"));
-    expect(originalQuery?.state.fetchStatus).toBe("idle");
-    expect(originalQuery?.state.data).toMatchObject({ status: "READY", previewToken: "preview-token" });
-    expect(await screen.findByRole("alert")).toHaveTextContent("No pudimos calcular el monto");
-    expect(submit).toBeDisabled();
-    fireEvent.submit(submit.closest("form") as HTMLFormElement);
-    expect(registrations).toBe(0);
-  });
-
-  it("uses the backend's remaining 240 and preserves a manual 500 without local conversion", async () => {
+  it("registers a single same-currency receipt with a distinct final token and global method/account", async () => {
     const requests: Record<string, unknown>[] = [];
-    server.use(
-      http.get(INSTALLMENTS_URL, () =>
-        HttpResponse.json([makeInstallment({ remainingAmount: "240.00", totalDue: 500, paidAmount: 260 })]),
-      ),
-      http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount])),
-      http.post(CALCULATION_URL, async ({ request }) => {
-        const body = (await request.json()) as Record<string, unknown>;
-        requests.push(body);
-        return HttpResponse.json(
-          makeCalculationResponse({
-            body,
-            tripCurrency: "ARS",
-            remainingAmount: "240.00",
-            totalPendingAmountInTripCurrency: "500.00",
-            reportedAmount: body.intent === "MANUAL" ? "500.00" : "240.00",
-            amountInTripCurrency: body.intent === "MANUAL" ? "500.00" : "240.00",
-            maxAllowedAmount: "500.00",
-          }),
-        );
-      }),
-    );
-
-    renderWithProviders(<UserDashboardPage />);
-    const amount = await screen.findByLabelText("Monto a reportar");
-    await waitFor(() => expect(amount).toHaveValue(240));
-    await waitFor(() => expect(requests).toContainEqual(expect.objectContaining({ intent: "REMAINING" })));
-    fireEvent.change(amount, { target: { value: "500" } });
-    await waitFor(() =>
-      expect(requests).toContainEqual(
-        expect.objectContaining({
-          intent: "MANUAL",
-          reportedAmount: "500",
-        }),
-      ),
-    );
-    expect(amount).toHaveValue(500);
+    let payment: string | undefined;
+    setup({ onCalculation: (body) => requests.push(body), onPayment: (data) => { payment = data; } });
+    await screen.findByText("Adjuntar comprobantes (hasta 5)");
+    upload(file("one.png"));
+    amount("one.png", "12.34");
+    expect(screen.getByText("Total en ARS: 12.34")).toBeInTheDocument();
+    expect(requests).toHaveLength(0);
+    fireEvent.change(screen.getByLabelText("Método de pago"), { target: { value: "DEPOSIT" } });
+    fireEvent.click(confirm());
+    await waitFor(() => expect(submit()).toBeEnabled());
+    expect(requests).toEqual([expect.objectContaining({ intent: "MANUAL", reportedAmount: "12.34", paymentCurrency: "ARS" })]);
+    fireEvent.submit(submit().closest("form")!);
+    await waitFor(() => expect(payment).toBeDefined());
+    expect(payment).toContain("12.34");
+    expect(payment).toContain("token-ARS-12.34");
+    expect(payment).toContain("DEPOSIT");
+    expect(payment).toContain('name="bankAccountId"');
+    expect(payment).toContain('name="files"');
+    expect(payment).not.toContain('name="amounts"');
   });
 
-  it.each(["EXPIRED", "AMOUNT_EXCEEDS_BALANCE", "QUOTE_UNAVAILABLE", "UNPAYABLE"] as const)(
-    "blocks registration on backend %s without a token",
-    async (status) => {
-      let registrations = 0;
-      server.use(
-        http.get(INSTALLMENTS_URL, () => HttpResponse.json([makeInstallment()])),
-        http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount])),
-        http.post(CALCULATION_URL, async ({ request }) => {
-          const body = (await request.json()) as Record<string, unknown>;
-          return HttpResponse.json(
-            makeCalculationResponse({
-              body,
-              tripCurrency: "ARS",
-              remainingAmount: "200.00",
-              reportedAmount: "200.00",
-              amountInTripCurrency: "200.00",
-              status,
-              message: `Calculation ${status}`,
-            }),
-          );
-        }),
-        http.post(PAYMENTS_URL, () => {
-          registrations += 1;
-          return HttpResponse.json({}, { status: 201 });
-        }),
-      );
+  it("sums two same-currency receipts and uploads both with one POST", async () => {
+    let payment: string | undefined;
+    setup({ onPayment: (data) => { payment = data; } });
+    await screen.findByText("Adjuntar comprobantes (hasta 5)");
+    upload(file("a.png"), file("b.png"));
+    amount("a.png", "0.10"); amount("b.png", "0.20");
+    expect(screen.getByText("Total en ARS: 0.30")).toBeInTheDocument();
+    fireEvent.click(confirm());
+    await waitFor(() => expect(submit()).toBeEnabled());
+    fireEvent.submit(submit().closest("form")!);
+    await waitFor(() => expect(payment).toBeDefined());
+    expect(payment?.match(/name="files"/g)).toHaveLength(2);
+    expect(payment).toContain("0.30");
+  });
 
-      renderWithProviders(<UserDashboardPage />);
-      expect(await screen.findByRole("alert")).toHaveTextContent(`Calculation ${status}`);
-      const submit = screen.getByRole("button", { name: "Enviar comprobante" });
-      expect(submit).toBeDisabled();
-      fireEvent.submit(submit.closest("form") as HTMLFormElement);
-      expect(registrations).toBe(0);
+  it("uses only the backend opposite-currency equivalent and never its auxiliary token for registration", async () => {
+    const requests: Record<string, unknown>[] = [];
+    let payment: string | undefined;
+    setup({ onCalculation: (body) => requests.push(body), onPayment: (data) => { payment = data; },
+      reply: (body) => body.paymentCurrency === "USD" ? { equivalent: "20.03", token: "AUX-DO-NOT-USE" } : {} });
+    await screen.findByText("Adjuntar comprobantes (hasta 5)");
+    upload(file("a.png"), file("b.png"));
+    amount("a.png", "1.02");
+    fireEvent.change(screen.getByLabelText("Moneda de b.png"), { target: { value: "USD" } });
+    amount("b.png", "2.00");
+    await screen.findByText("Total en ARS: 21.05");
+    expect(requests).toEqual([expect.objectContaining({ paymentCurrency: "USD", reportedAmount: "2.00", intent: "MANUAL" })]);
+    fireEvent.click(confirm());
+    await waitFor(() => expect(requests).toHaveLength(3));
+    await waitFor(() => expect(confirm()).toBeChecked());
+    await waitFor(() => expect(submit()).toBeEnabled());
+    expect(requests).toHaveLength(3);
+    expect(requests[1]).toMatchObject({ paymentCurrency: "USD", reportedAmount: "2.00", intent: "MANUAL" });
+    expect(requests[2]).toMatchObject({ paymentCurrency: "ARS", reportedAmount: "21.05", intent: "MANUAL" });
+    fireEvent.submit(submit().closest("form")!);
+    await waitFor(() => expect(payment).toBeDefined());
+    expect(payment).toContain("token-ARS-21.05");
+    expect(payment).not.toContain("AUX-DO-NOT-USE");
+  });
+
+  it("converts ARS to USD when the trip uses USD without client FX", async () => {
+    const requests: Record<string, unknown>[] = [];
+    setup({ tripCurrency: "USD", onCalculation: (body) => requests.push(body),
+      reply: (body) => body.paymentCurrency === "ARS" ? { equivalent: "0.03" } : {} });
+    await screen.findByText("Adjuntar comprobantes (hasta 5)");
+    upload(file("a.png"));
+    fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "ARS" } });
+    amount("a.png", "45.67");
+    await screen.findByText("Total en USD: 0.03");
+    fireEvent.click(confirm());
+    await waitFor(() => expect(submit()).toBeEnabled());
+    expect(requests).toHaveLength(3);
+    expect(requests[1]).toMatchObject({ paymentCurrency: "ARS", reportedAmount: "45.67" });
+    expect(requests[2]).toMatchObject({ paymentCurrency: "USD", reportedAmount: "0.03" });
+  });
+
+  it("refreshes the auxiliary equivalence at confirmation and requires re-confirmation on a changed quote", async () => {
+    let conversions = 0;
+    const requests: Record<string, unknown>[] = [];
+    setup({ onCalculation: (body) => requests.push(body), reply: (body) => {
+      if (body.paymentCurrency !== "USD") return {};
+      conversions += 1;
+      return { equivalent: conversions === 1 ? "20.00" : "21.00" };
+    } });
+    await screen.findByText("Primera cuota pendiente", { exact: false });
+    upload(file("a.png"));
+    fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "USD" } });
+    amount("a.png", "2");
+    await screen.findByText("Total en ARS: 20.00");
+    fireEvent.click(confirm());
+    await screen.findByText("Total en ARS: 21.00");
+    expect(confirm()).not.toBeChecked();
+    expect(submit()).toBeDisabled();
+    expect(requests).toHaveLength(2);
+    fireEvent.click(confirm());
+    await waitFor(() => expect(submit()).toBeEnabled());
+    expect(requests).toHaveLength(4);
+    expect(requests[3]).toMatchObject({ paymentCurrency: "ARS", reportedAmount: "21.00" });
+  });
+
+  it("does not enable submission if refreshed auxiliary calculation fails", async () => {
+    let conversions = 0;
+    const requests: Record<string, unknown>[] = [];
+    setup({ onCalculation: (body) => requests.push(body), reply: (body) => {
+      if (body.paymentCurrency !== "USD") return {};
+      return { failure: ++conversions > 1 };
+    } });
+    await screen.findByText("Primera cuota pendiente", { exact: false });
+    upload(file("a.png"));
+    fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "USD" } });
+    amount("a.png", "2");
+    await screen.findByText("Total en ARS: 2.00");
+    fireEvent.click(confirm());
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(submit()).toBeDisabled();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+  });
+
+  it("ignores an in-flight confirmation refresh after receipt or date edits", async () => {
+    let release: (() => void) | undefined;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    let started: (() => void) | undefined;
+    const refreshStarted = new Promise<void>((resolve) => { started = resolve; });
+    let conversions = 0;
+    const payments: string[] = [];
+    setup({ onPayment: (body) => payments.push(body), reply: (body) => {
+      if (body.paymentCurrency !== "USD") return {};
+      if (++conversions === 2) { started?.(); return { delay: pending, equivalent: "900.00" }; }
+      return { equivalent: "20.00" };
+    } });
+    await screen.findByText("Primera cuota pendiente", { exact: false });
+    upload(file("a.png")); fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "USD" } });
+    amount("a.png", "2"); await screen.findByText("Total en ARS: 20.00");
+    fireEvent.click(confirm());
+    try {
+      await refreshStarted;
+      amount("a.png", "3");
+      fireEvent.change(screen.getByLabelText("Fecha de pago"), { target: { value: "2026-10-01" } });
+      release?.();
+      await screen.findByText("Total en ARS: 20.00");
+      expect(confirm()).not.toBeChecked();
+      expect(submit()).toBeDisabled();
+      expect(payments).toHaveLength(0);
+    } finally { release?.(); }
+  });
+
+  it("does not accept an aged auxiliary equivalence for confirmation", async () => {
+    setup({ reply: (body) => body.paymentCurrency === "USD" ? { equivalent: "20.00" } : {} });
+    await screen.findByText("Primera cuota pendiente", { exact: false });
+    upload(file("a.png")); fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "USD" } });
+    amount("a.png", "2"); await screen.findByText("Total en ARS: 20.00");
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now + 240_001);
+    try {
+      fireEvent.change(screen.getByLabelText("Método de pago"), { target: { value: "CASH" } });
+      expect(screen.queryByRole("checkbox")).toBeNull();
+      expect(submit()).toBeDisabled();
+    } finally { clock.mockRestore(); }
+  });
+
+  it.each(["", "0", "-1", "1.005", "100000000", "oops"])("rejects invalid amount %s", async (value) => {
+    const requests: unknown[] = [];
+    setup({ onCalculation: (body) => requests.push(body) });
+    await screen.findByText("Adjuntar comprobantes (hasta 5)");
+    upload(file("a.png")); amount("a.png", value);
+    expect(submit()).toBeDisabled();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(requests).toHaveLength(0);
+  });
+
+  it("caps receipts at five by disabling upload instead of raising a file error", async () => {
+    setup(); await screen.findByText("Adjuntar comprobantes (hasta 5)");
+    expect(input()).toBeEnabled();
+    upload(...Array.from({ length: 4 }, (_, i) => file(`${i}.png`)));
+    expect(input()).toBeEnabled();
+
+    // 4 receipts + a two-file selection accepts only what completes five, with no persistent error.
+    upload(file("four.png"), file("five.png"));
+    expect(screen.getByText("Máximo de 5 comprobantes alcanzado")).toBeInTheDocument();
+    expect(input()).toBeDisabled();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getAllByRole("button", { name: /^Quitar / })).toHaveLength(5);
+    expect(screen.getByLabelText("Monto de four.png")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Monto de five.png")).toBeNull();
+
+    // There is no normal way to select a sixth receipt once the cap is reached.
+    upload(file("six.png"));
+    expect(screen.getAllByRole("button", { name: /^Quitar / })).toHaveLength(5);
+    expect(screen.queryByLabelText("Monto de six.png")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    // Removing one receipt re-enables uploading.
+    fireEvent.click(screen.getByRole("button", { name: "Quitar four.png" }));
+    expect(input()).toBeEnabled();
+    expect(screen.queryByText("Máximo de 5 comprobantes alcanzado")).toBeNull();
+    upload(file("six.png"));
+    expect(screen.getByLabelText("Monto de six.png")).toBeInTheDocument();
+  });
+
+  it("keeps fileError reserved for real file errors and preserves already selected files", async () => {
+    setup(); await screen.findByText("Adjuntar comprobantes (hasta 5)");
+    upload(file("a.png"));
+    upload(new File([new Uint8Array(5 * 1024 * 1024 + 1)], "huge.pdf", { type: "application/pdf" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("5 MB");
+    expect(screen.getByLabelText("Monto de a.png")).toBeInTheDocument();
+    upload(file("bad.txt", "text/plain"));
+    expect(screen.getByRole("alert")).toHaveTextContent("JPG, PNG, WEBP o PDF");
+    expect(screen.getByLabelText("Monto de a.png")).toBeInTheDocument();
+  });
+
+  it("accumulates receipts across successive picker openings instead of replacing them", async () => {
+    let payment: string | undefined;
+    setup({ onPayment: (data) => { payment = data; } });
+    await screen.findByText("Adjuntar comprobantes (hasta 5)");
+
+    // First picker opening: a single receipt.
+    upload(file("a.png"));
+    expect(screen.getByLabelText("Monto de a.png")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Monto de b.png")).toBeNull();
+
+    // Second picker opening must add to the current selection, not replace it.
+    upload(file("b.png"));
+    expect(screen.getByLabelText("Monto de a.png")).toBeInTheDocument();
+    expect(screen.getByLabelText("Monto de b.png")).toBeInTheDocument();
+    expect(screen.getByText("2 de 5 archivos seleccionados · agregar más")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    // Third picker opening keeps all three receipts visible.
+    upload(file("c.png"));
+    expect(screen.getByLabelText("Monto de a.png")).toBeInTheDocument();
+    expect(screen.getByLabelText("Monto de b.png")).toBeInTheDocument();
+    expect(screen.getByLabelText("Monto de c.png")).toBeInTheDocument();
+    expect(screen.getByText("3 de 5 archivos seleccionados · agregar más")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    // The accumulated set, not just the last selection, reaches the POST body.
+    amount("a.png", "10"); amount("b.png", "20"); amount("c.png", "30");
+    expect(screen.getByText("Total en ARS: 60.00")).toBeInTheDocument();
+    fireEvent.click(confirm());
+    await waitFor(() => expect(submit()).toBeEnabled());
+    fireEvent.submit(submit().closest("form")!);
+    await waitFor(() => expect(payment).toBeDefined());
+    expect(payment?.match(/name="files"/g)).toHaveLength(3);
+  });
+
+  it("removes a receipt, clears confirmation and recomputes the total", async () => {
+    setup(); await screen.findByText("Adjuntar comprobantes (hasta 5)");
+    upload(file("a.png"), file("b.png")); amount("a.png", "10"); amount("b.png", "2");
+    fireEvent.click(confirm()); await waitFor(() => expect(submit()).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Quitar b.png" }));
+    expect(submit()).toBeDisabled();
+    expect(confirm()).not.toBeChecked();
+    expect(screen.getByText("Total en ARS: 10.00")).toBeInTheDocument();
+  });
+
+  it.each(["amount", "currency", "files", "date", "trip"])("revokes confirmation immediately on %s edit", async (change) => {
+    setup({ installments: [installment(), installment({ tripId: 88, installmentId: 201, studentId: 502 })] });
+    await screen.findByText("Adjuntar comprobantes (hasta 5)");
+    upload(file("a.png")); amount("a.png", "10"); fireEvent.click(confirm());
+    await waitFor(() => expect(submit()).toBeEnabled());
+    if (change === "amount") amount("a.png", "11");
+    if (change === "currency") fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "USD" } });
+    if (change === "files") upload(file("b.png"));
+    if (change === "date") fireEvent.change(screen.getByLabelText("Fecha de pago"), { target: { value: "2026-10-01" } });
+    if (change === "trip") fireEvent.change(screen.getByLabelText("Seleccioná el viaje"), { target: { value: "88:502" } });
+    expect(submit()).toBeDisabled();
+    if (screen.queryByRole("checkbox")) expect(confirm()).not.toBeChecked();
+  });
+
+  it.each(["EXPIRED", "AMOUNT_EXCEEDS_BALANCE", "UNPAYABLE", "QUOTE_UNAVAILABLE"]) (
+    "blocks registration for %s final calculation", async (status) => {
+      let payments = 0;
+      setup({ reply: () => ({ status, token: null }), onPayment: () => { payments++; } });
+      await screen.findByText("Adjuntar comprobantes (hasta 5)");
+      upload(file("a.png")); amount("a.png", "12"); fireEvent.click(confirm());
+      expect(await screen.findByRole("alert")).toHaveTextContent(status);
+      expect(submit()).toBeDisabled(); fireEvent.submit(submit().closest("form")!);
+      expect(payments).toBe(0);
     },
   );
 
-  it("seeds REMAINING input from the backend canonical anchor balance", async () => {
-    let signalCalculationStarted: (() => void) | undefined;
-    const calculationStarted = new Promise<void>((resolve) => {
-      signalCalculationStarted = resolve;
-    });
-    let releaseCalculation: (() => void) | undefined;
-    const calculationBlocked = new Promise<void>((resolve) => {
-      releaseCalculation = resolve;
-    });
+  it("blocks on auxiliary failure and never sends a final calculation", async () => {
+    const requests: Record<string, unknown>[] = [];
+    setup({ onCalculation: (body) => requests.push(body), reply: (body) => ({ failure: body.paymentCurrency === "USD" }) });
+    await screen.findByText("Adjuntar comprobantes (hasta 5)");
+    upload(file("a.png")); fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "USD" } });
+    amount("a.png", "1");
+    expect(await screen.findByRole("alert")).toHaveTextContent("No pudimos calcular");
+    expect(submit()).toBeDisabled(); expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(requests).toHaveLength(1);
+  });
 
-    server.use(
-      http.get(INSTALLMENTS_URL, () =>
-        HttpResponse.json([
-          makeInstallment({
-            installmentId: 901,
-            totalDue: 200,
-            paidAmount: 0,
-            remainingAmount: "199.99",
-          }),
-        ]),
-      ),
-      http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount])),
-      http.post(CALCULATION_URL, async ({ request }) => {
-        const body = (await request.json()) as Record<string, unknown>;
-        signalCalculationStarted?.();
-        await calculationBlocked;
-        return HttpResponse.json(
-          makeCalculationResponse({
-            body,
-            tripCurrency: "ARS",
-            remainingAmount: "199.99",
-            reportedAmount: "199.99",
-            amountInTripCurrency: "199.99",
-          }),
-        );
-      }),
-    );
-
-    renderWithProviders(<UserDashboardPage />);
-    const amountInput = await screen.findByLabelText("Monto a reportar");
-    await calculationStarted;
-
+  it("never accepts a stale conversion after a receipt amount changes", async () => {
+    let started: (() => void) | undefined;
+    const requestStarted = new Promise<void>((resolve) => { started = resolve; });
+    let release: (() => void) | undefined;
+    const delayed = new Promise<void>((resolve) => { release = resolve; });
+    setup({ onCalculation: (body) => {
+      if (body.paymentCurrency === "USD" && body.reportedAmount === "1.00") started?.();
+    }, reply: (body) => body.paymentCurrency === "USD" && body.reportedAmount === "1.00"
+      ? { delay: delayed, equivalent: "999.00" } : { equivalent: "3.00" } });
+    await screen.findByText("Adjuntar comprobantes (hasta 5)");
+    upload(file("a.png")); fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "USD" } });
+    amount("a.png", "1");
     try {
-      expect(amountInput).toHaveValue(199.99);
-    } finally {
-      releaseCalculation?.();
-    }
+      await requestStarted;
+      amount("a.png", "2");
+      await screen.findByText("Total en ARS: 3.00");
+      release?.();
+      await waitFor(() => expect(screen.getByText("Total en ARS: 3.00")).toBeInTheDocument());
+    } finally { release?.(); }
   });
 
-  it("does not create an enabled calculation query for a sub-cent manual amount", async () => {
-    let remainingRequests = 0;
-    let manualRequests = 0;
-    server.use(
-      http.get(INSTALLMENTS_URL, () =>
-        HttpResponse.json([makeInstallment({ installmentId: 902, remainingAmount: "200.00" })]),
-      ),
-      http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount])),
-      http.post(CALCULATION_URL, async ({ request }) => {
-        const body = (await request.json()) as Record<string, unknown>;
-        if (body.intent === "MANUAL") {
-          manualRequests += 1;
-          return HttpResponse.json(
-            makeCalculationResponse({
-              body,
-              tripCurrency: "ARS",
-              remainingAmount: "200.00",
-              reportedAmount: String(body.reportedAmount),
-              amountInTripCurrency: String(body.reportedAmount),
-            }),
-          );
-        }
-
-        remainingRequests += 1;
-        return HttpResponse.json(
-          makeCalculationResponse({
-            body,
-            tripCurrency: "ARS",
-            remainingAmount: "200.00",
-            reportedAmount: "200.00",
-            amountInTripCurrency: "200.00",
-          }),
-        );
-      }),
-    );
-
-    const { queryClient } = renderWithProviders(<UserDashboardPage />);
-    const amountInput = await screen.findByLabelText("Monto a reportar");
-    await waitFor(() => expect(remainingRequests).toBe(1));
-    await waitFor(() => expect(amountInput).toHaveValue(200));
-
-    fireEvent.change(amountInput, { target: { value: "1.005" } });
-    await waitFor(() => expect(amountInput).toHaveValue(1.005));
-
-    const enabledManualQueries = queryClient
-      .getQueryCache()
-      .findAll({ queryKey: ["payments", "calculation"] })
-      .filter((query) => query.queryKey[5] === "MANUAL" && query.queryKey[6] === "1.005");
-    expect(enabledManualQueries).toHaveLength(0);
-    expect(manualRequests).toBe(0);
+  it("blocks submission on a failed final query even if the old READY response stays cached", async () => {
+    let failures = false;
+    const { queryClient } = setup({ reply: () => ({ failure: failures }) });
+    await screen.findByText("Adjuntar comprobantes (hasta 5)");
+    upload(file("a.png")); amount("a.png", "12"); fireEvent.click(confirm());
+    await waitFor(() => expect(submit()).toBeEnabled());
+    failures = true;
+    await queryClient.invalidateQueries({ queryKey: ["payments", "calculation"] });
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("No pudimos calcular"));
+    expect(submit()).toBeDisabled();
   });
 
-  it("muestra estados y permite enviar un comprobante con monto libre", async () => {
-    let calculationPayload: Record<string, unknown> | null = null;
-    let paymentPayload: Record<string, FormDataEntryValue> | null = null;
+  it("does not allow submission while a final calculation is pending", async () => {
+    let release: (() => void) | undefined;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    setup({ reply: () => ({ delay: pending }) });
+    await screen.findByText("Primera cuota pendiente", { exact: false });
+    upload(file("a.png")); amount("a.png", "4.00"); fireEvent.click(confirm());
+    expect(submit()).toBeDisabled();
+    try {
+      release?.();
+      await waitFor(() => expect(submit()).toBeEnabled());
+    } finally { release?.(); }
+  });
 
-    server.use(
-      http.get(INSTALLMENTS_URL, () =>
-        HttpResponse.json([
-          makeInstallment({
-            installmentId: 101,
-            installmentNumber: 1,
-            uiStatusCode: "UNDER_REVIEW",
-            uiStatusLabel: "En revisión",
-            uiStatusTone: "yellow",
-            latestReceiptStatus: "PENDING",
-          }),
-          makeInstallment({
-            installmentId: 102,
-            installmentNumber: 2,
-            dueDate: "2026-04-25",
-            uiStatusCode: "RECEIPT_REJECTED",
-            uiStatusLabel: "Comprobante rechazado",
-            uiStatusTone: "red",
-            latestReceiptStatus: "REJECTED",
-            latestReceiptObservation: "El comprobante está borroso.",
-          }),
-          makeInstallment({
-            installmentId: 103,
-            installmentNumber: 3,
-            dueDate: "2026-05-25",
-            uiStatusCode: "UP_TO_DATE",
-            uiStatusLabel: "Al día",
-            uiStatusTone: "green",
-            paidAmount: 50,
-            remainingAmount: "150.00",
-          }),
-          makeInstallment({
-            tripId: 88,
-            tripName: "Bariloche 2026",
-            studentId: 502,
-            studentName: "Bruno Slavkis",
-            studentDni: "45678902",
-            installmentId: 201,
-            installmentNumber: 1,
-            dueDate: "2026-06-25",
-            uiStatusCode: "DUE_SOON",
-            uiStatusLabel: "Vence pronto",
-            uiStatusTone: "yellow",
-          }),
-          makeInstallment({
-            tripId: 88,
-            tripName: "Bariloche 2026",
-            studentId: 502,
-            studentName: "Bruno Slavkis",
-            studentDni: "45678902",
-            installmentId: 202,
-            installmentNumber: 2,
-            dueDate: "2026-07-25",
-            uiStatusCode: "UP_TO_DATE",
-            uiStatusLabel: "Al día",
-            uiStatusTone: "green",
-          }),
-        ]),
-      ),
-      http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount, usdBankAccount])),
-      http.post(CALCULATION_URL, async ({ request }) => {
-        const body = (await request.json()) as Record<string, unknown>;
-        calculationPayload = body;
-        const reportedAmount = String(body.reportedAmount ?? 200);
+  it("keeps submission blocked for an in-review trip", async () => {
+    setup({ installments: [installment({ latestReceiptStatus: "PENDING", uiStatusCode: "UNDER_REVIEW" })] });
+    expect(await screen.findByText(/Esta inscripción tiene comprobantes pendientes de revisión/)).toBeInTheDocument();
+    expect(submit()).toBeDisabled();
+    expect(screen.getByLabelText("Fecha de pago")).toBeDisabled();
+  });
 
-        return HttpResponse.json(
-          makeCalculationResponse({
-            body,
-            tripCurrency: "ARS",
-            remainingAmount: "200.00",
-            totalPendingAmountInTripCurrency: "400.00",
-            reportedAmount,
-            amountInTripCurrency: reportedAmount,
-            maxAllowedAmount: "400.00",
-            installments: [
-              {
-                receiptId: null,
-                installmentId: 201,
-                installmentNumber: 1,
-                dueDate: "2026-06-25",
-                totalDue: "200.00",
-                paidAmount: "0.00",
-                remainingAmount: "200.00",
-                reportedAmount: "200.00",
-                amountInTripCurrency: "200.00",
-                status: null,
-              },
-              {
-                receiptId: null,
-                installmentId: 202,
-                installmentNumber: 2,
-                dueDate: "2026-07-25",
-                totalDue: "200.00",
-                paidAmount: "0.00",
-                remainingAmount: "200.00",
-                reportedAmount: "150.00",
-                amountInTripCurrency: "150.00",
-                status: null,
-              },
-            ],
-          }),
-        );
-      }),
-      http.post(PAYMENTS_URL, async ({ request }) => {
-        const multipartBody = await request.clone().text();
-        const readMultipartField = (field: string) =>
-          multipartBody.match(new RegExp(`name="${field}"\\r\\n\\r\\n([^\\r]+)`))?.[1] ?? null;
-        paymentPayload = {
-          anchorInstallmentId: readMultipartField("anchorInstallmentId") ?? "",
-          reportedAmount: readMultipartField("reportedAmount") ?? "",
-          bankAccountId: readMultipartField("bankAccountId") ?? "",
-        };
-
-        const response = {
-          submissionId: 999,
-          status: "PENDING",
-          reportedAmount: "350.00",
-          approvedAmount: "0.00",
-          rejectedAmount: "0.00",
-          paymentCurrency: "ARS",
-          exchangeRate: null,
-          amountInTripCurrency: "350.00",
-          approvedAmountInTripCurrency: "0.00",
-          reportedPaymentDate: "2026-03-31",
-          paymentMethod: "BANK_TRANSFER",
-          fileKey: "",
-          adminObservation: null,
-          bankAccountId: 1,
-          bankAccountDisplayName: "ICBC - Cuenta en pesos",
-          bankAccountAlias: "ICBC.PESOS",
-          tripId: 88,
-          tripName: "Bariloche 2026",
-          tripCurrency: "ARS",
-          studentId: 502,
-          studentName: "Bruno Slavkis",
-          studentDni: "45678902",
-          installments: [
-            {
-              receiptId: null,
-              installmentId: 201,
-              installmentNumber: 1,
-              dueDate: "2026-06-25",
-              totalDue: "200.00",
-              paidAmount: "0.00",
-              remainingAmount: "200.00",
-              reportedAmount: "200.00",
-              amountInTripCurrency: "200.00",
-              status: "PENDING",
-            },
-            {
-              receiptId: null,
-              installmentId: 202,
-              installmentNumber: 2,
-              dueDate: "2026-07-25",
-              totalDue: "200.00",
-              paidAmount: "0.00",
-              remainingAmount: "200.00",
-              reportedAmount: "150.00",
-              amountInTripCurrency: "150.00",
-              status: "PENDING",
-            },
-          ],
-        };
-        PaymentSubmissionDTOSchema.parse(response);
-        return HttpResponse.json(response, { status: 201 });
-      }),
-    );
-
-    renderWithProviders(<UserDashboardPage />);
-
-    expect(await screen.findByText("En revisión")).toBeInTheDocument();
-    expect(screen.getByText("Comprobante rechazado")).toBeInTheDocument();
+  it("preserves status, rejection, partial-payment and multi-installment display through a submitted payment", async () => {
+    const rows = [
+      installment({ installmentId: 101, latestReceiptStatus: "PENDING", uiStatusCode: "UNDER_REVIEW",
+        uiStatusLabel: "En revisión" }),
+      installment({ installmentId: 102, installmentNumber: 2, latestReceiptStatus: "REJECTED",
+        uiStatusCode: "RECEIPT_REJECTED", uiStatusLabel: "Comprobante rechazado",
+        latestReceiptObservation: "El comprobante está borroso." }),
+      installment({ installmentId: 103, installmentNumber: 3, uiStatusCode: "UP_TO_DATE",
+        uiStatusLabel: "Al día", paidAmount: 50, remainingAmount: "150.00" }),
+      installment({ tripId: 88, tripName: "Bariloche 2026", studentId: 502, studentName: "Bruno",
+        installmentId: 201 }),
+      installment({ tripId: 88, tripName: "Bariloche 2026", studentId: 502, studentName: "Bruno",
+        installmentId: 202, installmentNumber: 2, dueDate: "2026-07-25" }),
+    ];
+    const allocations = [allocation(201, 1, "200.00", null), allocation(202, 2, "150.00", null)];
+    let payment: string | undefined;
+    setup({ installments: rows, onPayment: (body) => { payment = body; },
+      reply: () => ({ installments: allocations }),
+      paymentResponse: { ...submission, tripId: 88, tripName: "Bariloche 2026", studentId: 502,
+        studentName: "Bruno", reportedAmount: "350.00", amountInTripCurrency: "350.00",
+        installments: allocations.map((row) => ({ ...row, status: "PENDING" })) },
+    });
+    expect(await screen.findByText("Comprobante rechazado")).toBeInTheDocument();
+    expect(screen.getAllByText("En revisión").length).toBeGreaterThan(0);
     expect(screen.getByText("⚠ El comprobante está borroso.")).toBeInTheDocument();
     expect(screen.getByText("Tu comprobante está siendo revisado por el administrador")).toBeInTheDocument();
-
-    fireEvent.change(screen.getByLabelText("Seleccioná el viaje"), {
-      target: { value: "88:502" },
-    });
-    fireEvent.change(await screen.findByLabelText("Monto a reportar"), {
-      target: { value: "350" },
-    });
-
-    expect(await screen.findByText("Estado de cuenta")).toBeInTheDocument();
-
-    await waitFor(() =>
-      expect(calculationPayload).toMatchObject({
-        anchorInstallmentId: 201,
-        intent: "MANUAL",
-        reportedAmount: "350",
-        paymentCurrency: "ARS",
-      }),
-    );
-
-    expect(await screen.findByText((text) => text.includes("Se imputa en #1, #2"))).toBeInTheDocument();
-
-    const fileInput = document.querySelector("input[type='file']") as HTMLInputElement;
-    const file = new File(["test"], "comprobante.jpg", { type: "image/jpeg" });
-    fireEvent.change(fileInput, { target: { files: [file] } });
-
-    const submitBtn = await screen.findByRole("button", { name: "Enviar comprobante" });
-    await waitFor(() => expect(submitBtn).not.toBeDisabled());
-    fireEvent.submit(submitBtn.closest("form") as HTMLFormElement);
-
-    await waitFor(() => expect(paymentPayload).not.toBeNull());
+    expect(screen.getByText(/Abonado:/)).toHaveTextContent("Resta:");
+    fireEvent.change(screen.getByLabelText("Seleccioná el viaje"), { target: { value: "88:502" } });
+    await waitFor(() => expect(screen.getByLabelText("Seleccioná el viaje")).toHaveValue("88:502"));
+    await screen.findByText("Primera cuota pendiente #1", { exact: false });
+    upload(file("comprobante.jpg", "image/jpeg")); amount("comprobante.jpg", "350");
+    fireEvent.click(confirm());
+    await screen.findByText((text) => text.includes("Se imputa en #1, #2"));
+    await waitFor(() => expect(submit()).toBeEnabled());
+    fireEvent.submit(submit().closest("form")!);
+    await waitFor(() => expect(payment).toContain("350.00"));
+    expect(payment).toContain('name="anchorInstallmentId"\r\n\r\n201');
     await screen.findByText("¡Pago reportado!");
-    expect(screen.getAllByText("Bariloche 2026 - Bruno Slavkis").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("#1, #2").length).toBeGreaterThan(0);
     expect(screen.getByText("comprobante.jpg")).toBeInTheDocument();
-
-    await waitFor(() =>
-      expect(paymentPayload).toMatchObject({
-        anchorInstallmentId: "201",
-        reportedAmount: "350",
-        bankAccountId: "1",
-      }),
-    );
   });
 
-  it("actualiza automaticamente el monto a reportar al cambiar de pesos a dolares", async () => {
-    server.use(
-      http.get(INSTALLMENTS_URL, () =>
-        HttpResponse.json([
-          makeInstallment({
-            installmentId: 201,
-            installmentNumber: 1,
-            dueDate: "2026-06-25",
-            totalDue: 200,
-            paidAmount: 0,
-          }),
-        ]),
-      ),
-      http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount, usdBankAccount])),
-      http.post(CALCULATION_URL, async ({ request }) => {
-        const body = (await request.json()) as Record<string, unknown>;
-        const paymentCurrency = body.paymentCurrency;
-
-        if (paymentCurrency === "USD") {
-          return HttpResponse.json(
-            makeCalculationResponse({
-              body,
-              tripCurrency: "ARS",
-              remainingAmount: "200.00",
-              reportedAmount: "0.20",
-              maxAllowedAmount: "0.20",
-              exchangeRate: "1000.00",
-              amountInTripCurrency: "200.00",
-              installments: [
-                {
-                  receiptId: null,
-                  installmentId: 201,
-                  installmentNumber: 1,
-                  dueDate: "2026-06-25",
-                  totalDue: "200.00",
-                  paidAmount: "0.00",
-                  remainingAmount: "200.00",
-                  reportedAmount: "0.20",
-                  amountInTripCurrency: "200.00",
-                  status: null,
-                },
-              ],
-            }),
-          );
-        }
-
-        const reportedAmount = String(body.reportedAmount ?? 200);
-        return HttpResponse.json(
-          makeCalculationResponse({
-            body,
-            tripCurrency: "ARS",
-            remainingAmount: "200.00",
-            reportedAmount,
-            maxAllowedAmount: "200.00",
-            amountInTripCurrency: reportedAmount,
-            installments: [
-              {
-                receiptId: null,
-                installmentId: 201,
-                installmentNumber: 1,
-                dueDate: "2026-06-25",
-                totalDue: "200.00",
-                paidAmount: "0.00",
-                remainingAmount: "200.00",
-                reportedAmount,
-                amountInTripCurrency: reportedAmount,
-                status: null,
-              },
-            ],
-          }),
-        );
-      }),
-    );
-
-    renderWithProviders(<UserDashboardPage />);
-
-    const amountInput = await screen.findByLabelText("Monto a reportar");
-    const currencySelect = screen.getByLabelText("Moneda en que pagaste");
-
-    await waitFor(() => expect(amountInput).toHaveValue(200));
-    expect(currencySelect).toHaveValue("ARS");
-
-    fireEvent.change(currencySelect, { target: { value: "USD" } });
-
-    await waitFor(() => {
-      expect(currencySelect).toHaveValue("USD");
-      expect(amountInput).toHaveValue(0.2);
-    });
+  it("keeps the bank account anchored to the trip currency, not a receipt currency", async () => {
+    setup({ installments: [installment({ tripCurrency: "USD", remainingAmount: "99.29", totalDue: 99.29 })],
+      tripCurrency: "USD",
+      reply: (body) => body.paymentCurrency === "ARS" ? { equivalent: "10.16" } : {} });
+    await waitFor(() => expect(screen.getByLabelText("Cuenta donde acreditaste el pago")).toHaveValue("2"));
+    upload(file("a.png")); amount("a.png", "10.16");
+    fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "ARS" } });
+    await screen.findByText("Total en USD: 10.16");
+    expect(screen.getByLabelText("Cuenta donde acreditaste el pago")).toHaveValue("2");
+    expect(confirm()).not.toBeChecked();
   });
 
-  it("actualiza automaticamente una cuota en dolares al cambiar a pesos y volver a dolares", async () => {
-    const exchangeRate = 1400;
-
-    server.use(
-      http.get(INSTALLMENTS_URL, () =>
-        HttpResponse.json([
-          makeInstallment({
-            installmentId: 301,
-            installmentNumber: 1,
-            dueDate: "2026-06-25",
-            totalDue: 300,
-            paidAmount: 0,
-            remainingAmount: "300.00",
-            tripCurrency: "USD",
-          }),
-        ]),
-      ),
-      http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount, usdBankAccount])),
-      http.post(CALCULATION_URL, async ({ request }) => {
-        const body = (await request.json()) as Record<string, unknown>;
-        const paymentCurrency = body.paymentCurrency;
-
-        if (paymentCurrency === "ARS") {
-          return HttpResponse.json(
-            makeCalculationResponse({
-              body,
-              tripCurrency: "USD",
-              remainingAmount: "300.00",
-              reportedAmount: "420000.00",
-              maxAllowedAmount: "420000.00",
-              exchangeRate: decimal(exchangeRate),
-              amountInTripCurrency: "300.00",
-              installments: [
-                {
-                  receiptId: null,
-                  installmentId: 301,
-                  installmentNumber: 1,
-                  dueDate: "2026-06-25",
-                  totalDue: "300.00",
-                  paidAmount: "0.00",
-                  remainingAmount: "300.00",
-                  reportedAmount: "420000.00",
-                  amountInTripCurrency: "300.00",
-                  status: null,
-                },
-              ],
-            }),
-          );
-        }
-
-        const reportedAmount = String(body.reportedAmount ?? 300);
-        return HttpResponse.json(
-          makeCalculationResponse({
-            body,
-            tripCurrency: "USD",
-            remainingAmount: "300.00",
-            reportedAmount,
-            maxAllowedAmount: "300.00",
-            amountInTripCurrency: reportedAmount,
-            installments: [
-              {
-                receiptId: null,
-                installmentId: 301,
-                installmentNumber: 1,
-                dueDate: "2026-06-25",
-                totalDue: "300.00",
-                paidAmount: "0.00",
-                remainingAmount: "300.00",
-                reportedAmount,
-                amountInTripCurrency: reportedAmount,
-                status: null,
-              },
-            ],
-          }),
-        );
-      }),
-    );
-
-    renderWithProviders(<UserDashboardPage />);
-
-    const amountInput = await screen.findByLabelText("Monto a reportar");
-    const currencySelect = screen.getByLabelText("Moneda en que pagaste");
-
-    await waitFor(() => expect(amountInput).toHaveValue(300));
-    expect(currencySelect).toHaveValue("USD");
-
-    fireEvent.change(currencySelect, { target: { value: "ARS" } });
-
-    await waitFor(() => {
-      expect(currencySelect).toHaveValue("ARS");
-      expect(amountInput).toHaveValue(420000);
-    });
-
-    fireEvent.change(currencySelect, { target: { value: "USD" } });
-
-    await waitFor(() => {
-      expect(currencySelect).toHaveValue("USD");
-      expect(amountInput).toHaveValue(300);
-    });
+  it("requires re-confirmation when an edited amount returns to its prior value", async () => {
+    setup(); await screen.findByText("Primera cuota pendiente", { exact: false });
+    upload(file("a.png")); amount("a.png", "10"); fireEvent.click(confirm());
+    await waitFor(() => expect(submit()).toBeEnabled());
+    amount("a.png", "11"); amount("a.png", "10");
+    expect(confirm()).not.toBeChecked();
+    expect(submit()).toBeDisabled();
   });
 
-  it("ignora una respuesta de conversión anterior a una edición manual", async () => {
-    let releaseUsdPreview: (() => void) | undefined;
-    const usdPreviewBlocked = new Promise<void>((resolve) => {
-      releaseUsdPreview = resolve;
-    });
-
-    server.use(
-      http.get(INSTALLMENTS_URL, () =>
-        HttpResponse.json([
-          makeInstallment({
-            installmentId: 401,
-            totalDue: 20000,
-            paidAmount: 0,
-            remainingAmount: "20000.00",
-            tripCurrency: "ARS",
-          }),
-        ]),
-      ),
-      http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount, usdBankAccount])),
-      http.post(CALCULATION_URL, async ({ request }) => {
-        const body = (await request.json()) as Record<string, unknown>;
-        const paymentCurrency = body.paymentCurrency as string;
-
-        if (paymentCurrency === "USD" && body.intent === "REMAINING") {
-          await usdPreviewBlocked;
-          return HttpResponse.json(
-            makeCalculationResponse({
-              body,
-              tripCurrency: "ARS",
-              remainingAmount: "20000.00",
-              reportedAmount: "16.20",
-              maxAllowedAmount: "16.20",
-              exchangeRate: "1234.56",
-              amountInTripCurrency: "19999.87",
-            }),
-          );
-        }
-
-        const reportedAmount = String(body.reportedAmount ?? 20000);
-        return HttpResponse.json(
-          makeCalculationResponse({
-            body,
-            tripCurrency: "ARS",
-            remainingAmount: "20000.00",
-            reportedAmount,
-            maxAllowedAmount: paymentCurrency === "USD" ? "16.20" : "20000.00",
-            exchangeRate: paymentCurrency === "USD" ? "1234.56" : null,
-            amountInTripCurrency: paymentCurrency === "USD" ? "15234.47" : reportedAmount,
-          }),
-        );
-      }),
-    );
-
-    renderWithProviders(<UserDashboardPage />);
-
-    const amountInput = await screen.findByLabelText("Monto a reportar");
-    const currencySelect = screen.getByLabelText("Moneda en que pagaste");
-    await waitFor(() => expect(amountInput).toHaveValue(20000));
-
-    fireEvent.change(currencySelect, { target: { value: "USD" } });
-    fireEvent.change(amountInput, { target: { value: "12.34" } });
-    releaseUsdPreview?.();
-
-    await waitFor(() => expect(currencySelect).toHaveValue("USD"));
-    await waitFor(() => expect(amountInput).toHaveValue(12.34));
+  it("requires a fresh final calculation after unchecking and rechecking the same total", async () => {
+    const requests: Record<string, unknown>[] = [];
+    setup({ onCalculation: (body) => requests.push(body) });
+    await screen.findByText("Primera cuota pendiente", { exact: false });
+    upload(file("a.png")); amount("a.png", "10"); fireEvent.click(confirm());
+    await waitFor(() => expect(submit()).toBeEnabled());
+    fireEvent.click(confirm());
+    expect(submit()).toBeDisabled();
+    fireEvent.click(confirm());
+    await waitFor(() => expect(requests).toHaveLength(2));
+    await waitFor(() => expect(submit()).toBeEnabled());
   });
 
-  it("no vuelve a etiquetar un monto manual al cambiar la moneda", async () => {
-    let usdRequests = 0;
-
-    server.use(
-      http.get(INSTALLMENTS_URL, () =>
-        HttpResponse.json([
-          makeInstallment({
-            installmentId: 451,
-            totalDue: 20000,
-            paidAmount: 0,
-            remainingAmount: "20000.00",
-            tripCurrency: "ARS",
-          }),
-        ]),
-      ),
-      http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount, usdBankAccount])),
-      http.post(CALCULATION_URL, async ({ request }) => {
-        const body = (await request.json()) as Record<string, unknown>;
-        if (body.paymentCurrency === "USD") {
-          usdRequests += 1;
-        }
-
-        const reportedAmount = String(body.reportedAmount ?? (body.paymentCurrency === "USD" ? "16.20" : "20000.00"));
-        return HttpResponse.json(
-          makeCalculationResponse({
-            body,
-            tripCurrency: "ARS",
-            remainingAmount: "20000.00",
-            reportedAmount,
-            maxAllowedAmount: body.paymentCurrency === "USD" ? "16.20" : "20000.00",
-            exchangeRate: body.paymentCurrency === "USD" ? "1234.56" : null,
-            amountInTripCurrency: body.paymentCurrency === "USD" ? "19999.87" : reportedAmount,
-          }),
-        );
-      }),
-    );
-
-    renderWithProviders(<UserDashboardPage />);
-
-    const amountInput = await screen.findByLabelText("Monto a reportar");
-    const currencySelect = screen.getByLabelText("Moneda en que pagaste");
-    await waitFor(() => expect(amountInput).toHaveValue(20000));
-
-    fireEvent.change(amountInput, { target: { value: "12.34" } });
-    fireEvent.change(currencySelect, { target: { value: "USD" } });
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "El monto ingresado corresponde a ARS. Ingresalo nuevamente para calcular en USD.",
-    );
-    expect(amountInput).toHaveValue(12.34);
-    expect(usdRequests).toBe(0);
-
-    fireEvent.change(amountInput, { target: { value: "10.00" } });
-    await waitFor(() => expect(usdRequests).toBe(1));
-    await waitFor(() => expect(amountInput).toHaveValue(10));
-  });
-
-  it("preserva CASE F al alternar ARS a USD y volver a ARS antes de una respuesta lenta", async () => {
-    let signalUsdRequest: (() => void) | undefined;
-    const usdRequestStarted = new Promise<void>((resolve) => {
-      signalUsdRequest = resolve;
-    });
-    let releaseUsdPreview: (() => void) | undefined;
-    const usdPreviewBlocked = new Promise<void>((resolve) => {
-      releaseUsdPreview = resolve;
-    });
-
-    server.use(
-      http.get(INSTALLMENTS_URL, () =>
-        HttpResponse.json([
-          makeInstallment({
-            installmentId: 501,
-            totalDue: 20000,
-            paidAmount: 0,
-            remainingAmount: "20000.00",
-            tripCurrency: "ARS",
-          }),
-        ]),
-      ),
-      http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount, usdBankAccount])),
-      http.post(CALCULATION_URL, async ({ request }) => {
-        const body = (await request.json()) as Record<string, unknown>;
-        const paymentCurrency = body.paymentCurrency as string;
-
-        if (paymentCurrency === "USD") {
-          signalUsdRequest?.();
-          await usdPreviewBlocked;
-          return HttpResponse.json(
-            makeCalculationResponse({
-              body,
-              tripCurrency: "ARS",
-              remainingAmount: "20000.00",
-              reportedAmount: "16.20",
-              maxAllowedAmount: "16.20",
-              exchangeRate: "1234.56",
-              amountInTripCurrency: "19999.87",
-            }),
-          );
-        }
-
-        const reportedAmount = String(body.reportedAmount ?? 20000);
-        return HttpResponse.json(
-          makeCalculationResponse({
-            body,
-            tripCurrency: "ARS",
-            remainingAmount: "20000.00",
-            reportedAmount,
-            maxAllowedAmount: "20000.00",
-            amountInTripCurrency: reportedAmount,
-          }),
-        );
-      }),
-    );
-
-    renderWithProviders(<UserDashboardPage />);
-
-    const amountInput = await screen.findByLabelText("Monto a reportar");
-    const currencySelect = screen.getByLabelText("Moneda en que pagaste");
-    await waitFor(() => expect(amountInput).toHaveValue(20000));
-
-    fireEvent.change(currencySelect, { target: { value: "USD" } });
-    await usdRequestStarted;
-    fireEvent.change(currencySelect, { target: { value: "ARS" } });
-    releaseUsdPreview?.();
-
-    await waitFor(() => expect(currencySelect).toHaveValue("ARS"));
-    await waitFor(() => expect(amountInput).toHaveValue(20000));
-  });
-
-  it("ignora una respuesta de un contexto anterior tras cambiar fecha y estudiante", async () => {
-    let signalOldRequest: (() => void) | undefined;
-    const oldRequestStarted = new Promise<void>((resolve) => {
-      signalOldRequest = resolve;
-    });
-    let releaseOldRequest: (() => void) | undefined;
-    const oldRequestBlocked = new Promise<void>((resolve) => {
-      releaseOldRequest = resolve;
-    });
-
-    server.use(
-      http.get(INSTALLMENTS_URL, () =>
-        HttpResponse.json([
-          makeInstallment({
-            tripId: 77,
-            studentId: 501,
-            installmentId: 601,
-            totalDue: 20000,
-            tripCurrency: "ARS",
-            remainingAmount: "20000.00",
-          }),
-          makeInstallment({
-            tripId: 88,
-            tripName: "Córdoba 2026",
-            studentId: 502,
-            studentName: "Bruno Slavkis",
-            studentDni: "45678902",
-            installmentId: 602,
-            totalDue: 99.29,
-            tripCurrency: "ARS",
-            remainingAmount: "99.29",
-          }),
-        ]),
-      ),
-      http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount, usdBankAccount])),
-      http.post(CALCULATION_URL, async ({ request }) => {
-        const body = (await request.json()) as Record<string, unknown>;
-        const paymentCurrency = body.paymentCurrency as string;
-
-        if (body.anchorInstallmentId === 601 && paymentCurrency === "USD") {
-          signalOldRequest?.();
-          await oldRequestBlocked;
-          return HttpResponse.json(
-            makeCalculationResponse({
-              body,
-              tripCurrency: "ARS",
-              remainingAmount: "20000.00",
-              reportedAmount: "16.20",
-              maxAllowedAmount: "16.20",
-              exchangeRate: "1234.56",
-              amountInTripCurrency: "19999.87",
-            }),
-          );
-        }
-
-        const remainingAmount = body.anchorInstallmentId === 602 ? "99.29" : "20000.00";
-        return HttpResponse.json(
-          makeCalculationResponse({
-            body,
-            tripCurrency: "ARS",
-            remainingAmount,
-            reportedAmount: remainingAmount,
-            maxAllowedAmount: remainingAmount,
-            amountInTripCurrency: remainingAmount,
-          }),
-        );
-      }),
-    );
-
-    renderWithProviders(<UserDashboardPage />);
-
-    const amountInput = await screen.findByLabelText("Monto a reportar");
-    const currencySelect = screen.getByLabelText("Moneda en que pagaste");
-    const dateInput = screen.getByLabelText("Fecha de pago");
-    const groupSelect = screen.getByLabelText("Seleccioná el viaje");
-    await waitFor(() => expect(amountInput).toHaveValue(20000));
-
-    fireEvent.change(currencySelect, { target: { value: "USD" } });
-    await oldRequestStarted;
-    fireEvent.change(dateInput, { target: { value: "2026-10-01" } });
-    fireEvent.change(groupSelect, { target: { value: "88:502" } });
-    releaseOldRequest?.();
-
-    await waitFor(() => expect(groupSelect).toHaveValue("88:502"));
-    expect(dateInput).toHaveValue("2026-10-01");
-    await waitFor(() => expect(currencySelect).toHaveValue("ARS"));
-    await waitFor(() => expect(amountInput).toHaveValue(99.29));
-  });
-
-  it("preserva la edición manual ante error sin emitir solicitudes de sondeo", async () => {
-    let manualUsdRequests = 0;
-
-    server.use(
-      http.get(INSTALLMENTS_URL, () =>
-        HttpResponse.json([
-          makeInstallment({
-            installmentId: 701,
-            totalDue: 20000,
-            tripCurrency: "ARS",
-            remainingAmount: "20000.00",
-          }),
-        ]),
-      ),
-      http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount, usdBankAccount])),
-      http.post(CALCULATION_URL, async ({ request }) => {
-        const body = (await request.json()) as Record<string, unknown>;
-        if (body.paymentCurrency === "USD" && body.intent === "MANUAL") {
-          manualUsdRequests += 1;
-          return HttpResponse.json({ message: "Cotización no disponible" }, { status: 503 });
-        }
-
-        const reportedAmount = String(body.reportedAmount ?? (body.paymentCurrency === "USD" ? "16.20" : "20000.00"));
-        return HttpResponse.json(
-          makeCalculationResponse({
-            body,
-            tripCurrency: "ARS",
-            remainingAmount: "20000.00",
-            reportedAmount,
-            maxAllowedAmount: body.paymentCurrency === "USD" ? "16.20" : "20000.00",
-            exchangeRate: body.paymentCurrency === "USD" ? "1234.56" : null,
-            amountInTripCurrency: body.paymentCurrency === "USD" ? "19999.87" : reportedAmount,
-          }),
-        );
-      }),
-    );
-
-    renderWithProviders(<UserDashboardPage />);
-
-    const amountInput = await screen.findByLabelText("Monto a reportar");
-    const currencySelect = screen.getByLabelText("Moneda en que pagaste");
-    await waitFor(() => expect(amountInput).toHaveValue(20000));
-
-    fireEvent.change(currencySelect, { target: { value: "USD" } });
-    await waitFor(() => expect(amountInput).toHaveValue(16.2));
-    fireEvent.change(amountInput, { target: { value: "12.34" } });
-
-    await waitFor(() => expect(currencySelect).toHaveValue("USD"));
-    expect(amountInput).toHaveValue(12.34);
-    await waitFor(() => expect(manualUsdRequests).toBe(1));
-  });
-
-  it("muestra CASE G 10.16 y conserva 99.29 como saldo pagable", async () => {
-    let arsCalculationRequests = 0;
-
-    server.use(
-      http.get(INSTALLMENTS_URL, () =>
-        HttpResponse.json([
-          makeInstallment({
-            tripId: 77,
-            studentId: 501,
-            installmentId: 801,
-            totalDue: 0.01,
-            tripCurrency: "USD",
-            remainingAmount: "0.01",
-          }),
-          makeInstallment({
-            tripId: 88,
-            tripName: "Córdoba 2026",
-            studentId: 502,
-            studentName: "Bruno Slavkis",
-            studentDni: "45678902",
-            installmentId: 802,
-            totalDue: 99.29,
-            tripCurrency: "USD",
-            remainingAmount: "99.29",
-          }),
-        ]),
-      ),
-      http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount, usdBankAccount])),
-      http.post(CALCULATION_URL, async ({ request }) => {
-        const body = (await request.json()) as Record<string, unknown>;
-        const isCaseG = body.anchorInstallmentId === 801;
-
-        if (isCaseG && body.paymentCurrency === "ARS") {
-          arsCalculationRequests += 1;
-          return HttpResponse.json(
-            makeCalculationResponse({
-              body,
-              tripCurrency: "USD",
-              remainingAmount: "0.01",
-              reportedAmount: "10.16",
-              amountInTripCurrency: "0.01",
-              maxAllowedAmount: "15.23",
-              exchangeRate: "1015.50",
-            }),
-          );
-        }
-
-        const remainingAmount = isCaseG ? "0.01" : "99.29";
-        return HttpResponse.json(
-          makeCalculationResponse({
-            body,
-            tripCurrency: "USD",
-            remainingAmount,
-            reportedAmount: remainingAmount,
-            amountInTripCurrency: remainingAmount,
-            maxAllowedAmount: remainingAmount,
-          }),
-        );
-      }),
-    );
-
-    renderWithProviders(<UserDashboardPage />);
-
-    const amountInput = await screen.findByLabelText("Monto a reportar");
-    const currencySelect = screen.getByLabelText("Moneda en que pagaste");
-    const groupSelect = screen.getByLabelText("Seleccioná el viaje");
-
-    await waitFor(() => expect(amountInput).toHaveValue(0.01));
-    fireEvent.change(currencySelect, { target: { value: "ARS" } });
-    await waitFor(() => expect(amountInput).toHaveValue(10.16));
-    expect(arsCalculationRequests).toBe(1);
-
-    fireEvent.change(groupSelect, { target: { value: "88:502" } });
-    await waitFor(() => expect(currencySelect).toHaveValue("USD"));
-    await waitFor(() => expect(amountInput).toHaveValue(99.29));
-    expect(await screen.findByText(/Máximo permitido.*US\$\s*99,29/)).toBeInTheDocument();
-  });
-
-  it("usa la fecha actual en horario argentino para la fecha de pago", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-04-24T02:30:00.000Z"));
-
+  it("rejects a final token once its local safety window has elapsed", async () => {
+    setup(); await screen.findByText("Primera cuota pendiente", { exact: false });
+    upload(file("a.png")); amount("a.png", "10"); fireEvent.click(confirm());
+    await waitFor(() => expect(submit()).toBeEnabled());
+    const realNow = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(realNow + 240_001);
     try {
-      server.use(
-        http.get(INSTALLMENTS_URL, () => HttpResponse.json([makeInstallment()])),
-        http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount])),
-        http.post(CALCULATION_URL, async ({ request }) => {
-          const body = (await request.json()) as Record<string, unknown>;
+      fireEvent.change(screen.getByLabelText("Método de pago"), { target: { value: "CASH" } });
+      expect(submit()).toBeDisabled();
+      fireEvent.submit(submit().closest("form")!);
+      expect(submit()).toBeDisabled();
+    } finally { clock.mockRestore(); }
+  });
 
-          return HttpResponse.json(
-            makeCalculationResponse({
-              body,
-              tripCurrency: "ARS",
-              remainingAmount: "200.00",
-              reportedAmount: "200.00",
-              maxAllowedAmount: "200.00",
-              amountInTripCurrency: "200.00",
-            }),
-          );
-        }),
-      );
+  it("clears the explicit confirmation when the final token's local safety window elapses", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      setup(); await screen.findByText("Primera cuota pendiente", { exact: false });
+      upload(file("a.png")); amount("a.png", "10"); fireEvent.click(confirm());
+      await waitFor(() => expect(submit()).toBeEnabled());
+      expect(confirm()).toBeChecked();
+      await act(async () => { await vi.advanceTimersByTimeAsync(240_001); });
+      expect(confirm()).not.toBeChecked();
+      expect(submit()).toBeDisabled();
+    } finally { vi.useRealTimers(); }
+  });
 
-      const view = renderWithProviders(<UserDashboardPage />);
-      expect(screen.getByLabelText("Fecha de pago")).toHaveValue("2026-04-23");
-      view.unmount();
+  it("does not leave the conversion verification stuck when the auxiliary quote expires mid-refetch", async () => {
+    let release: (() => void) | undefined;
+    const delayed = new Promise<void>((resolve) => { release = resolve; });
+    let usdCalls = 0;
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      setup({ reply: (body) => {
+        if (body.paymentCurrency !== "USD") return {};
+        usdCalls += 1;
+        // The display quote resolves; the confirmation-time refetch stays in flight.
+        return usdCalls === 1 ? { equivalent: "20.00" } : { delay: delayed, equivalent: "20.00" };
+      } });
+      await screen.findByText("Primera cuota pendiente", { exact: false });
+      upload(file("a.png"));
+      fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "USD" } });
+      amount("a.png", "2");
+      await screen.findByText("Total en ARS: 20.00");
+      fireEvent.click(confirm());
+      await waitFor(() => expect(screen.getByText(/Verificando la cotización/)).toBeInTheDocument());
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(240_001); });
+      await waitFor(() => expect(screen.queryByText(/Verificando la cotización/)).toBeNull());
+      // The expired quote drops the total, so the confirmation block is either gone or unchecked.
+      const checkbox = screen.queryByRole("checkbox", { name: /Confirmo el total/ });
+      if (checkbox) expect(checkbox).not.toBeChecked();
+      expect(submit()).toBeDisabled();
+    } finally { release?.(); vi.useRealTimers(); }
+  });
+
+  it("revokes the previous preview object URL and promotes the next image when the first receipt is removed", async () => {
+    const created: string[] = [];
+    const revoked: string[] = [];
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = vi.fn(() => {
+      const url = `blob:preview/${created.length + 1}`;
+      created.push(url);
+      return url;
+    }) as unknown as typeof URL.createObjectURL;
+    URL.revokeObjectURL = vi.fn((url: string | URL) => {
+      revoked.push(String(url));
+    }) as unknown as typeof URL.revokeObjectURL;
+    try {
+      setup(); await screen.findByText("Primera cuota pendiente", { exact: false });
+      upload(file("a.png"), file("b.png"));
+      expect(created).toEqual(["blob:preview/1"]);
+      expect(screen.getByAltText("Vista previa")).toHaveAttribute("src", "blob:preview/1");
+
+      fireEvent.click(screen.getByRole("button", { name: "Quitar a.png" }));
+      expect(revoked).toContain("blob:preview/1");
+      expect(screen.getByAltText("Vista previa")).toHaveAttribute("src", "blob:preview/2");
+
+      // Removing the promoted preview leaves no stale object URL and no preview element.
+      fireEvent.click(screen.getByRole("button", { name: "Quitar b.png" }));
+      expect(revoked).toContain("blob:preview/2");
+      expect(screen.queryByAltText("Vista previa")).toBeNull();
     } finally {
-      vi.useRealTimers();
+      URL.createObjectURL = originalCreate;
+      URL.revokeObjectURL = originalRevoke;
     }
   });
 
-  it("bloquea el envio cuando el grupo tiene comprobantes pendientes de revision", async () => {
-    server.use(
-      http.get(INSTALLMENTS_URL, () =>
-        HttpResponse.json([
-          makeInstallment({
-            installmentId: 101,
-            installmentNumber: 1,
-            uiStatusCode: "UNDER_REVIEW",
-            uiStatusLabel: "En revisión",
-            uiStatusTone: "yellow",
-            latestReceiptStatus: "PENDING",
-          }),
-          makeInstallment({
-            installmentId: 102,
-            installmentNumber: 2,
-            dueDate: "2026-04-25",
-            latestReceiptStatus: null,
-          }),
-        ]),
-      ),
-      http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([bankAccount])),
-    );
-
-    renderWithProviders(<UserDashboardPage />);
-
-    expect(
-      await screen.findByText(
-        "Esta inscripción tiene comprobantes pendientes de revisión. Hasta que el administrador los revise no podés enviar un nuevo pago.",
-      ),
-    ).toBeInTheDocument();
-
-    expect(screen.getByLabelText("Monto a reportar")).toBeDisabled();
-    expect(screen.getByLabelText("Fecha de pago")).toBeDisabled();
-    expect(screen.getByLabelText("Cuenta donde acreditaste el pago")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Enviar comprobante" })).toBeDisabled();
+  it("drops the preview when the next receipt is not an image and keeps revoke discipline", async () => {
+    const revoked: string[] = [];
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = vi.fn(() => "blob:preview/1") as unknown as typeof URL.createObjectURL;
+    URL.revokeObjectURL = vi.fn((url: string | URL) => {
+      revoked.push(String(url));
+    }) as unknown as typeof URL.revokeObjectURL;
+    try {
+      setup(); await screen.findByText("Primera cuota pendiente", { exact: false });
+      upload(file("a.png"), file("b.pdf", "application/pdf"));
+      expect(screen.getByAltText("Vista previa")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Quitar a.png" }));
+      expect(revoked).toContain("blob:preview/1");
+      expect(screen.queryByAltText("Vista previa")).toBeNull();
+    } finally {
+      URL.createObjectURL = originalCreate;
+      URL.revokeObjectURL = originalRevoke;
+    }
   });
 
-  it("muestra la opcion Deposito en el selector de metodo de pago", async () => {
-    server.use(
-      http.get(INSTALLMENTS_URL, () => HttpResponse.json([])),
-      http.get(BANK_ACCOUNTS_URL, () => HttpResponse.json([])),
-    );
-
-    renderWithProviders(<UserDashboardPage />);
-
-    await screen.findByText("Panel de pagos");
-
-    const paymentMethodSelect = screen.getByLabelText("Método de pago");
-    expect(paymentMethodSelect.querySelector("option[value='DEPOSIT']")).not.toBeNull();
-    expect(paymentMethodSelect.querySelector("option[value='CARD']")).toBeNull();
+  it("uses Argentina's calendar date as the initial reported date", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-04-24T02:30:00.000Z"));
+    try {
+      setup(); expect(screen.getByLabelText("Fecha de pago")).toHaveValue("2026-04-23");
+    } finally { vi.useRealTimers(); }
   });
 });
