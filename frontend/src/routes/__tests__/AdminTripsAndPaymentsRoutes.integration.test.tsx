@@ -182,7 +182,7 @@ describe("Admin trips and payments routes integration", () => {
     renderAdminRoutes("/payments/pending-review");
 
     expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Aprobar total" }));
+    fireEvent.click(screen.getByRole("button", { name: "Aprobar monto informado" }));
     expect(await screen.findByText("No hay comprobantes pendientes de revisión.")).toBeInTheDocument();
   });
 });

@@ -151,7 +151,8 @@ public class PaymentService {
 
     @Transactional(readOnly = true)
     public PaymentBatchPreviewDTO previewPayment(PaymentPreviewRequestDTO dto, String email) {
-        BigDecimal reportedAmount = paymentMoneyPolicy.requirePositiveMoney(dto.reportedAmount(), "reportedAmount");
+        BigDecimal reportedAmount = paymentMoneyPolicy.requirePositivePersistableMoney(
+                dto.reportedAmount(), "reportedAmount");
         paymentBusinessDatePolicy.requireNotFuture(dto.reportedPaymentDate());
         User user = getUserByEmail(email);
         PaymentScopeSelection selection = resolvePaymentScope(user, dto.anchorInstallmentId(), false);
@@ -434,7 +435,8 @@ public class PaymentService {
         }
         List<MultipartFile> attachments = files == null ? List.of() : files.stream()
                 .filter(file -> file != null && !file.isEmpty()).toList();
-        BigDecimal normalizedReportedAmount = paymentMoneyPolicy.requirePositiveMoney(reportedAmount, "reportedAmount");
+        BigDecimal normalizedReportedAmount = paymentMoneyPolicy.requirePositivePersistableMoney(
+                reportedAmount, "reportedAmount");
         paymentBusinessDatePolicy.requireNotFuture(reportedPaymentDate);
         User user = getUserByEmail(email);
         // [DEADLOCK FIX] Establish Trip → Installments lock order to match
@@ -675,19 +677,28 @@ public class PaymentService {
             throw new IllegalStateException("Este pago ya fue revisado");
         }
 
-        BigDecimal approvedAmount = paymentMoneyPolicy.requireMoney(dto.approvedAmount(), "approvedAmount");
+        BigDecimal approvedAmount = paymentMoneyPolicy.requirePersistableMoney(dto.approvedAmount(), "approvedAmount");
         BigDecimal reportedAmount = paymentMoneyPolicy.requireMoney(submission.getReportedAmount(), "reportedAmount");
         if (approvedAmount.compareTo(BigDecimal.ZERO) < 0) {
             throw new IllegalArgumentException("El monto aprobado no puede ser negativo");
         }
-        if (approvedAmount.compareTo(reportedAmount) > 0) {
-            throw new IllegalArgumentException("El monto aprobado no puede superar el monto informado");
-        }
 
+        // Administrative correction: the approved amount may be higher or lower than
+        // what the client reported. The reported amount stays immutable; the approved
+        // outcome carries the real credited amount. rejectedAmount is only meaningful
+        // for downward corrections, so it is clamped at zero and never negative.
         BigDecimal rejectedAmount = reportedAmount.subtract(approvedAmount).setScale(2, RoundingMode.HALF_UP);
-        if (rejectedAmount.compareTo(BigDecimal.ZERO) > 0
+        if (rejectedAmount.compareTo(BigDecimal.ZERO) < 0) {
+            rejectedAmount = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+        }
+        if (approvedAmount.compareTo(reportedAmount) != 0
                 && (dto.adminObservation() == null || dto.adminObservation().isBlank())) {
-            throw new IllegalStateException("Se requiere una observación al no aprobar el monto completo");
+            throw new IllegalStateException("Se requiere una observación al corregir el monto informado");
+        }
+        String trimmedObservation = dto.adminObservation() == null ? null : dto.adminObservation().trim();
+        if (trimmedObservation != null && trimmedObservation.length() > 500) {
+            throw new IllegalArgumentException(
+                    "La observación administrativa no puede superar los 500 caracteres");
         }
 
         List<Installment> scopedInstallments = installmentRepository.findByTripIdAndUserIdAndStudentIdForUpdate(
@@ -698,11 +709,14 @@ public class PaymentService {
 
         // The historical converted cents of a v1 cross-currency partial cannot
         // be reconstructed from the rounded rate; require manual reconciliation.
+        // This also covers upward administrative corrections on legacy
+        // cross-currency submissions, which cannot be derived safely either.
+        // Rejections (approved = 0) remain allowed without reconstruction.
         if (isLegacyPendingSubmission(submission) && approvedAmount.signum() > 0
-                && approvedAmount.compareTo(reportedAmount) < 0
+                && approvedAmount.compareTo(reportedAmount) != 0
                 && submission.getPaymentCurrency() != submission.getTrip().getCurrency()) {
             throw new IllegalStateException(
-                    "Conflicto administrativo: un pago histórico v1 requiere conciliación manual para aprobación parcial");
+                    "Conflicto administrativo: un pago histórico v1 requiere conciliación manual para corrección administrativa");
         }
 
         BigDecimal approvedTripAmount = BigDecimal.ZERO;
@@ -732,9 +746,25 @@ public class PaymentService {
             approvedOutcome.setStatus(PaymentOutcomeStatus.APPROVED);
             approvedOutcome.setReportedAmount(approvedPlan.reportedAmount());
             approvedOutcome.setAmountInTripCurrency(approvedPlan.amountInTripCurrency());
-            approvedOutcome.setAdminObservation(isLegacyPendingSubmission(submission)
-                    ? LEGACY_RECONCILIATION_OBSERVATION
-                    : null);
+            // The correction reason must survive on the approved outcome itself:
+            // upward corrections have no REJECTED outcome to carry it.
+            // For legacy v1 the human reason is persisted verbatim when the
+            // amount was corrected: prefixing the technical reconciliation note
+            // could overflow the 500-char column, and the v1 calculation
+            // version on the submission already identifies the legacy origin.
+            // Without correction the technical note is kept as before.
+            // trimmedObservation was length-checked on entry, so it always fits.
+            boolean corrected = approvedAmount.compareTo(reportedAmount) != 0;
+            String legacyObservation = !isLegacyPendingSubmission(submission)
+                    ? null
+                    : !corrected
+                            ? LEGACY_RECONCILIATION_OBSERVATION
+                            : trimmedObservation;
+            approvedOutcome.setAdminObservation(legacyObservation != null
+                    ? legacyObservation
+                    : (trimmedObservation == null || trimmedObservation.isEmpty()
+                            ? null
+                            : trimmedObservation));
             approvedOutcome.setResolvedByEmail(reviewerEmail);
             PaymentOutcome savedOutcome = paymentOutcomeRepository.save(approvedOutcome);
             submission.getOutcomes().add(savedOutcome);
@@ -771,7 +801,7 @@ public class PaymentService {
             rejectedOutcome.setStatus(PaymentOutcomeStatus.REJECTED);
             rejectedOutcome.setReportedAmount(rejectedAmount);
             rejectedOutcome.setAmountInTripCurrency(rejectedTripAmount);
-            rejectedOutcome.setAdminObservation(dto.adminObservation().trim());
+            rejectedOutcome.setAdminObservation(trimmedObservation);
             rejectedOutcome.setResolvedByEmail(reviewerEmail);
             submission.getOutcomes().add(paymentOutcomeRepository.save(rejectedOutcome));
         }
@@ -1223,16 +1253,23 @@ public class PaymentService {
         boolean voided = submission.getStatus() == PaymentSubmissionStatus.VOIDED;
         BigDecimal approvedAmount = !voided && approvedOutcome != null && approvedOutcome.getStatus() == PaymentOutcomeStatus.APPROVED
                 ? approvedOutcome.getReportedAmount()
-                : BigDecimal.ZERO;
+                : BigDecimal.ZERO.setScale(PaymentMoneyPolicy.MONEY_SCALE);
         BigDecimal approvedAmountInTripCurrency = !voided && approvedOutcome != null && approvedOutcome.getStatus() == PaymentOutcomeStatus.APPROVED
                 ? approvedOutcome.getAmountInTripCurrency()
-                : BigDecimal.ZERO;
+                : BigDecimal.ZERO.setScale(PaymentMoneyPolicy.MONEY_SCALE);
         BigDecimal rejectedAmount = submission.getOutcomes().stream()
                 .filter(outcome -> outcome.getStatus() == PaymentOutcomeStatus.REJECTED)
                 .map(PaymentOutcome::getReportedAmount)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+                .reduce(BigDecimal.ZERO.setScale(PaymentMoneyPolicy.MONEY_SCALE), BigDecimal::add);
+        // Deterministic priority: the REJECTED outcome carries the admin's decision
+        // reason (most relevant for partial approvals), then the APPROVED outcome,
+        // then anything else, oldest first.
         String adminObservation = submission.getOutcomes().stream()
                 .filter(outcome -> outcome.getAdminObservation() != null && !outcome.getAdminObservation().isBlank())
+                .sorted(Comparator.comparing((PaymentOutcome outcome) -> outcome.getStatus() == PaymentOutcomeStatus.REJECTED
+                                ? 0
+                                : outcome.getStatus() == PaymentOutcomeStatus.APPROVED ? 1 : 2)
+                        .thenComparing(outcome -> outcome.getId() == null ? Long.MAX_VALUE : outcome.getId()))
                 .map(PaymentOutcome::getAdminObservation)
                 .findFirst()
                 .orElse(null);

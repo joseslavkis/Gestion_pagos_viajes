@@ -6,14 +6,14 @@ import { PendingReviewPage } from "@/features/payments/pages/PendingReviewPage";
 import { server } from "@/test/msw-server";
 import { renderWithProviders } from "@/test/test-utils";
 
-function makePendingSubmission() {
+function makePendingSubmission(reportedAmount = "400.00") {
   return {
     submissionId: 91,
     status: "PENDING",
-    reportedAmount: "400.00",
+    reportedAmount,
     paymentCurrency: "ARS",
     exchangeRate: null,
-    amountInTripCurrency: "400.00",
+    amountInTripCurrency: reportedAmount,
     reportedPaymentDate: "2026-03-23",
     paymentMethod: "BANK_TRANSFER",
     fileKey: "",
@@ -58,6 +58,35 @@ function makePendingSubmission() {
   };
 }
 
+function approvedSubmissionResponse(overrides: Record<string, unknown>) {
+  return {
+    submissionId: 91,
+    status: "APPROVED",
+    reportedAmount: "400.00",
+    approvedAmount: "400.00",
+    rejectedAmount: "0.00",
+    paymentCurrency: "ARS",
+    exchangeRate: null,
+    amountInTripCurrency: "400.00",
+    approvedAmountInTripCurrency: "400.00",
+    reportedPaymentDate: "2026-03-23",
+    paymentMethod: "BANK_TRANSFER",
+    fileKey: "",
+    adminObservation: null,
+    bankAccountId: 1,
+    bankAccountDisplayName: "ICBC - Cuenta en pesos",
+    bankAccountAlias: "ICBC.PESOS",
+    tripId: 77,
+    tripName: "Bariloche",
+    tripCurrency: "ARS",
+    studentId: 5,
+    studentName: "Alumno Test",
+    studentDni: "45678901",
+    installments: [],
+    ...overrides,
+  };
+}
+
 describe("PendingReviewPage", () => {
   it("preserves invalid approval text, disables saving, and sends no review request", async () => {
     let reviewRequests = 0;
@@ -75,7 +104,7 @@ describe("PendingReviewPage", () => {
     expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
 
-    const amountInput = screen.getByLabelText("Monto a aprobar");
+    const amountInput = screen.getByLabelText("Monto a imputar");
     const saveButton = screen.getByRole("button", { name: "Guardar decisión" });
     for (const invalidAmount of ["250.", "abc", "-1", "1.005"]) {
       fireEvent.change(amountInput, { target: { value: invalidAmount } });
@@ -87,7 +116,57 @@ describe("PendingReviewPage", () => {
     }
   });
 
-  it("blocks approval above the reported amount without a request", async () => {
+  it("allows approval above the reported amount and marks an upward correction", async () => {
+    let reviewRequests = 0;
+    let decisionBody: unknown = null;
+    let pendingItems = [makePendingSubmission()];
+    server.use(
+      http.get("http://localhost:30002/api/v1/payments/pending-review", () => HttpResponse.json(pendingItems)),
+      http.patch("http://localhost:30002/api/v1/payments/91/review", async ({ request }) => {
+        reviewRequests += 1;
+        decisionBody = await request.json();
+        pendingItems = [];
+        return HttpResponse.json(
+          approvedSubmissionResponse({
+            status: "APPROVED",
+            approvedAmount: "500.00",
+            rejectedAmount: "0.00",
+            approvedAmountInTripCurrency: "500.00",
+            adminObservation: "El banco acreditó más de lo informado.",
+          }),
+        );
+      }),
+    );
+
+    renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
+    expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
+
+    const amountInput = screen.getByLabelText("Monto a imputar");
+    fireEvent.change(amountInput, { target: { value: "500" } });
+
+    expect(amountInput).toHaveValue("500");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(await screen.findByText("Corrección al alza")).toBeInTheDocument();
+    // Correcting the amount requires an observation before saving.
+    expect(screen.getByRole("button", { name: "Guardar decisión" })).toBeDisabled();
+    expect(reviewRequests).toBe(0);
+
+    fireEvent.change(screen.getByLabelText(/Observación admin/), {
+      target: { value: "El banco acreditó más de lo informado." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar decisión" }));
+
+    await waitFor(() => {
+      expect(decisionBody).toEqual({
+        approvedAmount: "500",
+        adminObservation: "El banco acreditó más de lo informado.",
+      });
+    });
+    expect(await screen.findByText("No hay comprobantes pendientes de revisión.")).toBeInTheDocument();
+  });
+
+  it("rejects amounts above the persistible money ceiling without a request", async () => {
     let reviewRequests = 0;
     server.use(
       http.get("http://localhost:30002/api/v1/payments/pending-review", () =>
@@ -103,13 +182,90 @@ describe("PendingReviewPage", () => {
     expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
 
-    const amountInput = screen.getByLabelText("Monto a aprobar");
-    fireEvent.change(amountInput, { target: { value: "400.01" } });
+    const amountInput = screen.getByLabelText("Monto a imputar");
+    fireEvent.change(amountInput, { target: { value: "100000000" } });
 
-    expect(amountInput).toHaveValue("400.01");
+    expect(amountInput).toHaveValue("100000000");
     expect(screen.getByRole("button", { name: "Guardar decisión" })).toBeDisabled();
-    expect(screen.getByRole("alert")).toHaveTextContent("no puede superar el monto informado");
+    expect(screen.getByRole("alert")).toHaveTextContent("99.999.999,99");
     expect(reviewRequests).toBe(0);
+  });
+
+  it("accepts the maximum persistible amount with an upward correction", async () => {
+    server.use(
+      http.get("http://localhost:30002/api/v1/payments/pending-review", () =>
+        HttpResponse.json([makePendingSubmission()]),
+      ),
+    );
+
+    renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
+    expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
+
+    const amountInput = screen.getByLabelText("Monto a imputar");
+    fireEvent.change(amountInput, { target: { value: "99999999.99" } });
+
+    expect(amountInput).toHaveValue("99999999.99");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(await screen.findByText("Corrección al alza")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Guardar decisión" })).toBeDisabled();
+  });
+
+  it("caps the admin observation at 500 characters", async () => {
+    server.use(
+      http.get("http://localhost:30002/api/v1/payments/pending-review", () =>
+        HttpResponse.json([makePendingSubmission()]),
+      ),
+    );
+
+    renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
+    expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
+
+    expect(screen.getByLabelText(/Observación admin/)).toHaveAttribute("maxLength", "500");
+  });
+
+  it("shows downward correction and neutral state without a request", async () => {
+    server.use(
+      http.get("http://localhost:30002/api/v1/payments/pending-review", () =>
+        HttpResponse.json([makePendingSubmission()]),
+      ),
+    );
+
+    renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
+    expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
+
+    const amountInput = screen.getByLabelText("Monto a imputar");
+    fireEvent.change(amountInput, { target: { value: "250" } });
+    expect(await screen.findByText("Corrección a la baja")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Guardar decisión" })).toBeDisabled();
+
+    fireEvent.change(amountInput, { target: { value: "400.00" } });
+    expect(await screen.findByText("Sin corrección")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Guardar decisión" })).not.toBeDisabled();
+  });
+
+  it("quick approve sends exactly the reported amount", async () => {
+    let decisionBody: unknown = null;
+    let pendingItems = [makePendingSubmission()];
+    server.use(
+      http.get("http://localhost:30002/api/v1/payments/pending-review", () => HttpResponse.json(pendingItems)),
+      http.patch("http://localhost:30002/api/v1/payments/91/review", async ({ request }) => {
+        decisionBody = await request.json();
+        pendingItems = [];
+        return HttpResponse.json(approvedSubmissionResponse({}));
+      }),
+    );
+
+    renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
+    expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Aprobar monto informado" }));
+
+    await waitFor(() => {
+      expect(decisionBody).toEqual({ approvedAmount: "400.00" });
+    });
+    expect(await screen.findByText("No hay comprobantes pendientes de revisión.")).toBeInTheDocument();
   });
 
   it("lista pagos pendientes y permite aprobarlos parcialmente", async () => {
@@ -159,10 +315,10 @@ describe("PendingReviewPage", () => {
     expect(await screen.findByText("Cuota #4")).toBeInTheDocument();
     expect(screen.getByText("Cuota #5")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Monto a aprobar"), {
+    fireEvent.change(screen.getByLabelText("Monto a imputar"), {
       target: { value: "250" },
     });
-    fireEvent.change(screen.getByLabelText("Observación admin"), {
+    fireEvent.change(screen.getByLabelText(/Observación admin/), {
       target: { value: "Se aprobó el monto verificado." },
     });
     fireEvent.click(screen.getByRole("button", { name: "Guardar decisión" }));
@@ -218,7 +374,7 @@ describe("PendingReviewPage", () => {
     expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
-    fireEvent.change(screen.getByLabelText("Observación admin"), {
+    fireEvent.change(screen.getByLabelText(/Observación admin/), {
       target: { value: "Comprobante borroso" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Rechazar total" }));

@@ -8,6 +8,7 @@ import {
   compareNonNegativeDecimalStrings,
   normalizePaymentMoneyInput,
 } from "@/features/payments/types/decimal-strings";
+import { exceedsMaxMoney } from "@/features/payments/types/receipt-amounts";
 import type {
   DecimalString,
   PaymentBatchInstallmentDTO,
@@ -47,19 +48,35 @@ function formatInstallmentList(allocations: PaymentBatchInstallmentDTO[]): strin
   return allocations.map((allocation) => `#${allocation.installmentNumber}`).join(", ");
 }
 
-function validateApprovalAmount(
-  input: string,
-  reportedAmount: DecimalString,
-): { amount: DecimalString | null; error: string | null } {
+function validateApprovalAmount(input: string): { amount: DecimalString | null; error: string | null } {
   const amount = normalizePaymentMoneyInput(input);
   if (amount == null) {
     return { amount: null, error: "Ingresá un monto válido con hasta dos decimales." };
   }
-  if (compareNonNegativeDecimalStrings(amount, reportedAmount) > 0) {
-    return { amount: null, error: "El monto aprobado no puede superar el monto informado." };
+  if (exceedsMaxMoney(amount)) {
+    return { amount: null, error: "El monto no puede superar $99.999.999,99." };
   }
   return { amount, error: null };
 }
+
+type CorrectionDirection = "up" | "down" | "none";
+
+function correctionDirection(approved: DecimalString, reported: DecimalString): CorrectionDirection {
+  const comparison = compareNonNegativeDecimalStrings(approved, reported);
+  if (comparison > 0) {
+    return "up";
+  }
+  if (comparison < 0) {
+    return "down";
+  }
+  return "none";
+}
+
+const correctionLabels: Record<CorrectionDirection, string> = {
+  up: "Corrección al alza",
+  down: "Corrección a la baja",
+  none: "Sin corrección",
+};
 
 export function PendingReviewPage() {
   const { data, isLoading, error } = usePendingReviewPayments();
@@ -108,12 +125,8 @@ export function PendingReviewPage() {
 
     const observation = observations[item.submissionId]?.trim() ?? "";
 
-    if (compareNonNegativeDecimalStrings(approvedAmount, item.reportedAmount) < 0 && observation.length === 0) {
-      setActionError("La observación es obligatoria cuando no se aprueba el monto completo.");
-      return;
-    }
-    if (compareNonNegativeDecimalStrings(approvedAmount, item.reportedAmount) > 0) {
-      setActionError("El monto aprobado no puede superar el monto informado.");
+    if (compareNonNegativeDecimalStrings(approvedAmount, item.reportedAmount) !== 0 && observation.length === 0) {
+      setActionError("La observación es obligatoria cuando se corrige el monto informado.");
       return;
     }
 
@@ -138,7 +151,8 @@ export function PendingReviewPage() {
             <div>
               <h1 className={styles.title}>Pendientes de revisión</h1>
               <p className={styles.subtitle}>
-                Cada envío representa un pago completo. Podés aprobarlo total o parcialmente, o rechazarlo.
+                Cada envío representa un pago completo. Podés aprobar el monto informado o corregirlo según el
+                monto realmente acreditado.
               </p>
             </div>
             <label className={styles.searchBox}>
@@ -159,8 +173,15 @@ export function PendingReviewPage() {
               {items.map((item) => {
                 const isExpanded = expandedSubmissionIds.includes(item.submissionId);
                 const approvedAmountInput = approvedAmounts[item.submissionId] ?? item.reportedAmount;
-                const approvalValidation = validateApprovalAmount(approvedAmountInput, item.reportedAmount);
+                const approvalValidation = validateApprovalAmount(approvedAmountInput);
                 const observation = observations[item.submissionId] ?? "";
+                const correction: CorrectionDirection =
+                  approvalValidation.amount == null
+                    ? "none"
+                    : correctionDirection(approvalValidation.amount, item.reportedAmount);
+                const requiresObservation =
+                  approvalValidation.amount != null &&
+                  compareNonNegativeDecimalStrings(approvalValidation.amount, item.reportedAmount) !== 0;
 
                 return (
                   <article key={item.submissionId} className={styles.card}>
@@ -187,7 +208,7 @@ export function PendingReviewPage() {
                         <p className={styles.value}>{formatInstallmentList(item.allocations)}</p>
                       </div>
                       <div>
-                        <span className={styles.label}>Monto informado</span>
+                        <span className={styles.label}>Monto informado por el cliente</span>
                         <p className={styles.value}>
                           {formatMoneyByCurrency(item.reportedAmount, item.paymentCurrency)}
                         </p>
@@ -229,7 +250,7 @@ export function PendingReviewPage() {
                         disabled={reviewPayment.isPending}
                         onClick={() => submitDecision(item, item.reportedAmount)}
                       >
-                        Aprobar total
+                        Aprobar monto informado
                       </button>
                       <button
                         type="button"
@@ -284,8 +305,12 @@ export function PendingReviewPage() {
                         ))}
 
                         <div className={styles.rejectBox}>
+                          <p className={styles.helpText}>
+                            Podés corregir este importe según el monto realmente acreditado. La imputación final
+                            se calculará usando este valor.
+                          </p>
                           <label className={styles.searchBox}>
-                            <span>Monto a aprobar</span>
+                            <span>Monto a imputar</span>
                             <input
                               id={`approved-amount-${item.submissionId}`}
                               value={approvedAmountInput}
@@ -312,18 +337,31 @@ export function PendingReviewPage() {
                               {approvalValidation.error}
                             </p>
                           ) : null}
+                          {approvalValidation.amount != null ? (
+                            <p style={{ margin: 0 }} aria-live="polite">
+                              <span className={styles.pendingBadge}>{correctionLabels[correction]}</span>
+                            </p>
+                          ) : null}
+                          <p className={styles.helpText}>
+                            La imputación final se recalculará al guardar la decisión.
+                          </p>
 
                           <label className={styles.searchBox}>
-                            <span>Observación admin</span>
+                            <span>Observación admin{requiresObservation ? " (obligatoria)" : ""}</span>
                             <input
                               value={observation}
+                              maxLength={500}
                               onChange={(event) =>
                                 setObservations((current) => ({
                                   ...current,
                                   [item.submissionId]: event.target.value,
                                 }))
                               }
-                              placeholder="Obligatoria si aprobás menos del total"
+                              placeholder={
+                                requiresObservation
+                                  ? "Obligatoria al corregir el monto informado"
+                                  : "Opcional si se aprueba el monto informado"
+                              }
                             />
                           </label>
 
@@ -339,7 +377,11 @@ export function PendingReviewPage() {
                             <button
                               type="button"
                               className={styles.primaryButton}
-                              disabled={reviewPayment.isPending || approvalValidation.amount == null}
+                              disabled={
+                                reviewPayment.isPending ||
+                                approvalValidation.amount == null ||
+                                (requiresObservation && observation.trim().length === 0)
+                              }
                               onClick={() => {
                                 if (approvalValidation.amount != null) {
                                   void submitDecision(item, approvalValidation.amount);
