@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { CommonLayout } from "@/components/CommonLayout/CommonLayout";
 import { RequestState } from "@/components/ui/RequestState/RequestState";
 import { AttachmentList } from "@/features/payments/components/AttachmentList";
+import { ApprovedAmountControl } from "@/features/payments/components/ApprovedAmountControl";
 import { usePendingReviewPayments, useReviewPayment } from "@/features/payments/services/payments-service";
 import {
   compareNonNegativeDecimalStrings,
@@ -85,6 +86,7 @@ export function PendingReviewPage() {
   const [search, setSearch] = useState("");
   const [expandedSubmissionIds, setExpandedSubmissionIds] = useState<number[]>([]);
   const [approvedAmounts, setApprovedAmounts] = useState<Record<number, string>>({});
+  const [sliderUpperOverrides, setSliderUpperOverrides] = useState<Record<number, string>>({});
   const [observations, setObservations] = useState<Record<number, string>>({});
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -118,6 +120,21 @@ export function PendingReviewPage() {
     setExpandedSubmissionIds((current) =>
       current.includes(submissionId) ? current.filter((item) => item !== submissionId) : [...current, submissionId],
     );
+  };
+
+  const resetApprovedAmount = (item: PendingPaymentReviewDTO) => {
+    setApprovedAmounts((current) => ({
+      ...current,
+      [item.submissionId]: item.reportedAmount,
+    }));
+    setSliderUpperOverrides((current) => {
+      if (!(item.submissionId in current)) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[item.submissionId];
+      return next;
+    });
   };
 
   const submitDecision = async (item: PendingPaymentReviewDTO, approvedAmount: DecimalString) => {
@@ -309,39 +326,42 @@ export function PendingReviewPage() {
                             Podés corregir este importe según el monto realmente acreditado. La imputación final
                             se calculará usando este valor.
                           </p>
-                          <label className={styles.searchBox}>
-                            <span>Monto a imputar</span>
-                            <input
-                              id={`approved-amount-${item.submissionId}`}
-                              value={approvedAmountInput}
-                              aria-invalid={approvalValidation.error != null}
-                              aria-describedby={
-                                approvalValidation.error ? `approved-amount-error-${item.submissionId}` : undefined
-                              }
-                              onChange={(event) =>
-                                setApprovedAmounts((current) => ({
-                                  ...current,
-                                  [item.submissionId]: event.target.value,
-                                }))
-                              }
-                              placeholder="0.00"
-                              inputMode="decimal"
-                            />
-                          </label>
-                          {approvalValidation.error ? (
-                            <p
-                              id={`approved-amount-error-${item.submissionId}`}
-                              className={styles.errorText}
-                              role="alert"
-                            >
-                              {approvalValidation.error}
-                            </p>
-                          ) : null}
-                          {approvalValidation.amount != null ? (
-                            <p style={{ margin: 0 }} aria-live="polite">
-                              <span className={styles.pendingBadge}>{correctionLabels[correction]}</span>
-                            </p>
-                          ) : null}
+                          <ApprovedAmountControl
+                            inputId={`approved-amount-${item.submissionId}`}
+                            reportedAmount={item.reportedAmount}
+                            paymentCurrency={item.paymentCurrency}
+                            value={approvedAmountInput}
+                            validationError={approvalValidation.error}
+                            validAmount={approvalValidation.amount}
+                            correction={correction}
+                            correctionLabel={correctionLabels[correction]}
+                            upperOverrideCents={
+                              sliderUpperOverrides[item.submissionId] != null
+                                ? BigInt(sliderUpperOverrides[item.submissionId])
+                                : null
+                            }
+                            onValueChange={(next) =>
+                              setApprovedAmounts((current) => ({
+                                ...current,
+                                [item.submissionId]: next,
+                              }))
+                            }
+                            onUpperOverrideChange={(cents) =>
+                              setSliderUpperOverrides((current) => {
+                                if (cents == null) {
+                                  if (!(item.submissionId in current)) {
+                                    return current;
+                                  }
+                                  const next = { ...current };
+                                  delete next[item.submissionId];
+                                  return next;
+                                }
+                                return { ...current, [item.submissionId]: cents.toString() };
+                              })
+                            }
+                            onReset={() => resetApprovedAmount(item)}
+                            formatMoney={formatMoneyByCurrency}
+                          />
                           <p className={styles.helpText}>
                             La imputación final se recalculará al guardar la decisión.
                           </p>

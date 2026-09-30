@@ -388,8 +388,7 @@ describe("PendingReviewPage", () => {
     expect(await screen.findByText("No hay comprobantes pendientes de revisión.")).toBeInTheDocument();
   });
 
-  it("muestra preview de imagen cuando el comprobante viene como URL remota", async () => {
-    server.use(
+  it("muestra preview de imagen cuando el comprobante viene como URL remota", async () => {    server.use(
       http.get("http://localhost:30002/api/v1/payments/pending-review", () =>
         HttpResponse.json([
           {
@@ -406,5 +405,181 @@ describe("PendingReviewPage", () => {
       "src",
       "https://backend.example/api/v1/payment-attachments/receipt.jpg?token=abc",
     );
+  });
+});
+
+describe("PendingReviewPage amount slider", () => {
+  async function expandReviewCard(reportedAmount = "240.00") {
+    server.use(
+      http.get("http://localhost:30002/api/v1/payments/pending-review", () =>
+        HttpResponse.json([makePendingSubmission(reportedAmount)]),
+      ),
+    );
+
+    renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
+    expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
+
+    const amountInput = screen.getByLabelText("Monto a imputar");
+    const slider = screen.getByRole("slider", { name: "Corregir monto con barra deslizante" });
+    const saveButton = screen.getByRole("button", { name: "Guardar decisión" });
+    return { amountInput: amountInput as HTMLInputElement, slider: slider as HTMLInputElement, saveButton };
+  }
+
+  it("starts centered with the reported amount and a neutral state", async () => {
+    const { amountInput, slider, saveButton } = await expandReviewCard();
+
+    expect(amountInput).toHaveValue("240.00");
+    expect(slider).toHaveValue("500");
+    expect(screen.getByText("Sin corrección")).toBeInTheDocument();
+    expect(screen.getByText("Informado")).toBeInTheDocument();
+    expect(slider.getAttribute("aria-valuetext")).toContain("Sin corrección");
+    // Observation stays optional while the amount matches the reported one.
+    expect(screen.getByLabelText("Observación admin")).toBeInTheDocument();
+    expect(saveButton).not.toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Restablecer al monto informado" })).not.toBeInTheDocument();
+  });
+
+  it("moving the slider up syncs the input and requires an observation", async () => {
+    let reviewRequests = 0;
+    server.use(
+      http.patch("http://localhost:30002/api/v1/payments/91/review", () => {
+        reviewRequests += 1;
+        return HttpResponse.json({});
+      }),
+    );
+    const { amountInput, slider, saveButton } = await expandReviewCard();
+
+    fireEvent.change(slider, { target: { value: "625" } });
+
+    expect(amountInput).toHaveValue("300.00");
+    expect(await screen.findByText("Corrección al alza")).toBeInTheDocument();
+    expect(screen.getByText(/\+.*respecto de lo informado/)).toBeInTheDocument();
+    expect(slider.getAttribute("aria-valuetext")).toContain("Corrección al alza");
+    expect(screen.getByLabelText(/Observación admin \(obligatoria\)/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restablecer al monto informado" })).toBeInTheDocument();
+    expect(saveButton).toBeDisabled();
+    expect(reviewRequests).toBe(0);
+  });
+
+  it("moving the slider down marks a downward correction", async () => {
+    const { amountInput, slider, saveButton } = await expandReviewCard();
+
+    fireEvent.change(slider, { target: { value: "375" } });
+
+    expect(amountInput).toHaveValue("180.00");
+    expect(await screen.findByText("Corrección a la baja")).toBeInTheDocument();
+    expect(screen.getByText(/-.*respecto de lo informado/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Observación admin \(obligatoria\)/)).toBeInTheDocument();
+    expect(saveButton).toBeDisabled();
+  });
+
+  it("returning the slider to the center restores the reported amount exactly", async () => {
+    const { amountInput, slider, saveButton } = await expandReviewCard();
+
+    fireEvent.change(slider, { target: { value: "625" } });
+    expect(await screen.findByText("Corrección al alza")).toBeInTheDocument();
+
+    fireEvent.change(slider, { target: { value: "500" } });
+
+    expect(amountInput).toHaveValue("240.00");
+    expect(await screen.findByText("Sin corrección")).toBeInTheDocument();
+    expect(screen.getByLabelText("Observación admin")).toBeInTheDocument();
+    expect(saveButton).not.toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Restablecer al monto informado" })).not.toBeInTheDocument();
+  });
+
+  it("manual edits move the slider to the matching side", async () => {
+    const { amountInput, slider } = await expandReviewCard();
+
+    fireEvent.change(amountInput, { target: { value: "300" } });
+    expect(slider).toHaveValue("625");
+
+    fireEvent.change(amountInput, { target: { value: "180" } });
+    expect(slider).toHaveValue("375");
+  });
+
+  it("keeps manual amounts beyond the initial range valid and the slider coherent", async () => {
+    const { amountInput, slider, saveButton } = await expandReviewCard();
+
+    fireEvent.change(amountInput, { target: { value: "700" } });
+
+    expect(amountInput).toHaveValue("700");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(await screen.findByText("Corrección al alza")).toBeInTheDocument();
+    // The visual upper bound grows to include 700 instead of desyncing.
+    expect(slider).toHaveValue("1000");
+
+    fireEvent.change(screen.getByLabelText(/Observación admin/), {
+      target: { value: "Acreditó más por un pago agrupado." },
+    });
+    expect(saveButton).not.toBeDisabled();
+
+    // Sliding back recomputes under the extended range instead of snapping.
+    fireEvent.change(slider, { target: { value: "999" } });
+    expect(amountInput).toHaveValue("699.08");
+    expect(slider).toHaveValue("999");
+  });
+
+  it("never lets the slider exceed MAX_MONEY", async () => {
+    const { amountInput, slider } = await expandReviewCard("99999999.99");
+
+    expect(amountInput).toHaveValue("99999999.99");
+    expect(slider).toHaveValue("500");
+
+    fireEvent.change(slider, { target: { value: "1000" } });
+    expect(amountInput).toHaveValue("99999999.99");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    fireEvent.change(slider, { target: { value: "0" } });
+    expect(amountInput).toHaveValue("0.00");
+  });
+
+  it("sends the canonical slider amount in the review payload", async () => {
+    let decisionBody: unknown = null;
+    let pendingItems = [makePendingSubmission("240.00")];
+    server.use(
+      http.get("http://localhost:30002/api/v1/payments/pending-review", () => HttpResponse.json(pendingItems)),
+      http.patch("http://localhost:30002/api/v1/payments/91/review", async ({ request }) => {
+        decisionBody = await request.json();
+        pendingItems = [];
+        return HttpResponse.json(approvedSubmissionResponse({ approvedAmount: "300.00" }));
+      }),
+    );
+
+    renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
+    expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
+
+    fireEvent.change(screen.getByRole("slider", { name: "Corregir monto con barra deslizante" }), {
+      target: { value: "625" },
+    });
+    fireEvent.change(screen.getByLabelText(/Observación admin/), {
+      target: { value: "El banco acreditó más de lo informado." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar decisión" }));
+
+    await waitFor(() => {
+      expect(decisionBody).toEqual({
+        approvedAmount: "300.00",
+        adminObservation: "El banco acreditó más de lo informado.",
+      });
+    });
+  });
+
+  it("reset restores the reported amount without erasing the observation", async () => {
+    const { amountInput, slider, saveButton } = await expandReviewCard();
+
+    fireEvent.change(slider, { target: { value: "625" } });
+    fireEvent.change(screen.getByLabelText(/Observación admin/), {
+      target: { value: "Borrador que debe conservarse." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Restablecer al monto informado" }));
+
+    expect(amountInput).toHaveValue("240.00");
+    expect(slider).toHaveValue("500");
+    expect(await screen.findByText("Sin corrección")).toBeInTheDocument();
+    expect(screen.getByLabelText("Observación admin")).toHaveValue("Borrador que debe conservarse.");
+    expect(saveButton).not.toBeDisabled();
   });
 });
