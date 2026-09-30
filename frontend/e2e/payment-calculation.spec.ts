@@ -148,7 +148,7 @@ test("allocates a manual 500 across three 240 installments, then approves and vo
   await adminPage.goto("/payments/pending-review");
   const reviewCard = adminPage.locator("article").filter({ hasText: seeded.threeInstallmentTripName });
   await expect(reviewCard).toHaveCount(1);
-  await reviewCard.getByRole("button", { name: "Ver imputación y decidir" }).click();
+  await reviewCard.getByRole("button", { name: "Revisar monto" }).click();
   await expect(reviewCard.getByLabel("Monto a imputar")).toHaveValue("500.00");
   await reviewCard.getByRole("button", { name: "Guardar decisión" }).click();
   await expect(reviewCard).toHaveCount(0);
@@ -224,16 +224,16 @@ test("approves an upward administrative correction from 240 reported to 300 cred
   await adminPage.goto("/payments/pending-review");
   const reviewCard = adminPage.locator("article").filter({ hasText: seeded.threeInstallmentTripName });
   await expect(reviewCard).toHaveCount(1);
-  await expect(reviewCard.getByText("Monto informado por el cliente")).toBeVisible();
-  await reviewCard.getByRole("button", { name: "Ver imputación y decidir" }).click();
+  await expect(reviewCard.getByText("Monto informado")).toBeVisible();
+  await reviewCard.getByRole("button", { name: "Revisar monto" }).click();
   await expect(reviewCard.getByLabel("Monto a imputar")).toHaveValue("240.00");
   await expect(reviewCard.getByText("Sin corrección")).toBeVisible();
   await reviewCard.getByLabel("Monto a imputar").fill("300");
   await expect(reviewCard.getByText("Corrección al alza")).toBeVisible();
   // The correction requires an observation before the decision can be saved.
   await expect(reviewCard.getByRole("button", { name: "Guardar decisión" })).toBeDisabled();
-  await reviewCard.getByLabel("Observación admin").fill("El banco acreditó 300 en lugar de 240.");
-  await expect(reviewCard.getByText("La imputación final se recalculará al guardar la decisión.")).toBeVisible();
+  await reviewCard.getByLabel("Observación").fill("El banco acreditó 300 en lugar de 240.");
+  await expect(reviewCard.getByText("La imputación se recalcula al guardar.")).toBeVisible();
   await reviewCard.getByRole("button", { name: "Guardar decisión" }).click();
   await expect(reviewCard).toHaveCount(0);
 
@@ -324,9 +324,9 @@ test("CASE J conserves a partial cross-currency lifecycle across installments an
 
   const reviewCard = adminPage.locator("article").filter({ hasText: seeded.caseJTripName });
   await expect(reviewCard).toHaveCount(1);
-  await reviewCard.getByRole("button", { name: "Ver imputación y decidir" }).click();
+  await reviewCard.getByRole("button", { name: "Revisar monto" }).click();
   await reviewCard.getByLabel("Monto a imputar").fill("0.50");
-  await reviewCard.getByLabel("Observación admin").fill("Partial cross-currency test approval");
+  await reviewCard.getByLabel("Observación").fill("Partial cross-currency test approval");
   await reviewCard.getByRole("button", { name: "Guardar decisión" }).click();
   await expect(reviewCard).toHaveCount(0);
 
