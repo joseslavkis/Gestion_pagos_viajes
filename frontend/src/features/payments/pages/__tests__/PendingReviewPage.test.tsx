@@ -6,7 +6,7 @@ import { PendingReviewPage } from "@/features/payments/pages/PendingReviewPage";
 import { server } from "@/test/msw-server";
 import { renderWithProviders } from "@/test/test-utils";
 
-function makePendingSubmission(reportedAmount = "400.00") {
+function makePendingSubmission(reportedAmount = "400.00", overrides: Record<string, unknown> = {}) {
   return {
     submissionId: 91,
     status: "PENDING",
@@ -55,6 +55,7 @@ function makePendingSubmission(reportedAmount = "400.00") {
         status: "PENDING",
       },
     ],
+    ...overrides,
   };
 }
 
@@ -102,7 +103,7 @@ describe("PendingReviewPage", () => {
 
     renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
     expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
+    fireEvent.click(screen.getByRole("button", { name: "Revisar monto" }));
 
     const amountInput = screen.getByLabelText("Monto a imputar");
     const saveButton = screen.getByRole("button", { name: "Guardar decisión" });
@@ -140,7 +141,7 @@ describe("PendingReviewPage", () => {
 
     renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
     expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
+    fireEvent.click(screen.getByRole("button", { name: "Revisar monto" }));
 
     const amountInput = screen.getByLabelText("Monto a imputar");
     fireEvent.change(amountInput, { target: { value: "500" } });
@@ -152,7 +153,7 @@ describe("PendingReviewPage", () => {
     expect(screen.getByRole("button", { name: "Guardar decisión" })).toBeDisabled();
     expect(reviewRequests).toBe(0);
 
-    fireEvent.change(screen.getByLabelText(/Observación admin/), {
+    fireEvent.change(screen.getByLabelText(/Observación/), {
       target: { value: "El banco acreditó más de lo informado." },
     });
     fireEvent.click(screen.getByRole("button", { name: "Guardar decisión" }));
@@ -180,7 +181,7 @@ describe("PendingReviewPage", () => {
 
     renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
     expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
+    fireEvent.click(screen.getByRole("button", { name: "Revisar monto" }));
 
     const amountInput = screen.getByLabelText("Monto a imputar");
     fireEvent.change(amountInput, { target: { value: "100000000" } });
@@ -200,7 +201,7 @@ describe("PendingReviewPage", () => {
 
     renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
     expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
+    fireEvent.click(screen.getByRole("button", { name: "Revisar monto" }));
 
     const amountInput = screen.getByLabelText("Monto a imputar");
     fireEvent.change(amountInput, { target: { value: "99999999.99" } });
@@ -220,9 +221,9 @@ describe("PendingReviewPage", () => {
 
     renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
     expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
+    fireEvent.click(screen.getByRole("button", { name: "Revisar monto" }));
 
-    expect(screen.getByLabelText(/Observación admin/)).toHaveAttribute("maxLength", "500");
+    expect(screen.getByLabelText(/Observación/)).toHaveAttribute("maxLength", "500");
   });
 
   it("shows downward correction and neutral state without a request", async () => {
@@ -234,7 +235,7 @@ describe("PendingReviewPage", () => {
 
     renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
     expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
+    fireEvent.click(screen.getByRole("button", { name: "Revisar monto" }));
 
     const amountInput = screen.getByLabelText("Monto a imputar");
     fireEvent.change(amountInput, { target: { value: "250" } });
@@ -310,7 +311,7 @@ describe("PendingReviewPage", () => {
     expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
     expect(screen.getByText("ICBC - Cuenta en pesos · ICBC.PESOS")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
+    fireEvent.click(screen.getByRole("button", { name: "Revisar monto" }));
 
     expect(await screen.findByText("Cuota #4")).toBeInTheDocument();
     expect(screen.getByText("Cuota #5")).toBeInTheDocument();
@@ -318,7 +319,7 @@ describe("PendingReviewPage", () => {
     fireEvent.change(screen.getByLabelText("Monto a imputar"), {
       target: { value: "250" },
     });
-    fireEvent.change(screen.getByLabelText(/Observación admin/), {
+    fireEvent.change(screen.getByLabelText(/Observación/), {
       target: { value: "Se aprobó el monto verificado." },
     });
     fireEvent.click(screen.getByRole("button", { name: "Guardar decisión" }));
@@ -373,8 +374,8 @@ describe("PendingReviewPage", () => {
 
     expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
-    fireEvent.change(screen.getByLabelText(/Observación admin/), {
+    fireEvent.click(screen.getByRole("button", { name: "Revisar monto" }));
+    fireEvent.change(screen.getByLabelText(/Observación/), {
       target: { value: "Comprobante borroso" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Rechazar total" }));
@@ -408,6 +409,82 @@ describe("PendingReviewPage", () => {
   });
 });
 
+describe("PendingReviewPage simplified review", () => {
+  function serveSubmission(submission: ReturnType<typeof makePendingSubmission>) {
+    server.use(
+      http.get("http://localhost:30002/api/v1/payments/pending-review", () =>
+        HttpResponse.json([submission]),
+      ),
+    );
+  }
+
+  it("hides the equivalence line when payment and trip share a currency", async () => {
+    serveSubmission(makePendingSubmission());
+
+    renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
+    expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
+    expect(screen.queryByText(/Equivale a/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Revisar monto" }));
+    expect(await screen.findByLabelText("Monto a imputar")).toBeInTheDocument();
+    expect(screen.queryByText(/Equivale a/)).not.toBeInTheDocument();
+  });
+
+  it("shows a compact equivalence line for cross-currency payments", async () => {
+    serveSubmission(
+      makePendingSubmission("168.83", {
+        paymentCurrency: "USD",
+        tripCurrency: "ARS",
+        amountInTripCurrency: "202596.00",
+        exchangeRate: "1200.00",
+      }),
+    );
+
+    renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
+    expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
+
+    const equivalence = await screen.findByText(/→/);
+    expect(equivalence).toHaveTextContent("TC");
+    expect(equivalence.textContent).not.toMatch(/Equivale a|del viaje/);
+  });
+
+  it("shows the collapsed card as grouped hierarchy without label grids", async () => {
+    serveSubmission(makePendingSubmission());
+
+    renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
+    expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
+
+    expect(screen.getByText("Bariloche · Cuotas #4, #5")).toBeInTheDocument();
+    expect(screen.getByText("Monto informado")).toBeInTheDocument();
+    expect(screen.queryByText("Imputación prevista")).not.toBeInTheDocument();
+    expect(screen.queryByText("Monto informado por el cliente")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Aprobar monto informado" })).toHaveTextContent("Aprobar");
+    expect(screen.getByRole("button", { name: "Revisar monto" })).toBeInTheDocument();
+  });
+
+  it("does not repeat the reported-amount label in the expanded neutral state", async () => {
+    serveSubmission(makePendingSubmission("240.00"));
+
+    renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
+    expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Revisar monto" }));
+
+    expect(await screen.findByText("Sin corrección")).toBeInTheDocument();
+    expect(screen.queryAllByText(/Monto informado por el cliente/)).toHaveLength(0);
+    // Compact allocation rows instead of nested mini-cards with repeated labels.
+    // (Dates render in the review timezone, so match structure — not the date.)
+    expect(screen.getByText("Cuota #4")).toBeInTheDocument();
+    expect(screen.getByText("Cuota #5")).toBeInTheDocument();
+    expect(screen.getAllByText(/saldo \$\s?200,00 · previsto \$\s?200,00/)).toHaveLength(2);
+    expect(screen.queryByText("Saldo previo")).not.toBeInTheDocument();
+    expect(screen.queryByText("Monto imputado")).not.toBeInTheDocument();
+    // A single decision path: quick approve leaves, Ocultar + Guardar remain.
+    expect(screen.queryByRole("button", { name: "Aprobar monto informado" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ocultar" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Guardar decisión" })).toBeInTheDocument();
+  });
+});
+
 describe("PendingReviewPage amount slider", () => {
   async function expandReviewCard(reportedAmount = "240.00") {
     server.use(
@@ -418,7 +495,7 @@ describe("PendingReviewPage amount slider", () => {
 
     renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
     expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
+    fireEvent.click(screen.getByRole("button", { name: "Revisar monto" }));
 
     const amountInput = screen.getByLabelText("Monto a imputar");
     const slider = screen.getByRole("slider", { name: "Corregir monto con barra deslizante" });
@@ -435,7 +512,7 @@ describe("PendingReviewPage amount slider", () => {
     expect(screen.getByText("Informado")).toBeInTheDocument();
     expect(slider.getAttribute("aria-valuetext")).toContain("Sin corrección");
     // Observation stays optional while the amount matches the reported one.
-    expect(screen.getByLabelText("Observación admin")).toBeInTheDocument();
+    expect(screen.getByLabelText("Observación")).toBeInTheDocument();
     expect(saveButton).not.toBeDisabled();
     expect(screen.queryByRole("button", { name: "Restablecer al monto informado" })).not.toBeInTheDocument();
   });
@@ -456,7 +533,7 @@ describe("PendingReviewPage amount slider", () => {
     expect(await screen.findByText("Corrección al alza")).toBeInTheDocument();
     expect(screen.getByText(/\+.*respecto de lo informado/)).toBeInTheDocument();
     expect(slider.getAttribute("aria-valuetext")).toContain("Corrección al alza");
-    expect(screen.getByLabelText(/Observación admin \(obligatoria\)/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Observación · requerida/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Restablecer al monto informado" })).toBeInTheDocument();
     expect(saveButton).toBeDisabled();
     expect(reviewRequests).toBe(0);
@@ -470,7 +547,7 @@ describe("PendingReviewPage amount slider", () => {
     expect(amountInput).toHaveValue("180.00");
     expect(await screen.findByText("Corrección a la baja")).toBeInTheDocument();
     expect(screen.getByText(/-.*respecto de lo informado/)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Observación admin \(obligatoria\)/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Observación · requerida/)).toBeInTheDocument();
     expect(saveButton).toBeDisabled();
   });
 
@@ -484,7 +561,7 @@ describe("PendingReviewPage amount slider", () => {
 
     expect(amountInput).toHaveValue("240.00");
     expect(await screen.findByText("Sin corrección")).toBeInTheDocument();
-    expect(screen.getByLabelText("Observación admin")).toBeInTheDocument();
+    expect(screen.getByLabelText("Observación")).toBeInTheDocument();
     expect(saveButton).not.toBeDisabled();
     expect(screen.queryByRole("button", { name: "Restablecer al monto informado" })).not.toBeInTheDocument();
   });
@@ -510,7 +587,7 @@ describe("PendingReviewPage amount slider", () => {
     // The visual upper bound grows to include 700 instead of desyncing.
     expect(slider).toHaveValue("1000");
 
-    fireEvent.change(screen.getByLabelText(/Observación admin/), {
+    fireEvent.change(screen.getByLabelText(/Observación/), {
       target: { value: "Acreditó más por un pago agrupado." },
     });
     expect(saveButton).not.toBeDisabled();
@@ -549,12 +626,12 @@ describe("PendingReviewPage amount slider", () => {
 
     renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
     expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
+    fireEvent.click(screen.getByRole("button", { name: "Revisar monto" }));
 
     fireEvent.change(screen.getByRole("slider", { name: "Corregir monto con barra deslizante" }), {
       target: { value: "625" },
     });
-    fireEvent.change(screen.getByLabelText(/Observación admin/), {
+    fireEvent.change(screen.getByLabelText(/Observación/), {
       target: { value: "El banco acreditó más de lo informado." },
     });
     fireEvent.click(screen.getByRole("button", { name: "Guardar decisión" }));
@@ -571,7 +648,7 @@ describe("PendingReviewPage amount slider", () => {
     const { amountInput, slider, saveButton } = await expandReviewCard();
 
     fireEvent.change(slider, { target: { value: "625" } });
-    fireEvent.change(screen.getByLabelText(/Observación admin/), {
+    fireEvent.change(screen.getByLabelText(/Observación/), {
       target: { value: "Borrador que debe conservarse." },
     });
     fireEvent.click(screen.getByRole("button", { name: "Restablecer al monto informado" }));
@@ -579,7 +656,7 @@ describe("PendingReviewPage amount slider", () => {
     expect(amountInput).toHaveValue("240.00");
     expect(slider).toHaveValue("500");
     expect(await screen.findByText("Sin corrección")).toBeInTheDocument();
-    expect(screen.getByLabelText("Observación admin")).toHaveValue("Borrador que debe conservarse.");
+    expect(screen.getByLabelText("Observación")).toHaveValue("Borrador que debe conservarse.");
     expect(saveButton).not.toBeDisabled();
   });
 });

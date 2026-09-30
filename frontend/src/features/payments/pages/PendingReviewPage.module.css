@@ -96,6 +96,38 @@
   color: #526883;
 }
 
+.emailLine {
+  margin: 0.15rem 0 0;
+  color: #526883;
+  font-size: 0.82rem;
+}
+
+.tripLine {
+  margin: 0;
+  color: #1f3f63;
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.reportedBlock {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.reportedHero {
+  margin: 0;
+  color: #0f2f57;
+  font-size: clamp(1.5rem, 3vw, 1.9rem);
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.metaLine {
+  margin: 0;
+  color: #526883;
+  font-size: 0.9rem;
+}
+
 .pendingBadge {
   border-radius: 999px;
   padding: 0.2rem 0.65rem;
@@ -106,10 +138,8 @@
   color: #92400e;
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.85rem;
+.actionsEnd {
+  justify-content: flex-end;
 }
 
 .label {
@@ -121,18 +151,46 @@
   letter-spacing: 0.03em;
 }
 
-.value {
-  margin: 0.22rem 0 0;
-  color: #243b53;
-}
-
 .exchangeInfo {
   margin: 0;
-  padding: 0.8rem;
-  border-radius: 0.8rem;
-  background: rgba(239, 246, 255, 0.95);
-  border: 1px solid rgba(147, 197, 253, 0.45);
   color: #1e3a5f;
+  font-size: 0.9rem;
+}
+
+.expandedSection {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.allocationList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+
+.allocationRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  align-items: baseline;
+  padding: 0.55rem 0;
+  border-top: 1px solid #e3eefc;
+}
+
+.allocationRow:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.allocationTitle {
+  font-weight: 700;
+  color: #1f3f63;
+}
+
+.allocationDetail {
+  color: #526883;
+  font-size: 0.9rem;
 }
 
 .attachmentBox {
@@ -152,7 +210,8 @@
 .linkButton,
 .primaryButton,
 .secondaryButton,
-.rejectBox input {
+.dangerButton,
+.decisionPanel input {
   min-height: 42px;
   border-radius: 0.7rem;
 }
@@ -170,9 +229,13 @@
 }
 
 .primaryButton,
-.secondaryButton {
+.secondaryButton,
+.dangerButton {
   padding: 0.55rem 1rem;
   font-weight: 600;
+  font-family: inherit;
+  font-size: 0.95rem;
+  cursor: pointer;
 }
 
 .primaryButton {
@@ -187,33 +250,62 @@
   color: #123a6b;
 }
 
-.rejectBox {
+.decisionPanel {
   display: grid;
   gap: 0.75rem;
-  padding: 0.9rem;
-  border-radius: 0.8rem;
-  background: rgba(255, 247, 237, 0.98);
-  border: 1px solid rgba(245, 158, 11, 0.35);
+  padding: 1rem;
+  border-radius: 1rem;
+  background: #fff;
+  border: 1px solid #d8e6fb;
+  box-shadow: 0 0.75rem 1.5rem rgba(15, 23, 42, 0.05);
 }
 
-.rejectBox input {
-  border: 1px solid #d6b08b;
+.decisionPanel input {
+  border: 1px solid #b5cde9;
   padding: 0 0.75rem;
+  width: 100%;
 }
 
-@media (max-width: 860px) {
-  .grid {
-    grid-template-columns: 1fr 1fr;
-  }
+.dangerButton {
+  border: 1px solid rgba(185, 28, 28, 0.45);
+  background: #fff;
+  color: #b91c1c;
+}
+
+.dangerButton:hover:not(:disabled) {
+  border-color: #b91c1c;
+  background: rgba(185, 28, 28, 0.05);
+}
+
+.dangerButton:focus-visible {
+  outline: 3px solid rgba(185, 28, 28, 0.25);
+  outline-offset: 1px;
+}
+
+.primaryButton:focus-visible,
+.secondaryButton:focus-visible,
+.linkButton:focus-visible {
+  outline: 3px solid rgba(11, 91, 207, 0.28);
+  outline-offset: 1px;
 }
 
 @media (max-width: 620px) {
-  .grid {
-    grid-template-columns: 1fr;
-  }
-
   .searchBox input {
     min-width: 0;
     width: 100%;
+  }
+
+  .reportedHero {
+    font-size: 1.5rem;
+  }
+
+  .decisionPanel {
+    padding: 0.9rem 0.75rem;
+  }
+
+  .actionsRow .primaryButton,
+  .actionsRow .secondaryButton,
+  .actionsRow .dangerButton {
+    flex: 1 1 auto;
   }
 }

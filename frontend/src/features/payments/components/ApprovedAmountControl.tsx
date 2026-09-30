@@ -100,10 +100,6 @@ export function ApprovedAmountControl({
 
   return (
     <div className={styles.block}>
-      <p className={styles.reportedLine}>
-        Monto informado por el cliente · {formatMoney(reportedAmount, paymentCurrency)}
-      </p>
-
       <p className={styles.amountHeading}>Monto a imputar</p>
 
       <div className={styles.inputRow}>
