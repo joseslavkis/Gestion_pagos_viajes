@@ -49,6 +49,14 @@ function formatInstallmentList(allocations: PaymentBatchInstallmentDTO[]): strin
   return allocations.map((allocation) => `#${allocation.installmentNumber}`).join(", ");
 }
 
+function formatTripLine(tripName: string, allocations: PaymentBatchInstallmentDTO[]): string {
+  if (allocations.length === 0) {
+    return tripName;
+  }
+  const installments = formatInstallmentList(allocations);
+  return `${tripName} · ${allocations.length > 1 ? "Cuotas" : "Cuota"} ${installments}`;
+}
+
 function validateApprovalAmount(input: string): { amount: DecimalString | null; error: string | null } {
   const amount = normalizePaymentMoneyInput(input);
   if (amount == null) {
@@ -199,6 +207,9 @@ export function PendingReviewPage() {
                 const requiresObservation =
                   approvalValidation.amount != null &&
                   compareNonNegativeDecimalStrings(approvalValidation.amount, item.reportedAmount) !== 0;
+                // Same-currency payments need no conversion note; only real
+                // cross-currency conversions earn a compact equivalence line.
+                const showExchangeInfo = item.paymentCurrency !== item.tripCurrency;
 
                 return (
                   <article key={item.submissionId} className={styles.card}>
@@ -208,50 +219,40 @@ export function PendingReviewPage() {
                           {item.userLastname}, {item.userName}
                         </h2>
                         <p className={styles.cardSubtitle}>
-                          {item.userEmail} · {item.studentName || "Sin alumno informado"}
+                          {item.studentName || "Sin alumno informado"}
                           {item.studentDni ? ` · DNI ${item.studentDni}` : ""}
                         </p>
+                        <p className={styles.emailLine}>{item.userEmail}</p>
                       </div>
                       <span className={styles.pendingBadge}>Pago pendiente</span>
                     </div>
 
-                    <div className={styles.grid}>
-                      <div>
-                        <span className={styles.label}>Viaje</span>
-                        <p className={styles.value}>{item.tripName}</p>
-                      </div>
-                      <div>
-                        <span className={styles.label}>Imputación prevista</span>
-                        <p className={styles.value}>{formatInstallmentList(item.allocations)}</p>
-                      </div>
-                      <div>
-                        <span className={styles.label}>Monto informado por el cliente</span>
-                        <p className={styles.value}>
-                          {formatMoneyByCurrency(item.reportedAmount, item.paymentCurrency)}
-                        </p>
-                      </div>
-                      <div>
-                        <span className={styles.label}>Método</span>
-                        <p className={styles.value}>{paymentMethodLabels[item.paymentMethod] ?? item.paymentMethod}</p>
-                      </div>
-                      <div>
-                        <span className={styles.label}>Cuenta acreditada</span>
-                        <p className={styles.value}>
-                          {item.bankAccountDisplayName ?? "Cuenta no informada"}
-                          {item.bankAccountAlias ? ` · ${item.bankAccountAlias}` : ""}
-                        </p>
-                      </div>
-                      <div>
-                        <span className={styles.label}>Fecha de pago</span>
-                        <p className={styles.value}>{formatDate(item.reportedPaymentDate)}</p>
-                      </div>
+                    <p className={styles.tripLine}>{formatTripLine(item.tripName, item.allocations)}</p>
+
+                    <div className={styles.reportedBlock}>
+                      <span className={styles.label}>Monto informado</span>
+                      <p className={styles.reportedHero}>
+                        {formatMoneyByCurrency(item.reportedAmount, item.paymentCurrency)}
+                      </p>
                     </div>
 
-                    <p className={styles.exchangeInfo}>
-                      Equivale a {formatMoneyByCurrency(item.amountInTripCurrency, item.tripCurrency)} del viaje
-                      {item.exchangeRate != null
-                        ? ` · tipo de cambio ${formatMoneyByCurrency(item.exchangeRate, "ARS")}`
-                        : ""}
+                    {showExchangeInfo ? (
+                      <p className={styles.exchangeInfo}>
+                        {formatMoneyByCurrency(item.reportedAmount, item.paymentCurrency)} →{" "}
+                        {formatMoneyByCurrency(item.amountInTripCurrency, item.tripCurrency)}
+                        {item.exchangeRate != null
+                          ? ` · TC ${formatMoneyByCurrency(item.exchangeRate, "ARS")}`
+                          : ""}
+                      </p>
+                    ) : null}
+
+                    <p className={styles.metaLine}>
+                      {paymentMethodLabels[item.paymentMethod] ?? item.paymentMethod} ·{" "}
+                      {formatDate(item.reportedPaymentDate)}
+                    </p>
+                    <p className={styles.metaLine}>
+                      {item.bankAccountDisplayName ?? "Cuenta no informada"}
+                      {item.bankAccountAlias ? ` · ${item.bankAccountAlias}` : ""}
                     </p>
 
                     <AttachmentList
@@ -260,72 +261,59 @@ export function PendingReviewPage() {
                       imageClassName={styles.attachmentImage}
                     />
 
-                    <div className={styles.actionsRow}>
-                      <button
-                        type="button"
-                        className={styles.primaryButton}
-                        disabled={reviewPayment.isPending}
-                        onClick={() => submitDecision(item, item.reportedAmount)}
-                      >
-                        Aprobar monto informado
-                      </button>
-                      <button
-                        type="button"
-                        className={styles.secondaryButton}
-                        onClick={() => toggleSubmission(item.submissionId)}
-                      >
-                        {isExpanded ? "Ocultar detalle" : "Ver imputación y decidir"}
-                      </button>
-                    </div>
+                    {isExpanded ? (
+                      <div className={`${styles.actionsRow} ${styles.actionsEnd}`}>
+                        <button
+                          type="button"
+                          className={styles.secondaryButton}
+                          onClick={() => toggleSubmission(item.submissionId)}
+                        >
+                          Ocultar
+                        </button>
+                      </div>
+                    ) : (
+                      <div className={styles.actionsRow}>
+                        <button
+                          type="button"
+                          className={styles.primaryButton}
+                          aria-label="Aprobar monto informado"
+                          disabled={reviewPayment.isPending}
+                          onClick={() => submitDecision(item, item.reportedAmount)}
+                        >
+                          Aprobar
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.secondaryButton}
+                          onClick={() => toggleSubmission(item.submissionId)}
+                        >
+                          Revisar monto
+                        </button>
+                      </div>
+                    )}
 
                     {isExpanded ? (
-                      <div style={{ display: "grid", gap: 12 }}>
-                        {item.allocations.map((allocation) => (
-                          <div
-                            key={`${item.submissionId}-${allocation.installmentId}`}
-                            style={{
-                              border: "1px solid #d8e6fb",
-                              borderRadius: 12,
-                              padding: 12,
-                              display: "grid",
-                              gap: 10,
-                              background: "#f8fbff",
-                            }}
-                          >
-                            <div className={styles.cardHeader}>
-                              <div>
-                                <h3 className={styles.cardTitle}>Cuota #{allocation.installmentNumber}</h3>
-                                <p className={styles.cardSubtitle}>
-                                  Vence {formatDate(allocation.dueDate)} · total{" "}
-                                  {formatMoneyByCurrency(allocation.totalDue, item.tripCurrency)}
-                                </p>
-                              </div>
-                              <span className={styles.pendingBadge}>
+                      <div className={styles.expandedSection}>
+                        <ul className={styles.allocationList}>
+                          {item.allocations.map((allocation) => (
+                            <li
+                              key={`${item.submissionId}-${allocation.installmentId}`}
+                              className={styles.allocationRow}
+                            >
+                              <span className={styles.allocationTitle}>
+                                Cuota #{allocation.installmentNumber}
+                              </span>
+                              <span className={styles.allocationDetail}>
+                                vence {formatDate(allocation.dueDate)} · saldo{" "}
+                                {formatMoneyByCurrency(allocation.remainingAmount, item.tripCurrency)} ·
+                                previsto{" "}
                                 {formatMoneyByCurrency(allocation.amountInTripCurrency, item.tripCurrency)}
                               </span>
-                            </div>
-                            <div className={styles.grid}>
-                              <div>
-                                <span className={styles.label}>Saldo previo</span>
-                                <p className={styles.value}>
-                                  {formatMoneyByCurrency(allocation.remainingAmount, item.tripCurrency)}
-                                </p>
-                              </div>
-                              <div>
-                                <span className={styles.label}>Monto imputado</span>
-                                <p className={styles.value}>
-                                  {formatMoneyByCurrency(allocation.amountInTripCurrency, item.tripCurrency)}
-                                </p>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
+                            </li>
+                          ))}
+                        </ul>
 
-                        <div className={styles.rejectBox}>
-                          <p className={styles.helpText}>
-                            Podés corregir este importe según el monto realmente acreditado. La imputación final
-                            se calculará usando este valor.
-                          </p>
+                        <div className={styles.decisionPanel}>
                           <ApprovedAmountControl
                             inputId={`approved-amount-${item.submissionId}`}
                             reportedAmount={item.reportedAmount}
@@ -362,12 +350,12 @@ export function PendingReviewPage() {
                             onReset={() => resetApprovedAmount(item)}
                             formatMoney={formatMoneyByCurrency}
                           />
-                          <p className={styles.helpText}>
-                            La imputación final se recalculará al guardar la decisión.
-                          </p>
+                          {correction !== "none" ? (
+                            <p className={styles.helpText}>La imputación se recalcula al guardar.</p>
+                          ) : null}
 
                           <label className={styles.searchBox}>
-                            <span>Observación admin{requiresObservation ? " (obligatoria)" : ""}</span>
+                            <span>Observación{requiresObservation ? " · requerida" : ""}</span>
                             <input
                               value={observation}
                               maxLength={500}
@@ -377,22 +365,19 @@ export function PendingReviewPage() {
                                   [item.submissionId]: event.target.value,
                                 }))
                               }
-                              placeholder={
-                                requiresObservation
-                                  ? "Obligatoria al corregir el monto informado"
-                                  : "Opcional si se aprueba el monto informado"
-                              }
+                              placeholder={requiresObservation ? "Motivo de la corrección" : "Opcional"}
                             />
                           </label>
 
                           <div className={styles.actionsRow}>
                             <button
                               type="button"
-                              className={styles.secondaryButton}
+                              className={styles.dangerButton}
+                              aria-label="Rechazar total"
                               disabled={reviewPayment.isPending}
                               onClick={() => submitDecision(item, "0")}
                             >
-                              Rechazar total
+                              Rechazar
                             </button>
                             <button
                               type="button"
