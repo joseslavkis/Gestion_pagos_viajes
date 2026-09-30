@@ -149,7 +149,7 @@ test("allocates a manual 500 across three 240 installments, then approves and vo
   const reviewCard = adminPage.locator("article").filter({ hasText: seeded.threeInstallmentTripName });
   await expect(reviewCard).toHaveCount(1);
   await reviewCard.getByRole("button", { name: "Ver imputación y decidir" }).click();
-  await expect(reviewCard.getByLabel("Monto a aprobar")).toHaveValue("500.00");
+  await expect(reviewCard.getByLabel("Monto a imputar")).toHaveValue("500.00");
   await reviewCard.getByRole("button", { name: "Guardar decisión" }).click();
   await expect(reviewCard).toHaveCount(0);
 
@@ -198,6 +198,62 @@ test("allocates a manual 500 across three 240 installments, then approves and vo
     });
   }
   expect(await readFxCalls()).toEqual([]);
+  await adminPage.close();
+});
+
+test("approves an upward administrative correction from 240 reported to 300 credited", async ({ page, context }) => {
+  await selectTrip(page, seeded.threeInstallmentTripName);
+  const receipt = "upward-correction.png";
+  await attachReceipt(page, receipt);
+  await receiptAmount(page, receipt).fill("240");
+  await confirmTotal(page, "240.00", "ARS");
+
+  const registrationPromise = page.waitForResponse((response) =>
+    response.url().endsWith("/api/v1/payments") && response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Enviar comprobante" }).click();
+  const registration = await registrationPromise;
+  expect(registration.status()).toBe(201);
+  const submissionId = Number((await registration.json() as Record<string, unknown>).submissionId);
+  expect(submissionId).toBeGreaterThan(0);
+
+  const adminPage = await context.newPage();
+  await adminPage.addInitScript((accessToken) => {
+    window.localStorage.setItem("pagos-viajes-auth-tokens", JSON.stringify({ accessToken, refreshToken: null }));
+  }, seeded.adminAccessToken);
+  await adminPage.goto("/payments/pending-review");
+  const reviewCard = adminPage.locator("article").filter({ hasText: seeded.threeInstallmentTripName });
+  await expect(reviewCard).toHaveCount(1);
+  await expect(reviewCard.getByText("Monto informado por el cliente")).toBeVisible();
+  await reviewCard.getByRole("button", { name: "Ver imputación y decidir" }).click();
+  await expect(reviewCard.getByLabel("Monto a imputar")).toHaveValue("240.00");
+  await expect(reviewCard.getByText("Sin corrección")).toBeVisible();
+  await reviewCard.getByLabel("Monto a imputar").fill("300");
+  await expect(reviewCard.getByText("Corrección al alza")).toBeVisible();
+  // The correction requires an observation before the decision can be saved.
+  await expect(reviewCard.getByRole("button", { name: "Guardar decisión" })).toBeDisabled();
+  await reviewCard.getByLabel("Observación admin").fill("El banco acreditó 300 en lugar de 240.");
+  await expect(reviewCard.getByText("La imputación final se recalculará al guardar la decisión.")).toBeVisible();
+  await reviewCard.getByRole("button", { name: "Guardar decisión" }).click();
+  await expect(reviewCard).toHaveCount(0);
+
+  const approved = (await getJson(api, "/api/v1/payments/my", seeded.accessToken) as Array<Record<string, unknown>>)
+    .find((payment) => payment.submissionId === submissionId);
+  expect(approved).toMatchObject({
+    status: "APPROVED",
+    reportedAmount: "240.00",
+    approvedAmount: "300.00",
+    rejectedAmount: "0.00",
+  });
+  const installments = (await getJson(api, "/api/v1/payments/my/installments", seeded.accessToken) as Array<Record<string, unknown>>)
+    .filter((entry) => entry.tripId === seeded.threeInstallmentTripId)
+    .sort((left, right) => Number(left.installmentNumber) - Number(right.installmentNumber));
+  expect(installments.map((entry) => moneyToCents(entry.paidAmount))).toEqual([24000n, 6000n, 0n]);
+
+  await postJson(api, `/api/v1/payments/${submissionId}/void`, {}, seeded.adminAccessToken);
+  const afterVoid = (await getJson(api, "/api/v1/payments/my/installments", seeded.accessToken) as Array<Record<string, unknown>>)
+    .filter((entry) => entry.tripId === seeded.threeInstallmentTripId);
+  expect(afterVoid.map((entry) => moneyToCents(entry.paidAmount))).toEqual([0n, 0n, 0n]);
   await adminPage.close();
 });
 
@@ -269,7 +325,7 @@ test("CASE J conserves a partial cross-currency lifecycle across installments an
   const reviewCard = adminPage.locator("article").filter({ hasText: seeded.caseJTripName });
   await expect(reviewCard).toHaveCount(1);
   await reviewCard.getByRole("button", { name: "Ver imputación y decidir" }).click();
-  await reviewCard.getByLabel("Monto a aprobar").fill("0.50");
+  await reviewCard.getByLabel("Monto a imputar").fill("0.50");
   await reviewCard.getByLabel("Observación admin").fill("Partial cross-currency test approval");
   await reviewCard.getByRole("button", { name: "Guardar decisión" }).click();
   await expect(reviewCard).toHaveCount(0);
