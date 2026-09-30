@@ -3,7 +3,7 @@ import type { Currency } from "./payments-dtos";
 
 export type ReceiptAmount = { id: number; file: File; currency: Currency; amount: string };
 
-const MAX_MONEY_CENTS = 9999999999n; // PaymentSubmission is decimal(10,2).
+export const MAX_MONEY_CENTS = 9999999999n; // PaymentSubmission is decimal(10,2).
 
 /**
  * Single source of truth for the domain-wide monetary ceiling (99,999,999.99).
