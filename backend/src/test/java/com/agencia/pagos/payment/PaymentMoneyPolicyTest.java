@@ -127,6 +127,75 @@ class PaymentMoneyPolicyTest {
                 new BigDecimal("0.01"), Currency.ARS, Currency.USD, new BigDecimal("1000")));
     }
 
+    @Test
+    void positivePersistableMoneyAcceptsPositiveValuesUpToMaxMoney() {
+        assertEquals(new BigDecimal("1.00"),
+                policy.requirePositivePersistableMoney(new BigDecimal("1"), "reportedAmount"));
+        assertEquals(PaymentMoneyPolicy.MAX_MONEY,
+                policy.requirePositivePersistableMoney(new BigDecimal("99999999.99"), "reportedAmount"));
+        assertThrows(IllegalArgumentException.class,
+                () -> policy.requirePositivePersistableMoney(BigDecimal.ZERO, "reportedAmount"));
+        assertThrows(IllegalArgumentException.class,
+                () -> policy.requirePositivePersistableMoney(new BigDecimal("-1.00"), "reportedAmount"));
+        assertThrows(IllegalArgumentException.class,
+                () -> policy.requirePositivePersistableMoney(new BigDecimal("100000000.00"), "reportedAmount"));
+        assertThrows(IllegalArgumentException.class,
+                () -> policy.requirePositivePersistableMoney(new BigDecimal("1.001"), "reportedAmount"));
+        assertThrows(IllegalArgumentException.class,
+                () -> policy.requirePositivePersistableMoney(null, "reportedAmount"));
+    }
+
+    @Test
+    void maxAllowedCapsSameCurrencyBalanceAtMaxMoney() {
+        assertEquals(PaymentMoneyPolicy.MAX_MONEY, policy.maxAllowedPaymentAmount(
+                new BigDecimal("150000000.00"), Currency.ARS, Currency.ARS, null));
+        assertEquals(new BigDecimal("200.00"), policy.maxAllowedPaymentAmount(
+                new BigDecimal("200.00"), Currency.ARS, Currency.ARS, null));
+        assertEquals(new BigDecimal("0.00"), policy.maxAllowedPaymentAmount(
+                BigDecimal.ZERO, Currency.ARS, Currency.ARS, null));
+    }
+
+    @Test
+    void maxAllowedCapsTripSideBeforeExactCentsMath_usdToArs() {
+        BigDecimal rate = new BigDecimal("1200");
+        BigDecimal limit = policy.maxAllowedPaymentAmount(
+                new BigDecimal("150000000.00"), Currency.ARS, Currency.USD, rate);
+
+        assertEquals(new BigDecimal("83333.33"), limit);
+        BigDecimal convertedLimit = policy.convertPaymentToTripCurrency(
+                limit, Currency.ARS, Currency.USD, rate);
+        assertTrue(convertedLimit.compareTo(PaymentMoneyPolicy.MAX_MONEY) <= 0);
+        assertTrue(policy.convertPaymentToTripCurrency(
+                        limit.add(new BigDecimal("0.01")), Currency.ARS, Currency.USD, rate)
+                .compareTo(PaymentMoneyPolicy.MAX_MONEY) > 0);
+    }
+
+    @Test
+    void maxAllowedCapsPaymentSideWhenDivisionYieldsUnpersistibleSource_arsToUsd() {
+        BigDecimal rate = new BigDecimal("1200");
+        BigDecimal limit = policy.maxAllowedPaymentAmount(
+                new BigDecimal("150000000.00"), Currency.USD, Currency.ARS, rate);
+
+        assertEquals(PaymentMoneyPolicy.MAX_MONEY, limit);
+        assertTrue(policy.convertPaymentToTripCurrency(
+                        limit, Currency.USD, Currency.ARS, rate)
+                .compareTo(PaymentMoneyPolicy.MAX_MONEY) <= 0);
+    }
+
+    @Test
+    void maxAllowedExactBoundaryWhenDivisionMultipliesIntoTripCurrency() {
+        BigDecimal rate = new BigDecimal("0.5");
+        BigDecimal limit = policy.maxAllowedPaymentAmount(
+                new BigDecimal("150000000.00"), Currency.USD, Currency.ARS, rate);
+
+        assertEquals(new BigDecimal("49999999.99"), limit);
+        assertEquals(new BigDecimal("99999999.98"), policy.convertPaymentToTripCurrency(
+                limit, Currency.USD, Currency.ARS, rate));
+        assertTrue(policy.convertPaymentToTripCurrency(
+                        limit.add(new BigDecimal("0.01")), Currency.USD, Currency.ARS, rate)
+                .compareTo(PaymentMoneyPolicy.MAX_MONEY) > 0);
+    }
+
     private void assertSafeLimit(
             String balance,
             Currency tripCurrency,

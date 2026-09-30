@@ -302,6 +302,164 @@ class PaymentAllocationPlannerTest {
         }
     }
 
+    @Test
+    void plan_acceptsMaxMoneySameCurrencyAndRejectsOneCentMoreAsBalanceExceeded() {
+        List<Installment> installments = List.of(buildInstallment(1, "99999999.99", "0.00"));
+
+        PaymentAllocationPlanner.PlanResult result = planner.plan(
+                installments, new BigDecimal("99999999.99"), Currency.ARS, null);
+
+        assertEquals(new BigDecimal("99999999.99"), result.reportedAmount());
+        assertEquals(new BigDecimal("99999999.99"), result.amountInTripCurrency());
+
+        PaymentBalanceExceededException exceeded = assertThrows(
+                PaymentBalanceExceededException.class,
+                () -> planner.plan(installments, new BigDecimal("100000000.00"), Currency.ARS, null));
+        assertEquals(new BigDecimal("99999999.99"), exceeded.maxAllowedAmount());
+    }
+
+    @Test
+    void plan_rejectsConvertedOverflowEvenWhenBalanceCoversIt_usdToArs() {
+        List<Installment> installments = List.of(
+                buildInstallment(1, "75000000.00", "0.00"),
+                buildInstallment(2, "75000000.00", "0.00"));
+        BigDecimal rate = new BigDecimal("1200");
+
+        // 100,001.00 USD exceeds the derived persistible limit, so the planner
+        // reports the capped maximum instead of an unpersistible plan.
+        PaymentBalanceExceededException exceeded = assertThrows(
+                PaymentBalanceExceededException.class,
+                () -> planner.plan(installments, new BigDecimal("100001.00"), Currency.USD, rate));
+
+        assertEquals(new BigDecimal("83333.33"), exceeded.maxAllowedAmount());
+    }
+
+    @Test
+    void plan_rejectsUnpersistibleConvertedTotalAgainstGenerousCallerLimit_usdToArs() {
+        List<Installment> installments = List.of(
+                buildInstallment(1, "75000000.00", "0.00"),
+                buildInstallment(2, "75000000.00", "0.00"));
+        BigDecimal rate = new BigDecimal("1200");
+
+        // 100,001.00 USD -> 120,001,200.00 ARS: fits the 150M balance but not
+        // NUMERIC(10,2). With an over-generous caller limit the persistibility
+        // invariant is the backstop that keeps the plan unpersistible-free.
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> planner.plan(
+                        installments,
+                        new BigDecimal("100001.00"),
+                        Currency.USD,
+                        rate,
+                        new PaymentAllocationPlanner.PaymentLimit(
+                                new BigDecimal("150000000.00"), new BigDecimal("100001.00"))));
+
+        assertEquals(IllegalArgumentException.class, error.getClass());
+        assertTrue(error.getMessage().contains("amountInTripCurrency"));
+    }
+
+    @Test
+    void plan_enforcesDerivedExactLimit_usdToArs() {
+        List<Installment> installments = List.of(
+                buildInstallment(1, "75000000.00", "0.00"),
+                buildInstallment(2, "75000000.00", "0.00"));
+        BigDecimal rate = new BigDecimal("1200");
+        BigDecimal limit = new PaymentMoneyPolicy().maxAllowedPaymentAmount(
+                new BigDecimal("150000000.00"), Currency.ARS, Currency.USD, rate);
+
+        assertEquals(new BigDecimal("83333.33"), limit);
+        PaymentAllocationPlanner.PlanResult result = planner.plan(
+                installments, limit, Currency.USD, rate);
+        assertEquals(limit, result.reportedAmount());
+        assertTrue(result.amountInTripCurrency().compareTo(PaymentMoneyPolicy.MAX_MONEY) <= 0);
+
+        // 83,333.34 USD -> 100,000,008.00 ARS: within the 150M balance, beyond NUMERIC(10,2).
+        PaymentBalanceExceededException overLimit = assertThrows(
+                PaymentBalanceExceededException.class,
+                () -> planner.plan(
+                        installments, limit.add(new BigDecimal("0.01")), Currency.USD, rate));
+        assertEquals(limit, overLimit.maxAllowedAmount());
+    }
+
+    @Test
+    void plan_rejectsConvertedOverflowWhenDivisionMultiplies_arsToUsd() {
+        List<Installment> installments = List.of(
+                buildInstallment(1, "75000000.00", "0.00", Currency.USD),
+                buildInstallment(2, "75000000.00", "0.00", Currency.USD));
+        BigDecimal rate = new BigDecimal("0.5");
+
+        // 60,000,000.00 ARS / 0.5 -> 120,000,000.00 USD: fits the 150M balance
+        // but not NUMERIC(10,2). The derived limit (49,999,999.99) rejects it first.
+        PaymentBalanceExceededException exceeded = assertThrows(
+                PaymentBalanceExceededException.class,
+                () -> planner.plan(
+                        installments, new BigDecimal("60000000.00"), Currency.ARS, rate));
+
+        assertEquals(new BigDecimal("49999999.99"), exceeded.maxAllowedAmount());
+    }
+
+    @Test
+    void plan_rejectsUnpersistibleConvertedTotalAgainstGenerousCallerLimit_arsToUsd() {
+        List<Installment> installments = List.of(
+                buildInstallment(1, "75000000.00", "0.00", Currency.USD),
+                buildInstallment(2, "75000000.00", "0.00", Currency.USD));
+        BigDecimal rate = new BigDecimal("0.5");
+
+        // 60,000,000.00 ARS / 0.5 -> 120,000,000.00 USD: source fits, converted
+        // does not. Same backstop as the USD->ARS direction.
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> planner.plan(
+                        installments,
+                        new BigDecimal("60000000.00"),
+                        Currency.ARS,
+                        rate,
+                        new PaymentAllocationPlanner.PaymentLimit(
+                                new BigDecimal("150000000.00"), new BigDecimal("60000000.00"))));
+
+        assertEquals(IllegalArgumentException.class, error.getClass());
+        assertTrue(error.getMessage().contains("amountInTripCurrency"));
+    }
+
+    @Test
+    void plan_enforcesDerivedExactLimit_arsToUsd() {
+        List<Installment> installments = List.of(
+                buildInstallment(1, "75000000.00", "0.00", Currency.USD),
+                buildInstallment(2, "75000000.00", "0.00", Currency.USD));
+        BigDecimal rate = new BigDecimal("0.5");
+        BigDecimal limit = new PaymentMoneyPolicy().maxAllowedPaymentAmount(
+                new BigDecimal("150000000.00"), Currency.USD, Currency.ARS, rate);
+
+        assertEquals(new BigDecimal("49999999.99"), limit);
+        PaymentAllocationPlanner.PlanResult result = planner.plan(
+                installments, limit, Currency.ARS, rate);
+        assertEquals(limit, result.reportedAmount());
+        assertTrue(result.amountInTripCurrency().compareTo(PaymentMoneyPolicy.MAX_MONEY) <= 0);
+
+        // 50,000,000.00 ARS / 0.5 -> 100,000,000.00 USD: beyond the derived limit.
+        PaymentBalanceExceededException overLimit = assertThrows(
+                PaymentBalanceExceededException.class,
+                () -> planner.plan(
+                        installments, limit.add(new BigDecimal("0.01")), Currency.ARS, rate));
+        assertEquals(limit, overLimit.maxAllowedAmount());
+    }
+
+    @Test
+    void plan_rejectsUnpersistibleSourceEvenWhenConvertedFits_arsToUsd() {
+        List<Installment> installments = List.of(
+                buildInstallment(1, "75000000.00", "0.00", Currency.USD),
+                buildInstallment(2, "75000000.00", "0.00", Currency.USD));
+        BigDecimal rate = new BigDecimal("1200");
+
+        // 100,000,000.00 ARS overflows the source aggregate; converted (~83,333.33 USD) would fit.
+        PaymentBalanceExceededException exceeded = assertThrows(
+                PaymentBalanceExceededException.class,
+                () -> planner.plan(
+                        installments, new BigDecimal("100000000.00"), Currency.ARS, rate));
+
+        assertEquals(new BigDecimal("99999999.99"), exceeded.maxAllowedAmount());
+    }
+
     private BigDecimal sumTrip(PaymentAllocationPlanner.PlanResult result) {
         return result.allocations().stream()
                 .map(PaymentAllocationPlanner.PlannedAllocation::amountInTripCurrency)

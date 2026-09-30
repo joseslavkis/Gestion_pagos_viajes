@@ -405,6 +405,108 @@ class PaymentReviewAmountCorrectionTest extends ControllerIntegrationTestSupport
     }
 
     @Test
+    void reviewPayment_legacyUpwardCorrectionWith500Chars_persistsReasonVerbatim() {
+        PaymentFixture fixture = createPaymentFixture("correction-legacy-500-up", Currency.ARS);
+        List<Installment> installments = createThreeHundredPending(fixture);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+        PaymentSubmission legacy = buildLegacySubmission(
+                installments.get(0), bankAccount, "240.00", "240.00");
+        String reason = "m".repeat(500);
+
+        PaymentSubmissionDTO reviewed = paymentService.reviewPayment(
+                legacy.getId(), new ReviewPaymentDTO(new BigDecimal("300.00"), reason), REVIEWER);
+
+        assertEquals("APPROVED", reviewed.status().name());
+        assertEquals(reason, reviewed.adminObservation());
+        PaymentSubmission persisted = paymentSubmissionRepository
+                .findByIdWithContext(legacy.getId()).orElseThrow();
+        PaymentOutcome approved = singleOutcome(persisted, PaymentOutcomeStatus.APPROVED);
+        assertEquals(reason, approved.getAdminObservation());
+        assertEquals(500, approved.getAdminObservation().length());
+        assertEquals(0, totalPaid(installments).compareTo(new BigDecimal("300.00")));
+    }
+
+    @Test
+    void reviewPayment_legacyDownwardCorrectionWith500Chars_showsReasonDeterministically() {
+        PaymentFixture fixture = createPaymentFixture("correction-legacy-500-down", Currency.ARS);
+        List<Installment> installments = createThreeHundredPending(fixture);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+        PaymentSubmission legacy = buildLegacySubmission(
+                installments.get(0), bankAccount, "300.00", "300.00");
+        String reason = "m".repeat(500);
+
+        PaymentSubmissionDTO reviewed = paymentService.reviewPayment(
+                legacy.getId(), new ReviewPaymentDTO(new BigDecimal("240.00"), reason), REVIEWER);
+
+        assertEquals("PARTIALLY_APPROVED", reviewed.status().name());
+        assertEquals(reason, reviewed.adminObservation());
+        PaymentSubmission persisted = paymentSubmissionRepository
+                .findByIdWithContext(legacy.getId()).orElseThrow();
+        assertEquals(reason, singleOutcome(persisted, PaymentOutcomeStatus.APPROVED).getAdminObservation());
+        assertEquals(reason, singleOutcome(persisted, PaymentOutcomeStatus.REJECTED).getAdminObservation());
+        assertEquals(0, totalPaid(installments).compareTo(new BigDecimal("240.00")));
+    }
+
+    @Test
+    void reviewPayment_legacyWithoutCorrection_keepsTechnicalNote() {
+        PaymentFixture fixture = createPaymentFixture("correction-legacy-nocorr", Currency.ARS);
+        List<Installment> installments = createThreeHundredPending(fixture);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+        PaymentSubmission legacy = buildLegacySubmission(
+                installments.get(0), bankAccount, "300.00", "300.00");
+
+        PaymentSubmissionDTO reviewed = paymentService.reviewPayment(
+                legacy.getId(), new ReviewPaymentDTO(new BigDecimal("300.00"), null), REVIEWER);
+
+        assertEquals("APPROVED", reviewed.status().name());
+        PaymentSubmission persisted = paymentSubmissionRepository
+                .findByIdWithContext(legacy.getId()).orElseThrow();
+        assertEquals("Aprobación conciliada con los valores históricos v1 persistidos",
+                singleOutcome(persisted, PaymentOutcomeStatus.APPROVED).getAdminObservation());
+        assertEquals(0, totalPaid(installments).compareTo(new BigDecimal("300.00")));
+    }
+
+    @Test
+    void reviewPayment_convertedOverflow_rejectsWithoutSideEffects() {
+        PaymentFixture fixture = createPaymentFixture("correction-converted-overflow", Currency.ARS);
+        List<Installment> installments = createTwoLargePending(fixture);
+        BankAccount bankAccount = createBankAccount(Currency.USD);
+        PaymentSubmission submission = buildCrossCurrencySubmission(
+                installments.get(0), bankAccount, "100.00", "1200", "120000.00");
+
+        // 100,001.00 USD is persistible as source, but converts to 120,001,200.00 ARS.
+        assertThrows(IllegalStateException.class, () -> paymentService.reviewPayment(
+                submission.getId(),
+                new ReviewPaymentDTO(
+                        new BigDecimal("100001.00"), "Diferencia de cambio a favor del cliente"),
+                REVIEWER));
+
+        assertPendingWithoutOutcomes(submission.getId(), installments);
+    }
+
+    @Test
+    void registerPayment_sourceAboveMaxMoney_rejectsBeforePersisting() {
+        PaymentFixture fixture = createPaymentFixture("correction-register-over-max", Currency.ARS);
+        List<Installment> installments = createThreeHundredPending(fixture);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () ->
+                paymentService.registerPayment(
+                        installments.get(0).getId(),
+                        new BigDecimal("100000000.00"),
+                        BUSINESS_TODAY,
+                        Currency.ARS,
+                        PaymentMethod.BANK_TRANSFER,
+                        bankAccount.getId(),
+                        null,
+                        fixture.user().getEmail()));
+
+        assertTrue(error.getMessage().contains("must not exceed"));
+        assertEquals(0, paymentSubmissionRepository.count());
+        assertEquals(0, totalPaid(installments).compareTo(BigDecimal.ZERO));
+    }
+
+    @Test
     void voidPayment_afterUpwardCorrection_reversesCorrectedAllocations() {
         PaymentFixture fixture = createPaymentFixture("correction-up-void", Currency.ARS);
         List<Installment> installments = createThreeHundredPending(fixture);
@@ -439,6 +541,14 @@ class PaymentReviewAmountCorrectionTest extends ControllerIntegrationTestSupport
         return List.of(first, second, third);
     }
 
+    private List<Installment> createTwoLargePending(PaymentFixture fixture) {
+        Installment first = createInstallment(
+                fixture.trip(), fixture.user(), fixture.student(), 1, "75000000.00", InstallmentStatus.YELLOW);
+        Installment second = createInstallment(
+                fixture.trip(), fixture.user(), fixture.student(), 2, "75000000.00", InstallmentStatus.YELLOW);
+        return List.of(first, second);
+    }
+
     private PaymentSubmissionDTO registerArsPayment(
             Installment anchor, String amount, BankAccount bankAccount, String email) {
         return paymentService.registerPayment(
@@ -469,6 +579,31 @@ class PaymentReviewAmountCorrectionTest extends ControllerIntegrationTestSupport
         submission.setStatus(PaymentSubmissionStatus.PENDING);
         submission.setFileKey("legacy-test-receipt");
         submission.setCalculationVersion("v1");
+        return paymentSubmissionRepository.save(submission);
+    }
+
+    private PaymentSubmission buildCrossCurrencySubmission(
+            Installment anchor,
+            BankAccount bankAccount,
+            String reportedAmount,
+            String exchangeRate,
+            String amountInTripCurrency) {
+        PaymentSubmission submission = new PaymentSubmission();
+        submission.setTrip(anchor.getTrip());
+        submission.setUser(anchor.getUser());
+        submission.setStudent(anchor.getStudent());
+        submission.setAnchorInstallment(anchor);
+        submission.setBankAccount(bankAccount);
+        submission.setReportedAmount(new BigDecimal(reportedAmount));
+        submission.setPaymentCurrency(Currency.USD);
+        submission.setExchangeRate(new BigDecimal(exchangeRate));
+        submission.setExchangeRateScale(new BigDecimal(exchangeRate).scale());
+        submission.setAmountInTripCurrency(new BigDecimal(amountInTripCurrency));
+        submission.setReportedPaymentDate(BUSINESS_TODAY);
+        submission.setPaymentMethod(PaymentMethod.BANK_TRANSFER);
+        submission.setStatus(PaymentSubmissionStatus.PENDING);
+        submission.setFileKey("cross-currency-test-receipt");
+        submission.setCalculationVersion("2");
         return paymentSubmissionRepository.save(submission);
     }
 

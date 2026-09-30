@@ -151,7 +151,8 @@ public class PaymentService {
 
     @Transactional(readOnly = true)
     public PaymentBatchPreviewDTO previewPayment(PaymentPreviewRequestDTO dto, String email) {
-        BigDecimal reportedAmount = paymentMoneyPolicy.requirePositiveMoney(dto.reportedAmount(), "reportedAmount");
+        BigDecimal reportedAmount = paymentMoneyPolicy.requirePositivePersistableMoney(
+                dto.reportedAmount(), "reportedAmount");
         paymentBusinessDatePolicy.requireNotFuture(dto.reportedPaymentDate());
         User user = getUserByEmail(email);
         PaymentScopeSelection selection = resolvePaymentScope(user, dto.anchorInstallmentId(), false);
@@ -434,7 +435,8 @@ public class PaymentService {
         }
         List<MultipartFile> attachments = files == null ? List.of() : files.stream()
                 .filter(file -> file != null && !file.isEmpty()).toList();
-        BigDecimal normalizedReportedAmount = paymentMoneyPolicy.requirePositiveMoney(reportedAmount, "reportedAmount");
+        BigDecimal normalizedReportedAmount = paymentMoneyPolicy.requirePositivePersistableMoney(
+                reportedAmount, "reportedAmount");
         paymentBusinessDatePolicy.requireNotFuture(reportedPaymentDate);
         User user = getUserByEmail(email);
         // [DEADLOCK FIX] Establish Trip → Installments lock order to match
@@ -746,16 +748,18 @@ public class PaymentService {
             approvedOutcome.setAmountInTripCurrency(approvedPlan.amountInTripCurrency());
             // The correction reason must survive on the approved outcome itself:
             // upward corrections have no REJECTED outcome to carry it.
-            // For legacy v1 the technical reconciliation note is kept, but it must
-            // never replace the admin's real reason when the amount was corrected.
-            // trimmedObservation was length-checked on entry, so it always fits the column.
+            // For legacy v1 the human reason is persisted verbatim when the
+            // amount was corrected: prefixing the technical reconciliation note
+            // could overflow the 500-char column, and the v1 calculation
+            // version on the submission already identifies the legacy origin.
+            // Without correction the technical note is kept as before.
+            // trimmedObservation was length-checked on entry, so it always fits.
             boolean corrected = approvedAmount.compareTo(reportedAmount) != 0;
             String legacyObservation = !isLegacyPendingSubmission(submission)
                     ? null
                     : !corrected
                             ? LEGACY_RECONCILIATION_OBSERVATION
-                            : LEGACY_RECONCILIATION_OBSERVATION
-                                    + ". Corrección administrativa: " + trimmedObservation;
+                            : trimmedObservation;
             approvedOutcome.setAdminObservation(legacyObservation != null
                     ? legacyObservation
                     : (trimmedObservation == null || trimmedObservation.isEmpty()
@@ -1258,9 +1262,8 @@ public class PaymentService {
                 .map(PaymentOutcome::getReportedAmount)
                 .reduce(BigDecimal.ZERO.setScale(PaymentMoneyPolicy.MONEY_SCALE), BigDecimal::add);
         // Deterministic priority: the REJECTED outcome carries the admin's decision
-        // reason (most relevant for partial approvals, including legacy v1 downward
-        // corrections whose APPROVED outcome only holds the technical legacy note),
-        // then the APPROVED outcome, then anything else, oldest first.
+        // reason (most relevant for partial approvals), then the APPROVED outcome,
+        // then anything else, oldest first.
         String adminObservation = submission.getOutcomes().stream()
                 .filter(outcome -> outcome.getAdminObservation() != null && !outcome.getAdminObservation().isBlank())
                 .sorted(Comparator.comparing((PaymentOutcome outcome) -> outcome.getStatus() == PaymentOutcomeStatus.REJECTED

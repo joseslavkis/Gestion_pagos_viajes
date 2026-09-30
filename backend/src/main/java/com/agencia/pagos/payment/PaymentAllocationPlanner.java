@@ -98,6 +98,11 @@ public class PaymentAllocationPlanner {
                 ? moneyPolicy.maxAllowedPaymentAmount(
                         balanceLimit, tripCurrency, paymentCurrency, exchangeRate)
                 : moneyPolicy.requireMoney(paymentLimit.maxAllowedAmount(), "maxAllowedAmount");
+        // A caller-provided limit is still bounded by what one operation can
+        // persist: no successful plan may recommend an unpersistible amount.
+        if (maxAllowedAmount.compareTo(PaymentMoneyPolicy.MAX_MONEY) > 0) {
+            maxAllowedAmount = PaymentMoneyPolicy.MAX_MONEY;
+        }
         if (maxAllowedAmount.signum() < 0) {
             throw new IllegalArgumentException("maxAllowedAmount must not be negative");
         }
@@ -116,6 +121,10 @@ public class PaymentAllocationPlanner {
                             .setScale(PaymentMoneyPolicy.MONEY_SCALE, RoundingMode.UNNECESSARY)
             );
         }
+        // Domain invariant: every aggregate of a successful plan lands in a
+        // NUMERIC(10,2) column, so the converted total must be persistible even
+        // when it fits the (possibly much larger, multi-installment) balance.
+        moneyPolicy.requirePersistableMoney(amountInTripCurrency, "amountInTripCurrency");
         if (amountInTripCurrency.signum() <= 0) {
             throw new IllegalArgumentException("El monto informado es demasiado bajo para imputarse");
         }

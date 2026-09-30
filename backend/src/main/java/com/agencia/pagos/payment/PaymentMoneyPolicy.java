@@ -55,6 +55,19 @@ public class PaymentMoneyPolicy {
         return money;
     }
 
+    /**
+     * Validates a single-operation input amount: strictly positive and persistible
+     * into a decimal(10,2) aggregate. Does not constrain sums or intermediate
+     * balances, which may legitimately exceed {@link #MAX_MONEY}.
+     */
+    public BigDecimal requirePositivePersistableMoney(BigDecimal value, String fieldName) {
+        BigDecimal money = requirePersistableMoney(value, fieldName);
+        if (money.signum() <= 0) {
+            throw new IllegalArgumentException(fieldName + " must be greater than zero");
+        }
+        return money;
+    }
+
     public BigDecimal requireProviderRate(BigDecimal rate) {
         if (rate == null) {
             throw new ProviderRateContractException(
@@ -123,6 +136,15 @@ public class PaymentMoneyPolicy {
         throw new IllegalStateException("Conversión de moneda no soportada");
     }
 
+    /**
+     * Largest payment amount coverable by a SINGLE operation without overflowing
+     * any NUMERIC(10,2) aggregate. The trip-side balance is capped at
+     * {@link #MAX_MONEY} before the exact cents math runs (a lone operation can
+     * never persist more than that in trip currency), and the payment-side
+     * result is capped too (a lone operation can never persist more than that
+     * in payment currency). The cents/half-cent rounding construction is
+     * preserved untouched; only the inputs and the final result are bounded.
+     */
     public BigDecimal maxAllowedPaymentAmount(
             BigDecimal totalBalanceInTripCurrency,
             Currency tripCurrency,
@@ -133,8 +155,9 @@ public class PaymentMoneyPolicy {
         if (balance.signum() < 0) {
             throw new IllegalArgumentException("totalBalanceInTripCurrency must not be negative");
         }
+        BigDecimal persistibleBalance = balance.compareTo(MAX_MONEY) > 0 ? MAX_MONEY : balance;
         if (tripCurrency == paymentCurrency || balance.signum() == 0) {
-            return balance;
+            return persistibleBalance;
         }
 
         BigDecimal rate = requireProviderRate(exchangeRate);
@@ -145,7 +168,7 @@ public class PaymentMoneyPolicy {
             rateScale = 0;
         }
 
-        BigInteger tripCents = balance.movePointRight(MONEY_SCALE).toBigIntegerExact();
+        BigInteger tripCents = persistibleBalance.movePointRight(MONEY_SCALE).toBigIntegerExact();
         BigInteger strictTripHalfCentBoundary = tripCents.multiply(BigInteger.TWO).add(BigInteger.ONE);
         BigInteger rateScaleFactor = BigInteger.TEN.pow(rateScale);
         BigInteger numerator;
@@ -161,6 +184,7 @@ public class PaymentMoneyPolicy {
         }
 
         BigInteger maxPaymentCents = numerator.subtract(BigInteger.ONE).divide(denominator);
-        return new BigDecimal(maxPaymentCents, MONEY_SCALE);
+        BigDecimal maxPaymentAmount = new BigDecimal(maxPaymentCents, MONEY_SCALE);
+        return maxPaymentAmount.compareTo(MAX_MONEY) > 0 ? MAX_MONEY : maxPaymentAmount;
     }
 }
