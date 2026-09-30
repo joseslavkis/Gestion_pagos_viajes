@@ -1,37 +1,143 @@
-# Agent Instructions: Gestión de Pagos de Viajes (Frontend)
+# Frontend Agent Guide
 
-Este documento contiene las reglas base y el contexto arquitectónico para cualquier agente o modelo de IA que asista en el desarrollo del frontend de la aplicación "Gestión de Pagos de Viajes".
+Reglas para trabajar en el frontend de **Gestión de Pagos de Viajes**.
 
-## 1. Contexto del Negocio
-La aplicación es un gestor integral de cuotas (installments), viajes (trips) y alumnos (students). Permite vincular padres/tutores a alumnos, asociar a estos a diferentes viajes configurables con cuotas mensuales y notificaciones, y a su vez, permitir la carga o aviso de pagos (payment receipts) y su flujo de validación.
+## Stack
 
-## 2. Stack Tecnológico de Frontend
-- **Framework:** React + Vite
-- **Lenguaje:** TypeScript (Estricto, fuertemente tipado)
-- **Estilos:** CSS puro / CSS Modules (`*.module.css`) - No usar TailwindCSS u otros utility-first frameworks salvo que se requiera excepcionalmente.
-- **Peticiones:** TanStack Query (React Query)
-- **Manejo de estados globales / Caching:** A través de React Query principalmente
-- **Validación / Schemas:** Zod
-- **Animaciones:** GSAP (Revisar la Skill guardada para sus convenciones)
+- React + Vite
+- TypeScript estricto
+- TanStack Query
+- Zod
+- CSS Modules
+- Vitest / React Testing Library / MSW
+- GSAP con `@gsap/react`
 
-## 3. Skills Específicas
-- **Animaciones con GSAP:** Está configurada la Skill `gsap-react` ubicada en `.github/gsap-react/SKILL.md`. Al realizar animaciones con React, SIEMPRE usar `@gsap/react`, preferir el hook `useGSAP()` por sobre `useEffect()`, utilizar `contextSafe()` para callbacks, evitar side-effects fuera del scope de GSAP y manejar ref/cleanup. (Ver Skill para más detalles).
+No agregar frameworks UI, Tailwind o dependencias nuevas salvo necesidad concreta.
 
-## 4. Arquitectura y Código
-1. **Estructura por Dominios (Features):** Todos los componentes y lógicas se organizan en `src/features/[dominio]` (ej. `trips`, `auth`, `users`, `payments`, `schools`).
-   - Dentro de cada feature, subdividir en `/pages`, `/components`, `/services`, `/types`.
-2. **Data-Fetching Cohesivo:** Las peticiones al servidor se configuran siempre en la subcarpeta `services/` (ej: `trips-service.ts`) la cual expone los *custom hooks* (ej: `useTrips`, `useAssignUsersBulk`) wrappeando queries / mutations de TanStack Query.
-3. **Formularios con Zod:** Para formularios, usamos un ecosistema unificado basado en los tipos DTOs y validadores de Zod (`*DTOSchema`). 
-4. **Lógica de UI Reutilizable:** Todos los componentes compartidos genéricos (Layouts, modales base, tooltips, toasts) deberían ir en `src/components`, a diferencia de los de negocio que residen en `features`.
+## Arquitectura
 
-## 5. Criterios de UX / UI
-- Mantener siempre consistencia con el diseño visual establecido (tokens CSS de la aplicación, variables `var(--primary)`, etc.).
-- Fomentar la usabilidad a través de Modales (`ModalShell`) y micro-interacciones sutiles pero elegantes (utilizando **GSAP** como primera opción si requiere customización temporal/espacial o frameright animation).
-- Todo componente interactivo (botones, inputs, links) debe considerar los estados `disabled`, `hover`, y `active`.
+Código de negocio por feature:
 
-## 6. Testing (Opcional pero valorado)
-- Preferir test con react-testing-library (`*.test.tsx`) o integration tests si corresponde interactuar con componentes ruteados.
+`src/features/<dominio>/{pages,components,services,types}`
 
----
+- `pages`: composición y orquestación.
+- `components`: UI y lógica cohesiva del dominio.
+- `services`: API + hooks de TanStack Query.
+- `types`: DTOs, schemas Zod y helpers puros.
+- `src/components`: sólo componentes realmente genéricos.
 
-> **Nota para el LLM:** Antes de proponer refactors estructurales gigantes, siempre adhierete a este esquema de archivos ya planteado. Si creas nuevos módulos, mantenlos encapsulados en su feature correspondiente.
+Las pages no deberían convertirse en mega-componentes. Extraer secciones con responsabilidad propia, pero evitar abstracciones prematuras.
+
+## Datos y estado
+
+- Server state → TanStack Query.
+- Estado local → `useState`.
+- No duplicar estado derivable.
+- No usar `useEffect` para sincronizar valores que pueden calcularse directamente.
+- Validar respuestas externas con los schemas Zod existentes.
+- Reutilizar helpers antes de crear otros nuevos.
+
+## Pagos
+
+Nunca usar floating point para lógica monetaria.
+
+Usar las abstracciones existentes:
+
+- `DecimalString`
+- centavos enteros / `BigInt`
+- normalizadores y comparadores monetarios existentes
+
+`Number` sólo puede usarse para presentación si no participa en una decisión financiera.
+
+El backend es autoridad para saldo, FX, allocations y reglas financieras.
+
+## Errores
+
+Nunca mostrar al usuario errores técnicos crudos.
+
+No deben aparecer en UI cosas como:
+
+`FIN-001`, `IllegalStateException`, `reportedAmount`, `maxAllowedAmount`, SQL, Hibernate, etc.
+
+Usar la infraestructura central de `ApiError` y mensajes claros en español. No agregar traducciones ad-hoc dentro de cada componente.
+
+## UI / UX
+
+Mantener la estética existente del proyecto.
+
+Antes de diseñar:
+1. revisar componentes similares;
+2. revisar CSS/tokens existentes;
+3. reutilizar patrones antes de inventar otros.
+
+Priorizar jerarquía y claridad sobre cantidad de información.
+
+Evitar:
+- información repetida;
+- textos explicativos innecesarios;
+- cards dentro de cards;
+- estilos inline evitables;
+- colores semánticos usados como decoración.
+
+Usar progressive disclosure cuando una pantalla administrativa tenga mucha información.
+
+Todo control interactivo debe contemplar `hover`, `focus`, `active`, `disabled` y accesibilidad por teclado.
+
+Revisar siempre desktop y mobile.
+
+## React
+
+Preferir componentes pequeños y cohesivos, no componentes genéricos artificiales.
+
+La lógica que no depende de React debería ser una función pura y testeable.
+
+No introducir Context/global state si TanStack Query o estado local resuelven el problema.
+
+## Animaciones
+
+Para animaciones no triviales leer primero:
+
+`frontend/.github/gsap-react/SKILL.md` (ruta relativa a la raíz del repo; este archivo vive en `frontend/`)
+
+Usar `useGSAP()` y `contextSafe()` según esa skill.
+
+Para hover, color, opacity o transiciones simples preferir CSS.
+
+## Skills de frontend y diseño
+
+Usarlas sólo cuando la tarea realmente corresponda; no cargar todas por defecto.
+
+- `redesign-existing-projects` — rediseños sobre UI existente.
+- `design-taste-frontend` — criterio visual y anti-slop.
+- `high-end-visual-design` — polish visual importante.
+- `web-design-guidelines` — revisión de buenas prácticas web.
+- `ui-ux-pro-max` — decisiones de UX/UI y usabilidad.
+- `vercel-react-best-practices` — calidad y performance React.
+- `vercel-composition-patterns` — composición/refactor de componentes.
+- `extract-design-system` — cuando haya que identificar o consolidar patrones visuales existentes.
+
+No usar una skill sólo porque existe: elegir la mínima necesaria para la tarea.
+
+## Alcance
+
+Mantener los diffs enfocados.
+
+No hacer refactors grandes, reorganizaciones o cambios de arquitectura como efecto secundario de una tarea chica.
+
+Si aparece deuda técnica no relacionada, reportarla en vez de arreglarla automáticamente.
+
+## Antes de terminar
+
+Ejecutar según corresponda:
+
+`npm test`
+`npm run lint`
+`npm run build`
+`npx tsc --noEmit`
+`git diff --check`
+
+Para cambios visuales, además inspeccionar la UI real en desktop y mobile.
+
+## Principio general
+
+Preferir código explícito, tipado y fácil de modificar dentro de seis meses antes que abstracciones inteligentes o sobreingeniería.
