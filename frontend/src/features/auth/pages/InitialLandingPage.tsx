@@ -2,13 +2,12 @@ import type { FormEvent, MouseEvent } from "react";
 import { useMemo, useRef, useState } from "react";
 import { Link } from "wouter";
 
+import { AnimatedProyectoVaLogo } from "@/components/AnimatedProyectoVaLogo/AnimatedProyectoVaLogo";
 import { ErrorContainer } from "@/components/form-components/ErrorContainer/ErrorContainer";
 import { useSendContactMessage } from "@/features/contact/services/contact-service";
 import { createGsapMatchMedia, getMotionProfile, gsap, ScrollTrigger, useGSAP } from "@/lib/gsap";
 
 import styles from "./InitialLandingPage.module.css";
-import logoAnimado from "@/assets/logo-animado.mov";
-import logoAnimadoMp4 from "@/assets/logo-animado.mp4";
 
 export function InitialLandingPage() {
   const { mutateAsync, error, isPending, reset } = useSendContactMessage();
@@ -67,14 +66,14 @@ export function InitialLandingPage() {
         }
 
         if (visualColumn) {
+          // The logo draws itself, so the column only fades in. A strong
+          // horizontal entrance here would compete with the stroke animation.
           gsap.fromTo(
             visualColumn,
-            { autoAlpha: 0, x: -motion.distanceMd },
+            { autoAlpha: 0 },
             {
               autoAlpha: 1,
-              x: 0,
-              duration: motion.durationSlow,
-              delay: motion.durationFast / 2,
+              duration: motion.durationBase,
               ease: "power2.out",
             },
           );
@@ -171,16 +170,7 @@ export function InitialLandingPage() {
             <div className={styles.videoShell}>
               <div className={styles.lightTrail} aria-hidden="true" />
               <div className={styles.particles} aria-hidden="true" />
-              <video
-                className={styles.logo}
-                autoPlay
-                muted
-                playsInline
-                preload="metadata"
-              >
-                <source src={logoAnimado} type="video/quicktime" />
-                <source src={logoAnimadoMp4} type="video/mp4" />
-              </video>
+              <AnimatedProyectoVaLogo />
             </div>
           </div>
 
