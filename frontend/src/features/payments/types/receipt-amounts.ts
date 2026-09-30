@@ -5,6 +5,18 @@ export type ReceiptAmount = { id: number; file: File; currency: Currency; amount
 
 const MAX_MONEY_CENTS = 9999999999n; // PaymentSubmission is decimal(10,2).
 
+/**
+ * Single source of truth for the domain-wide monetary ceiling (99,999,999.99).
+ * Compares with bigint cents; never float.
+ */
+export function exceedsMaxMoney(amount: string): boolean {
+  const normalized = normalizePaymentMoneyInput(amount);
+  if (normalized == null) return false;
+  const [integer, fraction = ""] = normalized.split(".");
+  const cents = BigInt(integer) * 100n + BigInt(fraction.padEnd(2, "0"));
+  return cents > MAX_MONEY_CENTS;
+}
+
 export function moneyCents(value: string): bigint | null {
   const normalized = normalizePaymentMoneyInput(value);
   if (normalized == null) return null;

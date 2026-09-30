@@ -26,6 +26,7 @@ import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
+import org.springframework.http.MediaType;
 import org.springframework.mail.javamail.JavaMailSender;
 
 import java.math.BigDecimal;
@@ -43,6 +44,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
  * Covers administrative amount correction during review of a PENDING payment:
@@ -272,6 +275,136 @@ class PaymentReviewAmountCorrectionTest extends ControllerIntegrationTestSupport
     }
 
     @Test
+    void reviewPayment_legacySameCurrencyUpwardCorrection_preservesAdminObservation() {
+        PaymentFixture fixture = createPaymentFixture("correction-legacy-up", Currency.ARS);
+        List<Installment> installments = createThreeHundredPending(fixture);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+        PaymentSubmission legacy = buildLegacySubmission(
+                installments.get(0), bankAccount, "240.00", "240.00");
+        String adminReason = "El depósito real fue de 300.";
+
+        PaymentSubmissionDTO reviewed = paymentService.reviewPayment(
+                legacy.getId(), new ReviewPaymentDTO(new BigDecimal("300.00"), adminReason), REVIEWER);
+
+        assertEquals("APPROVED", reviewed.status().name());
+        assertEquals(0, reviewed.reportedAmount().compareTo(new BigDecimal("240.00")));
+        assertEquals(0, reviewed.approvedAmount().compareTo(new BigDecimal("300.00")));
+        assertEquals(0, reviewed.rejectedAmount().compareTo(BigDecimal.ZERO));
+
+        PaymentSubmission persisted = paymentSubmissionRepository
+                .findByIdWithContext(legacy.getId()).orElseThrow();
+        PaymentOutcome approved = singleOutcome(persisted, PaymentOutcomeStatus.APPROVED);
+        assertTrue(approved.getAdminObservation() != null
+                && approved.getAdminObservation().contains(adminReason));
+        assertTrue(reviewed.adminObservation() != null
+                && reviewed.adminObservation().contains(adminReason));
+        assertEquals(0, totalPaid(installments).compareTo(new BigDecimal("300.00")));
+    }
+
+    @Test
+    void reviewPayment_legacySameCurrencyDownwardCorrection_historyShowsAdminObservation() {
+        PaymentFixture fixture = createPaymentFixture("correction-legacy-down", Currency.ARS);
+        List<Installment> installments = createThreeHundredPending(fixture);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+        PaymentSubmission legacy = buildLegacySubmission(
+                installments.get(0), bankAccount, "300.00", "300.00");
+        String adminReason = "El comprobante corresponde a 240 reales.";
+
+        PaymentSubmissionDTO reviewed = paymentService.reviewPayment(
+                legacy.getId(), new ReviewPaymentDTO(new BigDecimal("240.00"), adminReason), REVIEWER);
+
+        assertEquals("PARTIALLY_APPROVED", reviewed.status().name());
+        assertEquals(adminReason, reviewed.adminObservation());
+        assertEquals(0, totalPaid(installments).compareTo(new BigDecimal("240.00")));
+    }
+
+    @Test
+    void reviewPayment_maxMoneyAmount_approvesWhenBalanceAllows() {
+        PaymentFixture fixture = createPaymentFixture("correction-max", Currency.ARS);
+        Installment anchor = createInstallment(
+                fixture.trip(), fixture.user(), fixture.student(), 1, "99999999.99", InstallmentStatus.YELLOW);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+        PaymentSubmissionDTO registered = registerArsPayment(
+                anchor, "99999999.99", bankAccount, fixture.user().getEmail());
+
+        PaymentSubmissionDTO reviewed = paymentService.reviewPayment(
+                registered.submissionId(), new ReviewPaymentDTO(new BigDecimal("99999999.99"), null), REVIEWER);
+
+        assertEquals("APPROVED", reviewed.status().name());
+        assertEquals(0, reviewed.approvedAmount().compareTo(new BigDecimal("99999999.99")));
+        assertEquals(0, reviewed.rejectedAmount().compareTo(BigDecimal.ZERO));
+        assertEquals(0, totalPaid(List.of(anchor)).compareTo(new BigDecimal("99999999.99")));
+    }
+
+    @Test
+    void reviewPayment_aboveMaxMoney_rejectsBeforePersisting() {
+        PaymentFixture fixture = createPaymentFixture("correction-over-max", Currency.ARS);
+        List<Installment> installments = createThreeHundredPending(fixture);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+        PaymentSubmissionDTO registered = registerArsPayment(
+                installments.get(0), "240.00", bankAccount, fixture.user().getEmail());
+
+        assertThrows(IllegalArgumentException.class, () -> paymentService.reviewPayment(
+                registered.submissionId(),
+                new ReviewPaymentDTO(new BigDecimal("100000000.00"), "Intento sobre el máximo persistible"),
+                REVIEWER));
+
+        assertPendingWithoutOutcomes(registered.submissionId(), installments);
+    }
+
+    @Test
+    void reviewPayment_observationExactly500Chars_accepted() {
+        PaymentFixture fixture = createPaymentFixture("correction-obs-500", Currency.ARS);
+        List<Installment> installments = createThreeHundredPending(fixture);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+        PaymentSubmissionDTO registered = registerArsPayment(
+                installments.get(0), "300.00", bankAccount, fixture.user().getEmail());
+
+        PaymentSubmissionDTO reviewed = paymentService.reviewPayment(
+                registered.submissionId(),
+                new ReviewPaymentDTO(new BigDecimal("240.00"), "x".repeat(500)),
+                REVIEWER);
+
+        assertEquals("PARTIALLY_APPROVED", reviewed.status().name());
+        assertEquals(500, reviewed.adminObservation().length());
+    }
+
+    @Test
+    void reviewPayment_observationOver500Chars_rejectsWithoutSideEffects() {
+        PaymentFixture fixture = createPaymentFixture("correction-obs-501", Currency.ARS);
+        List<Installment> installments = createThreeHundredPending(fixture);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+        PaymentSubmissionDTO registered = registerArsPayment(
+                installments.get(0), "300.00", bankAccount, fixture.user().getEmail());
+
+        assertThrows(IllegalArgumentException.class, () -> paymentService.reviewPayment(
+                registered.submissionId(),
+                new ReviewPaymentDTO(new BigDecimal("240.00"), "x".repeat(501)),
+                REVIEWER));
+
+        assertPendingWithoutOutcomes(registered.submissionId(), installments);
+    }
+
+    @Test
+    void reviewPayment_observationOver500Chars_returnsBadRequest() throws Exception {
+        PaymentFixture fixture = createPaymentFixture("correction-obs-501-api", Currency.ARS);
+        List<Installment> installments = createThreeHundredPending(fixture);
+        BankAccount bankAccount = createBankAccount(Currency.ARS);
+        PaymentSubmissionDTO registered = registerArsPayment(
+                installments.get(0), "300.00", bankAccount, fixture.user().getEmail());
+        TokenDTO adminTokens = signUpAdmin(buildValidUser("correction-obs-501-admin"));
+
+        mockMvc.perform(patch("/api/v1/payments/{id}/review", registered.submissionId())
+                        .header("Authorization", "Bearer " + adminTokens.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"approvedAmount\": 240.00, \"adminObservation\": \""
+                                + "x".repeat(501) + "\"}"))
+                .andExpect(status().isBadRequest());
+
+        assertPendingWithoutOutcomes(registered.submissionId(), installments);
+    }
+
+    @Test
     void voidPayment_afterUpwardCorrection_reversesCorrectedAllocations() {
         PaymentFixture fixture = createPaymentFixture("correction-up-void", Currency.ARS);
         List<Installment> installments = createThreeHundredPending(fixture);
@@ -317,6 +450,26 @@ class PaymentReviewAmountCorrectionTest extends ControllerIntegrationTestSupport
                 bankAccount.getId(),
                 null,
                 email);
+    }
+
+    private PaymentSubmission buildLegacySubmission(
+            Installment anchor, BankAccount bankAccount, String reportedAmount, String amountInTripCurrency) {
+        PaymentSubmission submission = new PaymentSubmission();
+        submission.setTrip(anchor.getTrip());
+        submission.setUser(anchor.getUser());
+        submission.setStudent(anchor.getStudent());
+        submission.setAnchorInstallment(anchor);
+        submission.setBankAccount(bankAccount);
+        submission.setReportedAmount(new BigDecimal(reportedAmount));
+        submission.setPaymentCurrency(Currency.ARS);
+        submission.setExchangeRate(null);
+        submission.setAmountInTripCurrency(new BigDecimal(amountInTripCurrency));
+        submission.setReportedPaymentDate(BUSINESS_TODAY);
+        submission.setPaymentMethod(PaymentMethod.BANK_TRANSFER);
+        submission.setStatus(PaymentSubmissionStatus.PENDING);
+        submission.setFileKey("legacy-test-receipt");
+        submission.setCalculationVersion("v1");
+        return paymentSubmissionRepository.save(submission);
     }
 
     private PaymentOutcome singleOutcome(PaymentSubmission submission, PaymentOutcomeStatus status) {

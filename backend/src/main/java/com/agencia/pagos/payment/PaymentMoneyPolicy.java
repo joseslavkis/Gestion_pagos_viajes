@@ -14,6 +14,12 @@ public class PaymentMoneyPolicy {
     public static final int RATE_SCALE_LIMIT = 8;
     public static final RoundingMode MONEY_ROUNDING = RoundingMode.HALF_UP;
 
+    /**
+     * Largest amount persistible in decimal(10,2) money columns (99,999,999.99).
+     * Single source of truth for the domain-wide monetary ceiling.
+     */
+    public static final BigDecimal MAX_MONEY = new BigDecimal("99999999.99");
+
     private static final BigDecimal MIN_RATE = new BigDecimal("0.00000001");
     private static final BigDecimal MAX_RATE = new BigDecimal("9999999999.99999999");
 
@@ -32,6 +38,19 @@ public class PaymentMoneyPolicy {
         BigDecimal money = requireMoney(value, fieldName);
         if (money.signum() <= 0) {
             throw new IllegalArgumentException(fieldName + " must be greater than zero");
+        }
+        return money;
+    }
+
+    /**
+     * Validates a money amount that will be persisted into a decimal(10,2) column.
+     * Rejects values above {@link #MAX_MONEY} with a business error instead of
+     * letting them fail as a numeric overflow in PostgreSQL.
+     */
+    public BigDecimal requirePersistableMoney(BigDecimal value, String fieldName) {
+        BigDecimal money = requireMoney(value, fieldName);
+        if (money.compareTo(MAX_MONEY) > 0) {
+            throw new IllegalArgumentException(fieldName + " must not exceed 99999999.99");
         }
         return money;
     }

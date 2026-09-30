@@ -166,6 +166,65 @@ describe("PendingReviewPage", () => {
     expect(await screen.findByText("No hay comprobantes pendientes de revisión.")).toBeInTheDocument();
   });
 
+  it("rejects amounts above the persistible money ceiling without a request", async () => {
+    let reviewRequests = 0;
+    server.use(
+      http.get("http://localhost:30002/api/v1/payments/pending-review", () =>
+        HttpResponse.json([makePendingSubmission()]),
+      ),
+      http.patch("http://localhost:30002/api/v1/payments/91/review", () => {
+        reviewRequests += 1;
+        return HttpResponse.json({});
+      }),
+    );
+
+    renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
+    expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
+
+    const amountInput = screen.getByLabelText("Monto a imputar");
+    fireEvent.change(amountInput, { target: { value: "100000000" } });
+
+    expect(amountInput).toHaveValue("100000000");
+    expect(screen.getByRole("button", { name: "Guardar decisión" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("99.999.999,99");
+    expect(reviewRequests).toBe(0);
+  });
+
+  it("accepts the maximum persistible amount with an upward correction", async () => {
+    server.use(
+      http.get("http://localhost:30002/api/v1/payments/pending-review", () =>
+        HttpResponse.json([makePendingSubmission()]),
+      ),
+    );
+
+    renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
+    expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
+
+    const amountInput = screen.getByLabelText("Monto a imputar");
+    fireEvent.change(amountInput, { target: { value: "99999999.99" } });
+
+    expect(amountInput).toHaveValue("99999999.99");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(await screen.findByText("Corrección al alza")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Guardar decisión" })).toBeDisabled();
+  });
+
+  it("caps the admin observation at 500 characters", async () => {
+    server.use(
+      http.get("http://localhost:30002/api/v1/payments/pending-review", () =>
+        HttpResponse.json([makePendingSubmission()]),
+      ),
+    );
+
+    renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
+    expect(await screen.findByText("Slavkis, Jose")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ver imputación y decidir" }));
+
+    expect(screen.getByLabelText(/Observación admin/)).toHaveAttribute("maxLength", "500");
+  });
+
   it("shows downward correction and neutral state without a request", async () => {
     server.use(
       http.get("http://localhost:30002/api/v1/payments/pending-review", () =>

@@ -8,6 +8,7 @@ import {
   compareNonNegativeDecimalStrings,
   normalizePaymentMoneyInput,
 } from "@/features/payments/types/decimal-strings";
+import { exceedsMaxMoney } from "@/features/payments/types/receipt-amounts";
 import type {
   DecimalString,
   PaymentBatchInstallmentDTO,
@@ -51,6 +52,9 @@ function validateApprovalAmount(input: string): { amount: DecimalString | null; 
   const amount = normalizePaymentMoneyInput(input);
   if (amount == null) {
     return { amount: null, error: "Ingresá un monto válido con hasta dos decimales." };
+  }
+  if (exceedsMaxMoney(amount)) {
+    return { amount: null, error: "El monto no puede superar $99.999.999,99." };
   }
   return { amount, error: null };
 }
@@ -346,6 +350,7 @@ export function PendingReviewPage() {
                             <span>Observación admin{requiresObservation ? " (obligatoria)" : ""}</span>
                             <input
                               value={observation}
+                              maxLength={500}
                               onChange={(event) =>
                                 setObservations((current) => ({
                                   ...current,
