@@ -30,15 +30,32 @@ export function centsToMoney(cents: bigint): string | null {
   return `${cents / 100n}.${String(cents % 100n).padStart(2, "0")}`;
 }
 
-export function receiptSubtotals(receipts: ReceiptAmount[]): Record<Currency, string> | null {
+export type SingleCurrencyTotal = { currency: Currency; total: string };
+
+/**
+ * Business rule: all receipts in a single payment submission share one currency.
+ * Returns null when receipts are empty, exceed the 1-5 limit, contain an
+ * invalid amount, or mix currencies. The total is the plain sum in the
+ * receipts' own currency — never a converted total in another currency.
+ */
+export function receiptSingleCurrencyTotal(receipts: ReceiptAmount[]): SingleCurrencyTotal | null {
   if (receipts.length < 1 || receipts.length > 5) return null;
-  const sums = { ARS: 0n, USD: 0n };
+  const currency = receipts[0].currency;
+  if (currency !== "ARS" && currency !== "USD") return null;
+  let sum = 0n;
   for (const receipt of receipts) {
+    if (receipt.currency !== currency) return null;
     const cents = moneyCents(receipt.amount);
-    if (cents == null || !(receipt.currency in sums)) return null;
-    sums[receipt.currency] += cents;
+    if (cents == null) return null;
+    sum += cents;
+    if (sum > MAX_MONEY_CENTS) return null;
   }
-  const ARS = centsToMoney(sums.ARS);
-  const USD = centsToMoney(sums.USD);
-  return ARS != null && USD != null ? { ARS, USD } : null;
+  const total = centsToMoney(sum);
+  return total == null ? null : { currency, total };
+}
+
+export function hasMixedReceiptCurrencies(receipts: ReceiptAmount[]): boolean {
+  if (receipts.length < 2) return false;
+  const first = receipts[0].currency;
+  return receipts.some((receipt) => receipt.currency !== first);
 }

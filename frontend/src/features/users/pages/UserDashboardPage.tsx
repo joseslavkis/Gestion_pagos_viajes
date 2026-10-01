@@ -8,7 +8,8 @@ import type { BankAccountDTO } from "@/features/bank-accounts/types/bank-account
 import { Folder } from "@/features/payments/components/Folder";
 import { type ReceiptSuccessData, ReceiptSuccessScreen } from "@/features/payments/components/ReceiptSuccessScreen";
 import { useMyInstallments, usePaymentCalculation, useRegisterPayment } from "@/features/payments/services/payments-service";
-import { centsToMoney, moneyCents, receiptSubtotals, type ReceiptAmount } from "@/features/payments/types/receipt-amounts";
+import { hasMixedReceiptCurrencies, moneyCents, receiptSingleCurrencyTotal } from "@/features/payments/types/receipt-amounts";
+import type { ReceiptAmount } from "@/features/payments/types/receipt-amounts";
 import type {
   Currency,
   PaymentCalculationResponseDTO,
@@ -258,11 +259,8 @@ export function UserDashboardPage() {
   const [selectedBankAccountId, setSelectedBankAccountId] = useState<number | null>(null);
   const [receipts, setReceipts] = useState<ReceiptAmount[]>([]);
   const nextReceiptId = useRef(0);
-  const [receiptRevision, setReceiptRevision] = useState(0);
   const [confirmation, setConfirmation] = useState<{ key: string; revision: number } | null>(null);
   const nextConfirmationRevision = useRef(0);
-  const authorityRevision = useRef(0);
-  const [isVerifyingConversion, setIsVerifyingConversion] = useState(false);
   const [finalExpiresAt, setFinalExpiresAt] = useState(0);
   const [fileError, setFileError] = useState<string | null>(null);
   const [receiptPreviewUrl, setReceiptPreviewUrl] = useState<string | null>(null);
@@ -303,56 +301,32 @@ export function UserDashboardPage() {
   const selectableInstallments = selectedGroup != null ? getPayableInstallments(selectedGroup) : [];
   const selectedTripHasPending = selectableInstallments.length > 0;
   const tripCurrency = selectedInstallment?.tripCurrency ?? "ARS";
-  const oppositeCurrency: Currency = tripCurrency === "ARS" ? "USD" : "ARS";
-  const subtotals = receiptSubtotals(receipts);
-  const tripSubtotal = subtotals?.[tripCurrency] ?? null;
-  const oppositeSubtotal = subtotals?.[oppositeCurrency] ?? null;
+  // Business rule: reportedAmount is always the plain sum of the receipts in
+  // their own currency. The trip currency only determines the backend-computed
+  // equivalence (amountInTripCurrency), never the persisted reportedAmount.
+  const hasMixedCurrencies = hasMixedReceiptCurrencies(receipts);
+  const singleCurrencyTotal = hasMixedCurrencies ? null : receiptSingleCurrencyTotal(receipts);
+  const paymentCurrency: Currency | null = singleCurrencyTotal?.currency ?? null;
+  const total = singleCurrencyTotal?.total ?? null;
   const anchorId = selectedGroupHasPendingReview ? null : selectedInstallment?.installmentId ?? null;
-  const auxiliaryPayload = anchorId != null && oppositeSubtotal != null && moneyCents(oppositeSubtotal) != null
-    ? { anchorInstallmentId: anchorId, paymentCurrency: oppositeCurrency, reportedPaymentDate,
-        intent: "MANUAL" as const, reportedAmount: oppositeSubtotal }
-    : null;
-  const auxiliaryAnchorId = auxiliaryPayload?.anchorInstallmentId;
-  const auxiliaryAmount = auxiliaryPayload?.reportedAmount;
-  const auxiliaryDate = auxiliaryPayload?.reportedPaymentDate;
-  const auxiliary = usePaymentCalculation(auxiliaryPayload, {
-    sourceCurrency: oppositeCurrency, sourceAmount: oppositeSubtotal ?? "", intentRevision: receiptRevision,
-  });
-  const auxiliaryReady = auxiliaryPayload != null && !auxiliary.isFetching && auxiliary.error == null &&
-    auxiliary.dataUpdatedAt > 0 && Date.now() - auxiliary.dataUpdatedAt < 240_000 &&
-    auxiliary.data?.status === "READY" && auxiliary.data.anchorInstallmentId === anchorId &&
-    auxiliary.data.paymentCurrency === oppositeCurrency && auxiliary.data.tripCurrency === tripCurrency &&
-    auxiliary.data.reportedPaymentDate === reportedPaymentDate &&
-    moneyCents(auxiliary.data.reportedAmount ?? "") === moneyCents(oppositeSubtotal ?? "")
-      ? auxiliary.data : null;
-  const convertedCents = auxiliaryReady ? moneyCents(auxiliaryReady.amountInTripCurrency ?? "") : null;
-  const tripCents = tripSubtotal != null ? moneyCents(tripSubtotal) ?? 0n : null;
-  const total = subtotals != null && tripCents != null &&
-    (oppositeSubtotal === "0.00" || convertedCents != null)
-    ? centsToMoney(tripCents + (convertedCents ?? 0n)) : null;
-  const currentKey = JSON.stringify([anchorId, tripCurrency, reportedPaymentDate, receiptRevision, total]);
-  const contextKey = JSON.stringify([anchorId, tripCurrency, reportedPaymentDate, receiptRevision,
-    tripSubtotal, oppositeSubtotal]);
-  const contextKeyRef = useRef(contextKey);
-  contextKeyRef.current = contextKey;
-  const isConfirmed = confirmation?.key === currentKey && total != null;
-  const finalPayload = isConfirmed && anchorId != null && total != null
-    ? { anchorInstallmentId: anchorId, paymentCurrency: tripCurrency, reportedPaymentDate,
+  const currentKey = JSON.stringify([anchorId, paymentCurrency, reportedPaymentDate, total]);
+  const isConfirmed = confirmation?.key === currentKey && total != null && paymentCurrency != null;
+  const finalPayload = isConfirmed && anchorId != null && total != null && paymentCurrency != null
+    ? { anchorInstallmentId: anchorId, paymentCurrency, reportedPaymentDate,
         intent: "MANUAL" as const, reportedAmount: total }
     : null;
   const finalCalculation = usePaymentCalculation(finalPayload, {
-    sourceCurrency: tripCurrency, sourceAmount: total ?? "", intentRevision: confirmation?.revision ?? 0,
+    sourceCurrency: paymentCurrency ?? tripCurrency, sourceAmount: total ?? "", intentRevision: confirmation?.revision ?? 0,
   });
   const readyPaymentCalculation = finalPayload != null && !finalCalculation.isFetching &&
     finalCalculation.error == null && finalCalculation.data?.status === "READY" &&
     finalCalculation.data.previewToken && finalCalculation.data.anchorInstallmentId === anchorId &&
-    finalCalculation.data.paymentCurrency === tripCurrency && finalCalculation.data.tripCurrency === tripCurrency &&
+    finalCalculation.data.paymentCurrency === paymentCurrency && finalCalculation.data.tripCurrency === tripCurrency &&
     finalCalculation.data.reportedPaymentDate === reportedPaymentDate &&
     moneyCents(finalCalculation.data.reportedAmount ?? "") === moneyCents(total ?? "")
       ? finalCalculation.data : null;
   const calculationStatusMessage = finalCalculation.data && isConfirmed
-    ? getCalculationStatusMessage(finalCalculation.data) : auxiliary.data && auxiliaryPayload
-      ? getCalculationStatusMessage(auxiliary.data) : null;
+    ? getCalculationStatusMessage(finalCalculation.data) : null;
 
   useEffect(() => {
     if (!readyPaymentCalculation) return;
@@ -366,64 +340,22 @@ export function UserDashboardPage() {
     return () => window.clearTimeout(timeout);
   }, [readyPaymentCalculation]);
 
-  useEffect(() => {
-    if (auxiliaryAnchorId == null || auxiliary.dataUpdatedAt === 0) return;
-    const remaining = Math.max(0, auxiliary.dataUpdatedAt + 240_000 - Date.now());
-    const timeout = window.setTimeout(() => {
-      authorityRevision.current += 1;
-      setIsVerifyingConversion(false);
-      setConfirmation(null);
-      setFinalExpiresAt(0);
-      setReceiptRevision((revision) => revision + 1);
-    }, remaining);
-    return () => window.clearTimeout(timeout);
-  }, [auxiliaryAnchorId, auxiliaryAmount, auxiliaryDate, auxiliary.dataUpdatedAt]);
-
   const revokeConfirmation = () => {
-    authorityRevision.current += 1;
-    setIsVerifyingConversion(false);
     setConfirmation(null);
     setFinalExpiresAt(0);
-    setReceiptRevision((revision) => revision + 1);
   };
 
-  const handleConfirmationChange = async (checked: boolean) => {
-    const authority = ++authorityRevision.current;
+  const handleConfirmationChange = (checked: boolean) => {
     setConfirmation(null);
     setFinalExpiresAt(0);
-    if (!checked || total == null) return;
-    const key = currentKey;
-    const context = contextKey;
-    const confirmedCents = moneyCents(total);
-    const revision = ++nextConfirmationRevision.current;
-    if (auxiliaryPayload != null) {
-      setIsVerifyingConversion(true);
-      // A final same-currency calculation cannot validate the FX equivalence.
-      // Re-fetch it before granting confirmation, even when the displayed quote is recent.
-      try {
-        const result = await auxiliary.refetch();
-        if (authorityRevision.current !== authority || contextKeyRef.current !== context ||
-            result.isError || result.data?.status !== "READY" ||
-            result.data.anchorInstallmentId !== auxiliaryPayload.anchorInstallmentId ||
-            result.data.paymentCurrency !== oppositeCurrency || result.data.tripCurrency !== tripCurrency ||
-            result.data.reportedPaymentDate !== reportedPaymentDate ||
-            moneyCents(result.data.reportedAmount ?? "") !== moneyCents(oppositeSubtotal ?? "")) return;
-        const newEquivalent = moneyCents(result.data.amountInTripCurrency ?? "");
-        const originalCents = tripSubtotal === "0.00" ? 0n : moneyCents(tripSubtotal ?? "");
-        if (newEquivalent == null || originalCents == null ||
-            confirmedCents !== originalCents + newEquivalent) return;
-      } finally {
-        if (authorityRevision.current === authority) setIsVerifyingConversion(false);
-      }
-    }
-    if (authorityRevision.current === authority && contextKeyRef.current === context) {
-      setConfirmation({ key, revision });
-    }
+    if (!checked || total == null || paymentCurrency == null) return;
+    setConfirmation({ key: currentKey, revision: ++nextConfirmationRevision.current });
   };
 
+  const bankCurrency: Currency = paymentCurrency ?? tripCurrency;
   const availableBankAccounts = useMemo(
-    () => bankAccountItems.filter((account) => account.currency === tripCurrency),
-    [bankAccountItems, tripCurrency],
+    () => bankAccountItems.filter((account) => account.currency === bankCurrency),
+    [bankAccountItems, bankCurrency],
   );
 
   const groupedBankAccounts = useMemo(
@@ -443,6 +375,8 @@ export function UserDashboardPage() {
     readyPaymentCalculation != null &&
     readyPaymentCalculation.previewToken != null &&
     total != null &&
+    paymentCurrency != null &&
+    !hasMixedCurrencies &&
     !isBankAccountsLoading &&
     availableBankAccounts.length > 0 &&
     selectedBankAccountId != null &&
@@ -532,9 +466,17 @@ export function UserDashboardPage() {
     ) ? "Cada archivo debe ser JPG, PNG, WEBP o PDF y no superar 5 MB." : null;
     setFileError(error);
     if (!error) {
-      setReceipts((current) => [...current, ...files.map((file) => ({
-        id: ++nextReceiptId.current, file, currency: tripCurrency, amount: "",
-      }))]);
+      setReceipts((current) => {
+        // The first receipt defaults to the trip currency. Every later receipt
+        // inherits the currency already chosen for the submission, so loading
+        // several receipts never silently introduces a mixed-currency one.
+        // Existing receipts are never mutated: changing receipt[0] afterwards
+        // deliberately leaves the rest of the submission mixed and invalid.
+        const inheritedCurrency = current[0]?.currency ?? tripCurrency;
+        return [...current, ...files.map((file) => ({
+          id: ++nextReceiptId.current, file, currency: inheritedCurrency, amount: "",
+        }))];
+      });
       if (receipts.length === 0 && files[0].type.startsWith("image/")) {
         setReceiptPreviewUrl(URL.createObjectURL(files[0]));
       }
@@ -586,6 +528,16 @@ export function UserDashboardPage() {
       return;
     }
 
+    if (hasMixedCurrencies) {
+      toast.error("Todos los comprobantes de un mismo pago deben estar en la misma moneda. Enviá los comprobantes de distinta moneda como pagos separados.");
+      return;
+    }
+
+    if (paymentCurrency == null || total == null) {
+      toast.error("Ingresá un monto válido para cada comprobante.");
+      return;
+    }
+
     if (!canSubmitPayment || !readyPaymentCalculation || readyPaymentCalculation.previewToken == null) {
       toast.error("Todavía no pudimos calcular la imputación del pago. Reintentá en unos segundos.");
       return;
@@ -612,7 +564,7 @@ export function UserDashboardPage() {
         anchorInstallmentId: selectedAnchorInstallmentId,
         reportedAmount: total!,
         reportedPaymentDate,
-        paymentCurrency: tripCurrency,
+        paymentCurrency: paymentCurrency!,
         paymentMethod,
         bankAccountId: selectedBankAccountId,
         files: receipts.map(({ file }) => file),
@@ -929,18 +881,18 @@ export function UserDashboardPage() {
                 </p>
               ) : null}
 
-              {subtotals ? (
+              {hasMixedCurrencies ? (
+                <p className={styles.errorText} role="alert">
+                  Todos los comprobantes de un mismo pago deben estar en la misma moneda. Enviá los comprobantes de distinta moneda como pagos separados.
+                </p>
+              ) : singleCurrencyTotal != null && paymentCurrency != null && total != null ? (
                 <div className={styles.selectedInfoBox}>
-                  <p>Subtotal ARS: {subtotals.ARS} · Subtotal USD: {subtotals.USD}</p>
-                  {oppositeSubtotal !== "0.00" && auxiliaryReady && convertedCents != null ? (
-                    <p>Equivalente en {tripCurrency} calculado por el servidor: {auxiliaryReady.amountInTripCurrency}</p>
-                  ) : null}
-                  <strong>Total en {tripCurrency}: {total ?? "Pendiente de cálculo"}</strong>
+                  <strong>Total en {paymentCurrency}: {total}</strong>
                 </div>
               ) : receipts.length > 0 ? (
                 <p className={styles.helperWarning}>Ingresá un monto válido para cada comprobante.</p>
               ) : null}
-              {total != null && !selectedGroupHasPendingReview ? (
+              {total != null && paymentCurrency != null && !hasMixedCurrencies && !selectedGroupHasPendingReview ? (
                 <label
                   className={`${styles.confirmation}${isConfirmed ? ` ${styles.confirmationActive}` : ""}`}
                 >
@@ -948,16 +900,12 @@ export function UserDashboardPage() {
                     type="checkbox"
                     className={styles.confirmationCheckbox}
                     checked={isConfirmed}
-                    disabled={isVerifyingConversion}
-                    onChange={(event) => { void handleConfirmationChange(event.target.checked); }}
+                    onChange={(event) => { handleConfirmationChange(event.target.checked); }}
                   />
                   <span className={styles.confirmationText}>
-                    Confirmo el total de {total} {tripCurrency} para estos comprobantes.
+                    Confirmo el total de {total} {paymentCurrency} para estos comprobantes.
                   </span>
                 </label>
-              ) : null}
-              {isVerifyingConversion ? (
-                <p className={styles.helperText}>Verificando la cotización antes de confirmar el total...</p>
               ) : null}
               {readyPaymentCalculation ? (
                 <div className={styles.selectedInfoBox}>
@@ -987,15 +935,19 @@ export function UserDashboardPage() {
                       readyPaymentCalculation.tripCurrency,
                       readyPaymentCalculation.totalPendingAmountInTripCurrency,
                     )}
-                    . Equivale a{" "}
-                    {formatAmountByCurrency(
-                      readyPaymentCalculation.tripCurrency,
-                      readyPaymentCalculation.amountInTripCurrency ?? "0",
-                    )}{" "}
-                    del viaje
-                    {readyPaymentCalculation.exchangeRate != null
-                      ? ` · cotización oficial ${formatAmountByCurrency("ARS", readyPaymentCalculation.exchangeRate)}${readyPaymentCalculation.quoteEffectiveDate ? ` correspondiente al ${formatReportedDate(readyPaymentCalculation.quoteEffectiveDate)}` : ""}`
-                      : ""}
+                    {readyPaymentCalculation.paymentCurrency !== readyPaymentCalculation.tripCurrency ? (
+                      <>
+                        . Equivale a{" "}
+                        {formatAmountByCurrency(
+                          readyPaymentCalculation.tripCurrency,
+                          readyPaymentCalculation.amountInTripCurrency ?? "0",
+                        )}{" "}
+                        del viaje
+                        {readyPaymentCalculation.exchangeRate != null
+                          ? ` · cotización oficial ${formatAmountByCurrency("ARS", readyPaymentCalculation.exchangeRate)}${readyPaymentCalculation.quoteEffectiveDate ? ` correspondiente al ${formatReportedDate(readyPaymentCalculation.quoteEffectiveDate)}` : ""}`
+                          : ""}
+                      </>
+                    ) : null}
                   </p>
                 </div>
               ) : null}
@@ -1004,12 +956,12 @@ export function UserDashboardPage() {
                   {calculationStatusMessage}
                 </p>
               ) : null}
-              {auxiliary.error || (isConfirmed && finalCalculation.error) ? (
+              {isConfirmed && finalCalculation.error ? (
                 <p className={styles.errorText} role="alert">
                   No pudimos calcular el monto. Revisá los comprobantes o reintentá.
                 </p>
               ) : null}
-              {(auxiliary.isFetching || finalCalculation.isFetching) ? (
+              {finalCalculation.isFetching ? (
                 <p className={styles.helperText}>Calculando el monto con el servidor...</p>
               ) : null}
 
@@ -1036,7 +988,7 @@ export function UserDashboardPage() {
                 />
               </label>
 
-              {oppositeSubtotal != null && oppositeSubtotal !== "0.00" ? (
+              {paymentCurrency != null && paymentCurrency !== tripCurrency ? (
                 <p className={styles.helperWarning}>
                   Se usará la cotización oficial correspondiente a la fecha informada. Si ese día no tiene cotización,
                   se usará la última disponible anterior.

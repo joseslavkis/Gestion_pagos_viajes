@@ -82,14 +82,20 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
   const pageRef = useRef<HTMLElement | null>(null);
 
   const { data, isLoading, error } = useSpreadsheet(tripId, params);
-  const { data: tripData } = useTrip(tripId);
+  const { data: tripData, isLoading: isTripLoading, error: tripError } = useTrip(tripId);
+  const tripCurrency = tripData?.currency;
 
   const tripCurrencyFormatter = useMemo(() => {
-    if (tripData?.currency === "USD") {
+    if (tripCurrency === "USD") {
       return new Intl.NumberFormat("es-AR", { style: "currency", currency: "USD" });
     }
-    return currencyFormatter;
-  }, [tripData?.currency]);
+    if (tripCurrency === "ARS") {
+      return currencyFormatter;
+    }
+    return null;
+  }, [tripCurrency]);
+
+  const isTripCurrencyPending = !tripError && (isTripLoading || tripCurrencyFormatter == null);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -324,7 +330,8 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
               <div className={styles.titleBlock}>
                 <h1 className={styles.title}>{data?.tripName ?? "Planilla de viaje"}</h1>
                 <p className={styles.subtitle}>
-                  Vista de cuotas y estados de pago por participante. Moneda: {tripData?.currency ?? "ARS"}
+                  Vista de cuotas y estados de pago por participante. Moneda:{" "}
+                  {tripError ? "no disponible" : (tripCurrency ?? "cargando...")}
                 </p>
                 {data ? (
                   <span className={styles.counter}>
@@ -386,6 +393,17 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
             error={error ?? null}
             loadingLabel="Cargando planilla..."
           >
+            {tripError ? (
+              <p className={styles.exportError} role="alert">
+                No se pudo cargar la información del viaje. Los importes no se muestran hasta conocer la
+                moneda.
+              </p>
+            ) : null}
+            {isTripCurrencyPending && !isLoading ? (
+              <p className={styles.emptyDescription} role="status">
+                Cargando moneda del viaje...
+              </p>
+            ) : null}
             <div
               id="spreadsheet-table-top"
               className={`${styles.tableContainer} ${
@@ -481,19 +499,26 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
                                 >
                                   <div className={styles.cellContent}>
                                     <span className={styles.cellAmount}>
-                                      {tripCurrencyFormatter.format(installment.totalDue)}
+                                      {tripCurrencyFormatter
+                                        ? tripCurrencyFormatter.format(installment.totalDue)
+                                        : "—"}
                                     </span>
                                     {installment.paidAmount > 0 &&
                                     installment.paidAmount < installment.totalDue ? (
                                       <div className={styles.cellPartial}>
                                         <span>
-                                          Abonado: {tripCurrencyFormatter.format(installment.paidAmount)}
+                                          Abonado:{" "}
+                                          {tripCurrencyFormatter
+                                            ? tripCurrencyFormatter.format(installment.paidAmount)
+                                            : "—"}
                                         </span>
                                         <span>
                                           Resta:{" "}
-                                          {tripCurrencyFormatter.format(
-                                            installment.totalDue - installment.paidAmount,
-                                          )}
+                                          {tripCurrencyFormatter
+                                            ? tripCurrencyFormatter.format(
+                                                installment.totalDue - installment.paidAmount,
+                                              )
+                                            : "—"}
                                         </span>
                                       </div>
                                     ) : null}
@@ -566,10 +591,11 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
             </div>
           </RequestState>
 
-          {selected ? (
+          {selected && tripCurrency != null ? (
             <PaymentDrawer
               installment={selected.installment}
               row={selected.row}
+              tripCurrency={tripCurrency}
               onClose={() => setSelected(null)}
             />
           ) : null}

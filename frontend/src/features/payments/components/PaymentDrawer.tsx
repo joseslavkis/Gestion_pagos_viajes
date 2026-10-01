@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AttachmentList } from "@/features/payments/components/AttachmentList";
 import { useInstallmentReceipts, useVoidPayment } from "@/features/payments/services/payments-service";
-import type { PaymentHistoryStatus, PaymentInstallmentHistoryDTO } from "@/features/payments/types/payments-dtos";
+import type { Currency, PaymentHistoryStatus, PaymentInstallmentHistoryDTO } from "@/features/payments/types/payments-dtos";
 import {
   getSpreadsheetParticipantParentLabel,
   getSpreadsheetParticipantPrimaryLabel,
@@ -12,10 +12,11 @@ import styles from "@/features/trips/pages/SpreadsheetPage.module.css";
 import type { SpreadsheetRowDTO, SpreadsheetRowInstallmentDTO } from "@/features/trips/types/trips-dtos";
 import { createGsapMatchMedia, getMotionProfile, gsap, useGSAP } from "@/lib/gsap";
 
-const currencyFormatter = new Intl.NumberFormat("es-AR", {
-  style: "currency",
-  currency: "ARS",
-});
+/** Trip-denominated amounts must be formatted with the trip currency, never
+ *  inferred from the payment currency or from the presence of a rate. */
+function formatTripMoney(amount: number, tripCurrency: Currency): string {
+  return new Intl.NumberFormat("es-AR", { style: "currency", currency: tripCurrency }).format(amount);
+}
 
 const historyStatusLabels: Record<PaymentHistoryStatus, string> = {
   PENDING: "Pendiente de revisión",
@@ -39,7 +40,7 @@ const dateFormatter = new Intl.DateTimeFormat("es-AR", {
   timeZone: "America/Argentina/Buenos_Aires",
 });
 
-function formatMoneyByCurrency(amount: number | string, currency: "ARS" | "USD"): string {
+function formatMoneyByCurrency(amount: number | string, currency: Currency): string {
   return new Intl.NumberFormat("es-AR", {
     style: "currency",
     currency,
@@ -54,10 +55,16 @@ function formatDate(isoDate: string): string {
 type PaymentDrawerProps = {
   installment: SpreadsheetRowInstallmentDTO;
   row: SpreadsheetRowDTO;
+  /**
+   * Currency of the trip the installment belongs to. It is a property of the
+   * trip, so it comes from the trip context and never from the installment row
+   * nor from payment data (the payment currency can differ from it).
+   */
+  tripCurrency: Currency;
   onClose: () => void;
 };
 
-export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps) {
+export function PaymentDrawer({ installment, row, tripCurrency, onClose }: PaymentDrawerProps) {
   const { data: history, isLoading: isHistoryLoading, error: historyError } = useInstallmentReceipts(installment.id);
   const voidPayment = useVoidPayment();
 
@@ -161,7 +168,8 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
       <aside ref={drawerRef} className={styles.drawer} role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <header className={styles.drawerHeader}>
           <h2 id={titleId} className={styles.drawerTitle}>
-            Cuota {installment.installmentNumber} · {currencyFormatter.format(installment.totalDue)}
+            Cuota {installment.installmentNumber} ·{" "}
+            {formatTripMoney(installment.totalDue, tripCurrency)}
           </h2>
           <button type="button" className={styles.drawerCloseButton} onClick={onClose}>
             Cerrar
@@ -183,7 +191,10 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
                 Nro cuota: <span className={styles.strong}>{installment.installmentNumber}</span>
               </div>
               <div>
-                Total: <span className={styles.strong}>{currencyFormatter.format(installment.totalDue)}</span>
+                Total:{" "}
+                <span className={styles.strong}>
+                  {formatTripMoney(installment.totalDue, tripCurrency)}
+                </span>
               </div>
               <div>
                 Vencimiento: <span className={styles.strong}>{formatDate(installment.dueDate)}</span>
@@ -209,7 +220,8 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
                   {formatMoneyByCurrency(entry.reportedAmount, entry.paymentCurrency)}
                 </div>
                 <div>
-                  <span className={styles.strong}>Equivalente viaje:</span> {entry.amountInTripCurrency}
+                  <span className={styles.strong}>Equivalente imputado al viaje:</span>{" "}
+                  {formatTripMoney(Number.parseFloat(entry.amountInTripCurrency), tripCurrency)}
                 </div>
                 <div>
                   <span className={styles.strong}>Fecha:</span> {formatDate(entry.reportedPaymentDate)}
