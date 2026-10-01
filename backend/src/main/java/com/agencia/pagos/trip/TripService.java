@@ -1012,8 +1012,7 @@ public class TripService {
                 effectiveStatus,
                 uiStatus.code(),
                 uiStatus.label(),
-                uiStatus.tone(),
-                trip.getCurrency()
+                uiStatus.tone()
         );
     }
 

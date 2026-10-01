@@ -168,8 +168,13 @@ public final class PaymentE2eApplication {
                 } catch (java.io.IOException e) {
                     throw new IllegalStateException("Could not log deterministic quote", e);
                 }
-                BigDecimal rate = requestedDate.equals(LocalDate.of(2026, 1, 13))
-                        ? new BigDecimal("1015.50") : new BigDecimal("1234.56");
+                BigDecimal rate = switch (requestedDate.toString()) {
+                    case "2026-01-13" -> new BigDecimal("1015.50");
+                    // 2026-01-16 divides ARS 240000.00 into USD 200.00 exactly,
+                    // so the ARS -> USD direction is asserted without rounding.
+                    case "2026-01-16" -> new BigDecimal("1200.00");
+                    default -> new BigDecimal("1234.56");
+                };
                 return new ExchangeRateQuote(rate, requestedDate, requestedDate, "payment-fx-test",
                         "deterministic-local-provider", requestedDate + "T12:00:00Z");
             };

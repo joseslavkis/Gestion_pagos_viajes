@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SpreadsheetParamsSchema } from "@/features/trips/types/trips-dtos";
@@ -24,7 +24,9 @@ vi.mock("@/features/trips/services/trips-service", () => ({
 }));
 
 vi.mock("@/features/payments/components/PaymentDrawer", () => ({
-  PaymentDrawer: () => null,
+  PaymentDrawer: ({ tripCurrency }: { tripCurrency: string }) => (
+    <div data-testid="payment-drawer" data-trip-currency={tripCurrency} />
+  ),
 }));
 
 describe("SpreadsheetPage", () => {
@@ -64,7 +66,6 @@ describe("SpreadsheetPage", () => {
                 uiStatusCode: "UP_TO_DATE",
                 uiStatusLabel: "Al día",
                 uiStatusTone: "green",
-                tripCurrency: "ARS",
               },
             ],
           },
@@ -85,6 +86,37 @@ describe("SpreadsheetPage", () => {
 
     const badge = screen.getByText("Al día").parentElement;
     expect(badge).toHaveClass(styles.statusNeutral);
+  });
+
+  it("mantiene seleccionada la cuota pero no abre el drawer hasta recibir la moneda USD", async () => {
+    useTripMock.mockReturnValue({ data: undefined });
+    const { rerender } = renderWithProviders(<SpreadsheetPage tripId={1} />, "ROLE_ADMIN");
+
+    expect(await screen.findByText("Al día")).toBeInTheDocument();
+    const installmentCell = screen.getByText("Al día").closest("td");
+    if (!installmentCell) {
+      throw new Error("No se encontró la celda de la cuota.");
+    }
+
+    fireEvent.click(installmentCell);
+    expect(screen.queryByTestId("payment-drawer")).not.toBeInTheDocument();
+
+    useTripMock.mockReturnValue({ data: { currency: "USD", firstDueDate: "2026-05-10" } });
+    rerender(<SpreadsheetPage tripId={1} />);
+
+    expect(await screen.findByTestId("payment-drawer")).toHaveAttribute("data-trip-currency", "USD");
+  });
+
+  it("pasa al drawer la moneda ARS del viaje cuando ya está disponible", () => {
+    renderWithProviders(<SpreadsheetPage tripId={1} />, "ROLE_ADMIN");
+
+    const installmentCell = screen.getByText("Al día").closest("td");
+    if (!installmentCell) {
+      throw new Error("No se encontró la celda de la cuota.");
+    }
+
+    fireEvent.click(installmentCell);
+    expect(screen.getByTestId("payment-drawer")).toHaveAttribute("data-trip-currency", "ARS");
   });
 
   it("muestra el mes correspondiente debajo del número de cuota", async () => {

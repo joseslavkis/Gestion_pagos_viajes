@@ -41,10 +41,7 @@ const row: SpreadsheetRowDTO = {
   installments: [],
 };
 
-const installment = (
-  tripCurrency: "ARS" | "USD",
-  totalDue: number,
-): SpreadsheetRowInstallmentDTO => ({
+const installment = (totalDue: number): SpreadsheetRowInstallmentDTO => ({
   id: 1,
   installmentNumber: 1,
   dueDate: "2026-05-10",
@@ -56,7 +53,6 @@ const installment = (
   uiStatusCode: "UP_TO_DATE",
   uiStatusLabel: "Al día",
   uiStatusTone: "green",
-  tripCurrency,
 });
 
 let historyResponse: PaymentInstallmentHistoryDTO[] = [];
@@ -82,7 +78,12 @@ async function renderDrawer(
 ) {
   historyResponse = [entry];
   return renderWithProviders(
-    <PaymentDrawer onClose={vi.fn()} row={row} installment={installment(tripCurrency, totalDue)} />,
+    <PaymentDrawer
+      onClose={vi.fn()}
+      row={row}
+      installment={installment(totalDue)}
+      tripCurrency={tripCurrency}
+    />,
     "ROLE_ADMIN",
   );
 }

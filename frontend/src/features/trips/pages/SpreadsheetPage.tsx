@@ -83,13 +83,14 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
 
   const { data, isLoading, error } = useSpreadsheet(tripId, params);
   const { data: tripData } = useTrip(tripId);
+  const tripCurrency = tripData?.currency;
 
   const tripCurrencyFormatter = useMemo(() => {
-    if (tripData?.currency === "USD") {
+    if (tripCurrency === "USD") {
       return new Intl.NumberFormat("es-AR", { style: "currency", currency: "USD" });
     }
     return currencyFormatter;
-  }, [tripData?.currency]);
+  }, [tripCurrency]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => {
@@ -566,10 +567,11 @@ export function SpreadsheetPage({ tripId }: SpreadsheetPageProps) {
             </div>
           </RequestState>
 
-          {selected ? (
+          {selected && tripCurrency != null ? (
             <PaymentDrawer
               installment={selected.installment}
               row={selected.row}
+              tripCurrency={tripCurrency}
               onClose={() => setSelected(null)}
             />
           ) : null}

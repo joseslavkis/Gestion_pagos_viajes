@@ -1,6 +1,5 @@
 package com.agencia.pagos.trip;
 
-import com.agencia.pagos.shared.money.Currency;
 import com.agencia.pagos.trip.dto.internal.SpreadsheetReceiptRowDTO;
 import com.agencia.pagos.trip.dto.SpreadsheetDTO;
 import com.agencia.pagos.trip.dto.SpreadsheetRowDTO;
@@ -58,8 +57,7 @@ class TripExcelExporterTest {
                                         InstallmentStatus.YELLOW,
                                         InstallmentUiStatusCode.UP_TO_DATE,
                                         "Al día",
-                                        "green",
-                                        Currency.ARS
+                                        "green"
                                 ),
                                 new SpreadsheetRowInstallmentDTO(
                                         2L,
@@ -72,8 +70,7 @@ class TripExcelExporterTest {
                                         InstallmentStatus.GREEN,
                                         InstallmentUiStatusCode.PAID,
                                         "Pagada",
-                                        "green",
-                                        Currency.ARS
+                                        "green"
                                 )
                         )
                 ))
@@ -143,8 +140,7 @@ class TripExcelExporterTest {
                                         InstallmentStatus.YELLOW,
                                         InstallmentUiStatusCode.UNDER_REVIEW,
                                         "En revisión",
-                                        "yellow",
-                                        Currency.ARS
+                                        "yellow"
                                 )
                         )
                 ))
@@ -330,8 +326,7 @@ class TripExcelExporterTest {
                                 InstallmentStatus.YELLOW,
                                 InstallmentUiStatusCode.UP_TO_DATE,
                                 "Al día",
-                                "green",
-                                Currency.ARS
+                                "green"
                         ))
                 ))
         );

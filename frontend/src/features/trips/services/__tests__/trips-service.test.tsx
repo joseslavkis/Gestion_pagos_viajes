@@ -558,7 +558,6 @@ describe("trips-service hooks", () => {
                 uiStatusCode: "PAID",
                 uiStatusLabel: "Pagada",
                 uiStatusTone: "green",
-                tripCurrency: "ARS",
               },
             ],
           },

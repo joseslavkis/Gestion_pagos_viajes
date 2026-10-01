@@ -168,8 +168,6 @@ export const SpreadsheetRowInstallmentDTOSchema = z.object({
   uiStatusCode: InstallmentUiStatusCodeSchema,
   uiStatusLabel: z.string(),
   uiStatusTone: InstallmentUiStatusToneSchema,
-  // Currency of every trip-denominated amount. Never infer it from payment data.
-  tripCurrency: CurrencySchema,
 });
 
 export type SpreadsheetRowInstallmentDTO = z.infer<typeof SpreadsheetRowInstallmentDTOSchema>;

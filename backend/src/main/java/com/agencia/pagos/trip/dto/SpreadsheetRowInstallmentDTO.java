@@ -1,6 +1,5 @@
 package com.agencia.pagos.trip.dto;
 
-import com.agencia.pagos.shared.money.Currency;
 import com.agencia.pagos.trip.InstallmentStatus;
 import com.agencia.pagos.trip.InstallmentUiStatusCode;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -19,13 +18,7 @@ public record SpreadsheetRowInstallmentDTO(
         InstallmentStatus status,
         InstallmentUiStatusCode uiStatusCode,
         String uiStatusLabel,
-        String uiStatusTone,
-        /**
-         * Currency of every trip-denominated amount carried by this installment.
-         * Consumers must format {@code amountInTripCurrency} and the installment
-         * balances with this value instead of inferring it from payment data.
-         */
-        Currency tripCurrency
+        String uiStatusTone
 ) {
         // Rollout compatibility shim (temporary):
         // legacy clients expect this property on the response even though the

@@ -67,6 +67,12 @@ function setup(options: {
   );
   return renderWithProviders(<UserDashboardPage />);
 }
+/** Explicitly controllable promise, so a test can order two responses by hand. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => { resolve = settle; });
+  return { promise, resolve: (value: T) => resolve(value) };
+}
 const input = () => document.querySelector("input[type='file']") as HTMLInputElement;
 const submit = () => screen.getByRole("button", { name: "Enviar comprobante" });
 const file = (name: string, type = "image/png", bytes = "x") => new File([bytes], name, { type });
@@ -153,6 +159,87 @@ describe("receipt amount payment", () => {
     expect(requests).toHaveLength(0);
     fireEvent.submit(submit().closest("form")!);
     expect(payment).toBeUndefined();
+  });
+
+  describe("herencia de moneda entre comprobantes", () => {
+    const receiptCurrencyOf = (name: string) =>
+      (screen.getByLabelText(`Moneda de ${name}`) as HTMLSelectElement).value;
+
+    /** The receipt currency is seeded from the trip, so the anchor installment
+     *  (which carries the trip currency) must be resolved before uploading. */
+    async function openForm(options: { tripCurrency: "ARS" | "USD" }) {
+      setup(options);
+      expect(await screen.findByText("Primera cuota pendiente", { exact: false })).toBeInTheDocument();
+      await screen.findByText("Adjuntar comprobantes (hasta 5)");
+    }
+
+    it("inicializa el primer comprobante con la moneda del viaje", async () => {
+      await openForm({ tripCurrency: "USD" });
+      upload(file("a.png"));
+      expect(receiptCurrencyOf("a.png")).toBe("USD");
+    });
+
+    it("inicializa el primer comprobante con la moneda del viaje en ARS", async () => {
+      await openForm({ tripCurrency: "ARS" });
+      upload(file("a.png"));
+      expect(receiptCurrencyOf("a.png")).toBe("ARS");
+    });
+
+    it("hace que un comprobante nuevo herede la moneda del primero, no la del viaje", async () => {
+      await openForm({ tripCurrency: "USD" });
+      upload(file("a.png"));
+      fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "ARS" } });
+      upload(file("b.png"));
+      expect(receiptCurrencyOf("b.png")).toBe("ARS");
+      amount("a.png", "100000");
+      amount("b.png", "140000");
+      // Both receipts stay in one currency, so the submission is confirmable.
+      expect(await screen.findByText("Total en ARS: 240000.00")).toBeInTheDocument();
+    });
+
+    it("propaga la moneda del primero a un tercer comprobante", async () => {
+      await openForm({ tripCurrency: "USD" });
+      upload(file("a.png"));
+      fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "ARS" } });
+      upload(file("b.png"));
+      upload(file("c.png"));
+      expect(receiptCurrencyOf("b.png")).toBe("ARS");
+      expect(receiptCurrencyOf("c.png")).toBe("ARS");
+      amount("a.png", "10");
+      amount("b.png", "20");
+      amount("c.png", "30");
+      expect(await screen.findByText("Total en ARS: 60.00")).toBeInTheDocument();
+    });
+
+    it("no convierte los comprobantes existentes cuando el primero cambia de moneda", async () => {
+      await openForm({ tripCurrency: "USD" });
+      upload(file("a.png"));
+      fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "ARS" } });
+      upload(file("b.png"));
+      amount("a.png", "100");
+      amount("b.png", "200");
+      expect(await screen.findByText("Total en ARS: 300.00")).toBeInTheDocument();
+
+      // Mutating receipt 1 must not silently convert receipt 2.
+      fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "USD" } });
+      expect(receiptCurrencyOf("a.png")).toBe("USD");
+      expect(receiptCurrencyOf("b.png")).toBe("ARS");
+      // The submission is intentionally left mixed, so it cannot be confirmed.
+      expect(await screen.findByText(/misma moneda/)).toBeInTheDocument();
+      expect(screen.queryByRole("checkbox", { name: /Confirmo el total/ })).toBeNull();
+      expect(submit()).toBeDisabled();
+    });
+
+    it("arranca un comprobante nuevo con la moneda del primero tras eliminar y volver a agregar", async () => {
+      await openForm({ tripCurrency: "USD" });
+      upload(file("a.png"));
+      upload(file("b.png"));
+      expect(receiptCurrencyOf("a.png")).toBe("USD");
+      // Dropping the first receipt promotes the second one to the submission currency.
+      fireEvent.click(screen.getByRole("button", { name: "Quitar a.png" }));
+      upload(file("c.png"));
+      expect(receiptCurrencyOf("c.png")).toBe("USD");
+    });
   });
 
   it("reports ARS receipts in ARS when the trip uses USD and lets the backend compute the equivalence", async () => {
@@ -406,6 +493,74 @@ describe("receipt amount payment", () => {
       release?.();
       await waitFor(() => expect(submit()).toBeEnabled());
     } finally { release?.(); }
+  });
+
+  it("ignora una respuesta HTTP tardía de un cálculo anterior sin pisar el más reciente", async () => {
+    // Deliberately out-of-order delivery: request A is parked until request B
+    // has already been adopted, so a late A can only be a genuine stale write.
+    const gateA = deferred<void>();
+    const gateB = deferred<void>();
+    const requests: Record<string, unknown>[] = [];
+    let payment: string | undefined;
+    const { queryClient } = setup({
+      onCalculation: (body) => requests.push(body),
+      onPayment: (data) => { payment = data; },
+      reply: (body) => {
+        if (body.reportedAmount === "100.00") return { delay: gateA.promise, token: "token-A" };
+        if (body.reportedAmount === "200.00") return { delay: gateB.promise, token: "token-B" };
+        return {};
+      },
+    });
+    await screen.findByText("Primera cuota pendiente", { exact: false });
+    upload(file("a.png"));
+
+    // Request A: confirmed at 100.00 and left in flight on purpose.
+    amount("a.png", "100.00");
+    fireEvent.click(confirm());
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0]).toMatchObject({ reportedAmount: "100.00", paymentCurrency: "ARS" });
+    expect(submit()).toBeDisabled();
+
+    // The user changes the amount, which revokes the confirmation of A.
+    amount("a.png", "200.00");
+    expect(screen.getByText("Total en ARS: 200.00")).toBeInTheDocument();
+
+    // Request B is confirmed and answered first, so the UI adopts B.
+    fireEvent.click(confirm());
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[1]).toMatchObject({ reportedAmount: "200.00", paymentCurrency: "ARS" });
+    gateB.resolve();
+    await waitFor(() => expect(submit()).toBeEnabled());
+
+    // Only now the superseded request A answers. Wait until its response has
+    // really reached the client, otherwise "nothing changed" would pass
+    // trivially without the stale write ever happening.
+    gateA.resolve();
+    await waitFor(() => {
+      const delivered = queryClient.getQueryCache()
+        .getAll()
+        .some((query) => (query.state.data as { previewToken?: string } | undefined)?.previewToken === "token-A");
+      expect(delivered).toBe(true);
+    });
+
+    // A landed in its own cache slot, which is what keeps it from ever being
+    // read back as the current calculation.
+    const slotOf = (token: string) => queryClient.getQueryCache()
+      .getAll()
+      .filter((query) => (query.state.data as { previewToken?: string } | undefined)?.previewToken === token)
+      .map((query) => JSON.stringify(query.queryKey));
+    expect(slotOf("token-A")).toHaveLength(1);
+    expect(slotOf("token-B")).toHaveLength(1);
+    expect(slotOf("token-A")[0]).not.toBe(slotOf("token-B")[0]);
+
+    // A must not be able to drive the current state.
+    expect(screen.getByText("Total en ARS: 200.00")).toBeInTheDocument();
+    await waitFor(() => expect(submit()).toBeEnabled());
+    fireEvent.submit(submit().closest("form")!);
+    await waitFor(() => expect(payment).toBeDefined());
+    expect(payment).toContain("token-B");
+    expect(payment).not.toContain("token-A");
+    expect(payment).toContain("200.00");
   });
 
   it("keeps submission blocked for an in-review trip", async () => {

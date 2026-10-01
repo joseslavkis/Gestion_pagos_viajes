@@ -466,9 +466,17 @@ export function UserDashboardPage() {
     ) ? "Cada archivo debe ser JPG, PNG, WEBP o PDF y no superar 5 MB." : null;
     setFileError(error);
     if (!error) {
-      setReceipts((current) => [...current, ...files.map((file) => ({
-        id: ++nextReceiptId.current, file, currency: tripCurrency, amount: "",
-      }))]);
+      setReceipts((current) => {
+        // The first receipt defaults to the trip currency. Every later receipt
+        // inherits the currency already chosen for the submission, so loading
+        // several receipts never silently introduces a mixed-currency one.
+        // Existing receipts are never mutated: changing receipt[0] afterwards
+        // deliberately leaves the rest of the submission mixed and invalid.
+        const inheritedCurrency = current[0]?.currency ?? tripCurrency;
+        return [...current, ...files.map((file) => ({
+          id: ++nextReceiptId.current, file, currency: inheritedCurrency, amount: "",
+        }))];
+      });
       if (receipts.length === 0 && files[0].type.startsWith("image/")) {
         setReceiptPreviewUrl(URL.createObjectURL(files[0]));
       }

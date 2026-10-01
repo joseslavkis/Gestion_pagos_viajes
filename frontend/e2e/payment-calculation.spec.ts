@@ -10,6 +10,11 @@ const CASE_F_FAST_DATE = "2026-01-15";
 const CASE_F_SLOW_DATE = "2026-01-14";
 const CASE_G_DATE = "2026-01-13";
 const CASE_J_DATE = "2026-01-15";
+// Deterministic provider date whose rate is 1200.00, so the ARS -> USD direction
+// converts ARS 240000.00 into exactly USD 200.00 with no rounding ambiguity.
+const CASE_MULTI_RECEIPT_DATE = "2026-01-16";
+const CASE_MULTI_RECEIPT_RATE = "1200.00";
+const CASE_MULTI_RECEIPT_EXPECTED_USD = "200.00";
 
 type SeededContext = {
   accessToken: string;
@@ -23,6 +28,9 @@ type SeededContext = {
   threeInstallmentTripId: number;
   caseJTripName: string;
   caseJTripId: number;
+  multiReceiptArsTripName: string;
+  multiReceiptUsdTripName: string;
+  multiReceiptUsdTripId: number;
 };
 
 let api: APIRequestContext;
@@ -111,6 +119,117 @@ test("CASE G reports the explicit amount in its own currency and leaves conversi
   await receiptAmount(page, sameCurrency).fill("99.29");
   await expect(page.getByText("Total en USD: 99.29")).toBeVisible();
   expect(await readFxCalls()).toEqual([]);
+});
+
+test("registers two ARS receipts in one submission, preserving both attachments", async ({ page }) => {
+  await selectTrip(page, seeded.multiReceiptArsTripName);
+  await page.getByLabel("Fecha de pago").fill(CASE_MULTI_RECEIPT_DATE);
+
+  const first = "multi-ars-a.png";
+  const second = "multi-ars-b.png";
+  await attachReceipt(page, first);
+  // The second receipt inherits the currency of the first one, so both stay in ARS.
+  await attachReceipt(page, second);
+  await expect(receiptCurrency(page, second)).toHaveValue("ARS");
+
+  await receiptAmount(page, first).fill("100000");
+  await receiptAmount(page, second).fill("140000");
+  await expect(page.getByText("Total en ARS: 240000.00")).toBeVisible();
+
+  const submissionId = await submitAndCaptureForm(page, "240000.00", "ARS");
+
+  // Read back from the backend, so both attachments and the reported semantics
+  // are proven to survive the real registration.
+  const persisted = await reloadedPayment(seeded.accessToken, submissionId);
+  expect(persisted).toMatchObject({
+    status: "PENDING",
+    reportedAmount: "240000.00",
+    paymentCurrency: "ARS",
+    // Same-currency submission: the equivalence is the reported amount itself.
+    amountInTripCurrency: "240000.00",
+    tripCurrency: "ARS",
+  });
+  expect(persisted.fileKeys).toHaveLength(2);
+  expect(new Set(persisted.fileKeys).size).toBe(2);
+  expect(sumCents(persisted.installments as Array<Record<string, unknown>>, "reportedAmount"))
+    .toBe(moneyToCents("240000.00"));
+  expect(sumCents(persisted.installments as Array<Record<string, unknown>>, "amountInTripCurrency"))
+    .toBe(moneyToCents("240000.00"));
+  // Same-currency payments never need a quote.
+  expect(await readFxCalls()).toEqual([]);
+});
+
+test("converts ARS receipts into a USD trip end to end, keeping the reported amount in ARS", async ({ page }) => {
+  await selectTrip(page, seeded.multiReceiptUsdTripName);
+  await page.getByLabel("Fecha de pago").fill(CASE_MULTI_RECEIPT_DATE);
+
+  const first = "multi-usd-a.png";
+  const second = "multi-usd-b.png";
+  // The trip is USD, so the first receipt starts in USD and is switched to ARS.
+  await attachReceipt(page, first);
+  await receiptCurrency(page, first).selectOption("ARS");
+  await receiptAmount(page, first).fill("100000");
+  // The second receipt inherits ARS from the first one.
+  await attachReceipt(page, second);
+  await expect(receiptCurrency(page, second)).toHaveValue("ARS");
+  await receiptAmount(page, second).fill("140000");
+
+  // The frontend keeps the total in the receipts currency; no client-side conversion.
+  await expect(page.getByText("Total en ARS: 240000.00")).toBeVisible();
+  await confirmTotal(page, "240000.00", "ARS");
+  await expect.poll(readFxCalls).toEqual([CASE_MULTI_RECEIPT_DATE]);
+
+  const submissionId = await submitAndCaptureForm(page, "240000.00", "ARS");
+
+  // The reported amount was never converted before reaching the backend: it
+  // comes back from the backend still denominated in the receipts currency.
+  const persisted = await reloadedPayment(seeded.accessToken, submissionId);
+  expect(persisted).toMatchObject({
+    status: "PENDING",
+    // Reported in the real receipts currency.
+    reportedAmount: "240000.00",
+    paymentCurrency: "ARS",
+    // The only backend-computed value, expressed in the trip currency.
+    amountInTripCurrency: CASE_MULTI_RECEIPT_EXPECTED_USD,
+    tripCurrency: "USD",
+  });
+  // 240000.00 ARS / 1200.00 = 200.00 USD, the deterministic provider rate.
+  expect(String(persisted.exchangeRate)).toBe(CASE_MULTI_RECEIPT_RATE);
+  expect(persisted.fileKeys).toHaveLength(2);
+  expect(sumCents(persisted.installments as Array<Record<string, unknown>>, "reportedAmount"))
+    .toBe(moneyToCents("240000.00"));
+  expect(sumCents(persisted.installments as Array<Record<string, unknown>>, "amountInTripCurrency"))
+    .toBe(moneyToCents(CASE_MULTI_RECEIPT_EXPECTED_USD));
+
+  // The lifecycle keeps the same semantics: reported stays ARS while the
+  // imputed amount stays USD, all the way through the approval.
+  const adminPage = await page.context().newPage();
+  await adminPage.addInitScript((accessToken) => {
+    window.localStorage.setItem("pagos-viajes-auth-tokens", JSON.stringify({ accessToken, refreshToken: null }));
+  }, seeded.adminAccessToken);
+  await adminPage.goto("/payments/pending-review");
+  const reviewCard = adminPage.locator("article").filter({ hasText: seeded.multiReceiptUsdTripName });
+  await expect(reviewCard).toHaveCount(1);
+  await openAmountReview(reviewCard);
+  await reviewCard.getByRole("button", { name: "Guardar decisión" }).click();
+  await expect(reviewCard).toHaveCount(0);
+
+  const approved = await reloadedPayment(seeded.accessToken, submissionId);
+  expect(approved).toMatchObject({
+    status: "APPROVED",
+    reportedAmount: "240000.00",
+    approvedAmount: "240000.00",
+    paymentCurrency: "ARS",
+    amountInTripCurrency: CASE_MULTI_RECEIPT_EXPECTED_USD,
+    approvedAmountInTripCurrency: CASE_MULTI_RECEIPT_EXPECTED_USD,
+  });
+  const paidInstallments = (await getJson(
+    api, "/api/v1/payments/my/installments", seeded.accessToken,
+  ) as Array<Record<string, unknown>>)
+    .filter((installment) => installment.tripId === seeded.multiReceiptUsdTripId);
+  expect(paidInstallments.map((installment) => moneyToCents(installment.paidAmount)))
+    .toEqual([moneyToCents(CASE_MULTI_RECEIPT_EXPECTED_USD)]);
+  await adminPage.close();
 });
 
 test("allocates a manual 500 across three 240 installments, then approves and voids the exact credits", async ({ page, context }) => {
@@ -426,13 +545,14 @@ function receiptCurrency(page: Page, fileName: string) {
 
 /**
  * Receipt amounts and currencies are explicit, temporary user inputs, so a receipt must be
- * attached before any per-receipt control exists.
+ * attached before any per-receipt control exists. The bytes are derived from the
+ * file name so that two receipts in one submission are distinct files.
  */
 async function attachReceipt(page: Page, fileName: string) {
   await page.locator('input[type="file"]').setInputFiles({
     name: fileName,
     mimeType: "image/png",
-    buffer: Buffer.from("synthetic payment receipt"),
+    buffer: Buffer.from(`synthetic payment receipt ${fileName}`),
   });
   await expect(receiptAmount(page, fileName)).toBeVisible();
 }
@@ -451,6 +571,37 @@ async function confirmTotal(page: Page, total: string, currency: string) {
   await page.getByRole("checkbox", { name: `Confirmo el total de ${total} ${currency} para estos comprobantes.` })
     .check();
   await expect(page.getByRole("button", { name: "Enviar comprobante" })).toBeEnabled();
+}
+
+/**
+ * Submits the real UI form through the real backend and returns the created
+ * submission id. Nothing is intercepted: the persisted state is re-read from
+ * the backend afterwards.
+ */
+async function submitAndCaptureForm(page: Page, total: string, currency: string) {
+  await confirmTotal(page, total, currency);
+  const responsePromise = page.waitForResponse((candidate) =>
+    candidate.url().endsWith("/api/v1/payments") && candidate.request().method() === "POST");
+  await page.getByRole("button", { name: "Enviar comprobante" }).click();
+  const response = await responsePromise;
+  expect(response.status()).toBe(201);
+  const registered = await response.json() as Record<string, unknown>;
+  const submissionId = Number(registered.submissionId);
+  expect(submissionId).toBeGreaterThan(0);
+  return submissionId;
+}
+
+/** Re-reads the submission from the backend so nothing is asserted from a UI echo. */
+async function reloadedPayment(accessToken: string, submissionId: number) {
+  const payment = (await getJson(api, "/api/v1/payments/my", accessToken) as Array<Record<string, unknown>>)
+    .find((entry) => entry.submissionId === submissionId);
+  if (!payment) {
+    throw new Error(`Submission ${submissionId} was not reloaded from the backend history.`);
+  }
+  return payment as Record<string, unknown> & {
+    installments: Array<Record<string, unknown>>;
+    fileKeys: string[];
+  };
 }
 
 async function selectTrip(page: import("@playwright/test").Page, tripName: string) {
@@ -561,6 +712,42 @@ async function seedPaymentContexts(context: APIRequestContext): Promise<SeededCo
     studentDnis: [studentDni],
   }, adminToken);
 
+  // Same-currency (ARS) and cross-currency (USD) destinations for the
+  // multi-receipt submissions. Both leave balance headroom so the ARS 240000
+  // total is always a valid manual payment.
+  const multiReceiptArsTripName = `Multi receipt ARS ${stamp}`;
+  const multiReceiptArsTrip = await postJson(context, "/api/v1/trips", {
+    name: multiReceiptArsTripName,
+    totalAmount: 300000,
+    firstInstallmentAmount: 300000,
+    installmentsCount: 1,
+    dueDay: 10,
+    yellowWarningDays: 5,
+    retroactiveActive: false,
+    currency: "ARS",
+    firstDueDate: "2026-12-10",
+    fixedFineAmount: 0,
+  }, adminToken);
+  await postJson(context, `/api/v1/trips/${String(multiReceiptArsTrip.id)}/users/bulk`, {
+    studentDnis: [studentDni],
+  }, adminToken);
+
+  const multiReceiptUsdTrip = await postJson(context, "/api/v1/trips", {
+    name: `Multi receipt USD ${stamp}`,
+    totalAmount: 1000,
+    firstInstallmentAmount: 1000,
+    installmentsCount: 1,
+    dueDay: 10,
+    yellowWarningDays: 5,
+    retroactiveActive: false,
+    currency: "USD",
+    firstDueDate: "2026-12-10",
+    fixedFineAmount: 0,
+  }, adminToken);
+  await postJson(context, `/api/v1/trips/${String(multiReceiptUsdTrip.id)}/users/bulk`, {
+    studentDnis: [studentDni],
+  }, adminToken);
+
   const signup = await postJson(context, "/api/v1/auth/signup", {
     email: userEmail,
     password: userPassword,
@@ -597,6 +784,9 @@ async function seedPaymentContexts(context: APIRequestContext): Promise<SeededCo
     threeInstallmentTripId: Number(threeInstallmentTrip.id),
     caseJTripName,
     caseJTripId: Number(caseJTrip.id),
+    multiReceiptArsTripName,
+    multiReceiptUsdTripName: `Multi receipt USD ${stamp}`,
+    multiReceiptUsdTripId: Number(multiReceiptUsdTrip.id),
   };
 }
 

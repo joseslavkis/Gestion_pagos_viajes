@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AttachmentList } from "@/features/payments/components/AttachmentList";
 import { useInstallmentReceipts, useVoidPayment } from "@/features/payments/services/payments-service";
-import type { PaymentHistoryStatus, PaymentInstallmentHistoryDTO } from "@/features/payments/types/payments-dtos";
+import type { Currency, PaymentHistoryStatus, PaymentInstallmentHistoryDTO } from "@/features/payments/types/payments-dtos";
 import {
   getSpreadsheetParticipantParentLabel,
   getSpreadsheetParticipantPrimaryLabel,
@@ -14,7 +14,7 @@ import { createGsapMatchMedia, getMotionProfile, gsap, useGSAP } from "@/lib/gsa
 
 /** Trip-denominated amounts must be formatted with the trip currency, never
  *  inferred from the payment currency or from the presence of a rate. */
-function formatTripMoney(amount: number, tripCurrency: "ARS" | "USD"): string {
+function formatTripMoney(amount: number, tripCurrency: Currency): string {
   return new Intl.NumberFormat("es-AR", { style: "currency", currency: tripCurrency }).format(amount);
 }
 
@@ -40,7 +40,7 @@ const dateFormatter = new Intl.DateTimeFormat("es-AR", {
   timeZone: "America/Argentina/Buenos_Aires",
 });
 
-function formatMoneyByCurrency(amount: number | string, currency: "ARS" | "USD"): string {
+function formatMoneyByCurrency(amount: number | string, currency: Currency): string {
   return new Intl.NumberFormat("es-AR", {
     style: "currency",
     currency,
@@ -55,10 +55,16 @@ function formatDate(isoDate: string): string {
 type PaymentDrawerProps = {
   installment: SpreadsheetRowInstallmentDTO;
   row: SpreadsheetRowDTO;
+  /**
+   * Currency of the trip the installment belongs to. It is a property of the
+   * trip, so it comes from the trip context and never from the installment row
+   * nor from payment data (the payment currency can differ from it).
+   */
+  tripCurrency: Currency;
   onClose: () => void;
 };
 
-export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps) {
+export function PaymentDrawer({ installment, row, tripCurrency, onClose }: PaymentDrawerProps) {
   const { data: history, isLoading: isHistoryLoading, error: historyError } = useInstallmentReceipts(installment.id);
   const voidPayment = useVoidPayment();
 
@@ -163,7 +169,7 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
         <header className={styles.drawerHeader}>
           <h2 id={titleId} className={styles.drawerTitle}>
             Cuota {installment.installmentNumber} ·{" "}
-            {formatTripMoney(installment.totalDue, installment.tripCurrency)}
+            {formatTripMoney(installment.totalDue, tripCurrency)}
           </h2>
           <button type="button" className={styles.drawerCloseButton} onClick={onClose}>
             Cerrar
@@ -187,7 +193,7 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
               <div>
                 Total:{" "}
                 <span className={styles.strong}>
-                  {formatTripMoney(installment.totalDue, installment.tripCurrency)}
+                  {formatTripMoney(installment.totalDue, tripCurrency)}
                 </span>
               </div>
               <div>
@@ -215,7 +221,7 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
                 </div>
                 <div>
                   <span className={styles.strong}>Equivalente imputado al viaje:</span>{" "}
-                  {formatTripMoney(Number.parseFloat(entry.amountInTripCurrency), installment.tripCurrency)}
+                  {formatTripMoney(Number.parseFloat(entry.amountInTripCurrency), tripCurrency)}
                 </div>
                 <div>
                   <span className={styles.strong}>Fecha:</span> {formatDate(entry.reportedPaymentDate)}
