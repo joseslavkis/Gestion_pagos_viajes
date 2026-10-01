@@ -84,6 +84,34 @@ class PaymentMoneyPolicyTest {
     }
 
     @Test
+    void paymentCurrencyIsPreservedAndOnlyTripEquivalenceIsConverted() {
+        // Case 1 — USD trip, ARS receipt: reported stays ARS 240000, imputes USD 200.
+        assertEquals(
+                new BigDecimal("200.00"),
+                policy.convertPaymentToTripCurrency(
+                        new BigDecimal("240000.00"), Currency.USD, Currency.ARS, new BigDecimal("1200")));
+        // Case 2 — USD trip, USD receipt: no conversion.
+        assertEquals(
+                new BigDecimal("200.00"),
+                policy.convertPaymentToTripCurrency(
+                        new BigDecimal("200.00"), Currency.USD, Currency.USD, null));
+        // Case 3 — ARS trip, USD receipt: reported stays USD 200, imputes ARS 240000.
+        assertEquals(
+                new BigDecimal("240000.00"),
+                policy.convertPaymentToTripCurrency(
+                        new BigDecimal("200.00"), Currency.ARS, Currency.USD, new BigDecimal("1200")));
+        // Case 4 — same currency never needs a rate.
+        assertEquals(
+                new BigDecimal("240000.00"),
+                policy.convertPaymentToTripCurrency(
+                        new BigDecimal("240000.00"), Currency.ARS, Currency.ARS, null));
+        assertEquals(
+                new BigDecimal("200.00"),
+                policy.convertPaymentToTripCurrency(
+                        new BigDecimal("200.00"), Currency.USD, Currency.USD, null));
+    }
+
+    @Test
     void conversionUsesTheAuthoritativeRateWithoutPrematureRounding() {
         assertEquals(
                 new BigDecimal("1234567.00"),

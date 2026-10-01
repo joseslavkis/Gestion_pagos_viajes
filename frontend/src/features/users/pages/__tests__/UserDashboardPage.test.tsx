@@ -133,129 +133,100 @@ describe("receipt amount payment", () => {
     expect(payment).toContain("0.30");
   });
 
-  it("uses only the backend opposite-currency equivalent and never its auxiliary token for registration", async () => {
+  it("rejects mixed-currency receipts without converting or registering", async () => {
     const requests: Record<string, unknown>[] = [];
     let payment: string | undefined;
-    setup({ onCalculation: (body) => requests.push(body), onPayment: (data) => { payment = data; },
-      reply: (body) => body.paymentCurrency === "USD" ? { equivalent: "20.03", token: "AUX-DO-NOT-USE" } : {} });
+    setup({ onCalculation: (body) => requests.push(body), onPayment: (data) => { payment = data; } });
     await screen.findByText("Adjuntar comprobantes (hasta 5)");
     upload(file("a.png"), file("b.png"));
-    amount("a.png", "1.02");
+    amount("a.png", "100000");
     fireEvent.change(screen.getByLabelText("Moneda de b.png"), { target: { value: "USD" } });
-    amount("b.png", "2.00");
-    await screen.findByText("Total en ARS: 21.05");
-    expect(requests).toEqual([expect.objectContaining({ paymentCurrency: "USD", reportedAmount: "2.00", intent: "MANUAL" })]);
-    fireEvent.click(confirm());
-    await waitFor(() => expect(requests).toHaveLength(3));
-    await waitFor(() => expect(confirm()).toBeChecked());
-    await waitFor(() => expect(submit()).toBeEnabled());
-    expect(requests).toHaveLength(3);
-    expect(requests[1]).toMatchObject({ paymentCurrency: "USD", reportedAmount: "2.00", intent: "MANUAL" });
-    expect(requests[2]).toMatchObject({ paymentCurrency: "ARS", reportedAmount: "21.05", intent: "MANUAL" });
+    amount("b.png", "50");
+    expect(await screen.findByText(/misma moneda/)).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /Confirmo el total/ })).toBeNull();
+    expect(submit()).toBeDisabled();
+    expect(requests).toHaveLength(0);
     fireEvent.submit(submit().closest("form")!);
-    await waitFor(() => expect(payment).toBeDefined());
-    expect(payment).toContain("token-ARS-21.05");
-    expect(payment).not.toContain("AUX-DO-NOT-USE");
+    expect(payment).toBeUndefined();
   });
 
-  it("converts ARS to USD when the trip uses USD without client FX", async () => {
+  it("reports ARS receipts in ARS when the trip uses USD and lets the backend compute the equivalence", async () => {
     const requests: Record<string, unknown>[] = [];
-    setup({ tripCurrency: "USD", onCalculation: (body) => requests.push(body),
+    let payment: string | undefined;
+    setup({ tripCurrency: "USD", onCalculation: (body) => requests.push(body), onPayment: (data) => { payment = data; },
       reply: (body) => body.paymentCurrency === "ARS" ? { equivalent: "0.03" } : {} });
     await screen.findByText("Adjuntar comprobantes (hasta 5)");
     upload(file("a.png"));
     fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "ARS" } });
     amount("a.png", "45.67");
-    await screen.findByText("Total en USD: 0.03");
+    expect(await screen.findByText("Total en ARS: 45.67")).toBeInTheDocument();
     fireEvent.click(confirm());
     await waitFor(() => expect(submit()).toBeEnabled());
-    expect(requests).toHaveLength(3);
-    expect(requests[1]).toMatchObject({ paymentCurrency: "ARS", reportedAmount: "45.67" });
-    expect(requests[2]).toMatchObject({ paymentCurrency: "USD", reportedAmount: "0.03" });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ paymentCurrency: "ARS", reportedAmount: "45.67" });
+    fireEvent.submit(submit().closest("form")!);
+    await waitFor(() => expect(payment).toBeDefined());
+    expect(payment).toContain("45.67");
+    expect(payment).toContain("ARS");
   });
 
-  it("refreshes the auxiliary equivalence at confirmation and requires re-confirmation on a changed quote", async () => {
-    let conversions = 0;
+  it("reports USD receipts in USD when the trip uses ARS without client-side FX", async () => {
     const requests: Record<string, unknown>[] = [];
-    setup({ onCalculation: (body) => requests.push(body), reply: (body) => {
-      if (body.paymentCurrency !== "USD") return {};
-      conversions += 1;
-      return { equivalent: conversions === 1 ? "20.00" : "21.00" };
-    } });
+    setup({ onCalculation: (body) => requests.push(body),
+      reply: (body) => body.paymentCurrency === "USD" ? { equivalent: "2400.00" } : {} });
     await screen.findByText("Primera cuota pendiente", { exact: false });
     upload(file("a.png"));
     fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "USD" } });
     amount("a.png", "2");
-    await screen.findByText("Total en ARS: 20.00");
+    expect(await screen.findByText("Total en USD: 2.00")).toBeInTheDocument();
     fireEvent.click(confirm());
-    await screen.findByText("Total en ARS: 21.00");
+    await waitFor(() => expect(submit()).toBeEnabled());
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ paymentCurrency: "USD", reportedAmount: "2.00" });
+  });
+
+  it("requires re-confirmation when a cross-currency receipt amount changes", async () => {
+    setup({});
+    await screen.findByText("Primera cuota pendiente", { exact: false });
+    upload(file("a.png"));
+    fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "USD" } });
+    amount("a.png", "2");
+    expect(await screen.findByText("Total en USD: 2.00")).toBeInTheDocument();
+    fireEvent.click(confirm());
+    await waitFor(() => expect(confirm()).toBeChecked());
+    amount("a.png", "3");
+    expect(await screen.findByText("Total en USD: 3.00")).toBeInTheDocument();
     expect(confirm()).not.toBeChecked();
     expect(submit()).toBeDisabled();
-    expect(requests).toHaveLength(2);
-    fireEvent.click(confirm());
-    await waitFor(() => expect(submit()).toBeEnabled());
-    expect(requests).toHaveLength(4);
-    expect(requests[3]).toMatchObject({ paymentCurrency: "ARS", reportedAmount: "21.00" });
   });
 
-  it("does not enable submission if refreshed auxiliary calculation fails", async () => {
-    let conversions = 0;
-    const requests: Record<string, unknown>[] = [];
-    setup({ onCalculation: (body) => requests.push(body), reply: (body) => {
-      if (body.paymentCurrency !== "USD") return {};
-      return { failure: ++conversions > 1 };
-    } });
+  it("revokes confirmation when a second receipt introduces a mixed currency", async () => {
+    setup({});
     await screen.findByText("Primera cuota pendiente", { exact: false });
     upload(file("a.png"));
-    fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "USD" } });
     amount("a.png", "2");
-    await screen.findByText("Total en ARS: 2.00");
     fireEvent.click(confirm());
-    await waitFor(() => expect(requests).toHaveLength(2));
+    await waitFor(() => expect(confirm()).toBeChecked());
+    upload(file("b.png"));
+    fireEvent.change(screen.getByLabelText("Moneda de b.png"), { target: { value: "USD" } });
+    amount("b.png", "1");
+    expect(await screen.findByText(/misma moneda/)).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /Confirmo el total/ })).toBeNull();
     expect(submit()).toBeDisabled();
-    expect(screen.queryByRole("checkbox")).toBeNull();
   });
 
-  it("ignores an in-flight confirmation refresh after receipt or date edits", async () => {
-    let release: (() => void) | undefined;
-    const pending = new Promise<void>((resolve) => { release = resolve; });
-    let started: (() => void) | undefined;
-    const refreshStarted = new Promise<void>((resolve) => { started = resolve; });
-    let conversions = 0;
-    const payments: string[] = [];
-    setup({ onPayment: (body) => payments.push(body), reply: (body) => {
-      if (body.paymentCurrency !== "USD") return {};
-      if (++conversions === 2) { started?.(); return { delay: pending, equivalent: "900.00" }; }
-      return { equivalent: "20.00" };
-    } });
+  it("clears the mixed-currency error once all receipts share one currency again", async () => {
+    setup({});
     await screen.findByText("Primera cuota pendiente", { exact: false });
-    upload(file("a.png")); fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "USD" } });
-    amount("a.png", "2"); await screen.findByText("Total en ARS: 20.00");
-    fireEvent.click(confirm());
-    try {
-      await refreshStarted;
-      amount("a.png", "3");
-      fireEvent.change(screen.getByLabelText("Fecha de pago"), { target: { value: "2026-10-01" } });
-      release?.();
-      await screen.findByText("Total en ARS: 20.00");
-      expect(confirm()).not.toBeChecked();
-      expect(submit()).toBeDisabled();
-      expect(payments).toHaveLength(0);
-    } finally { release?.(); }
-  });
-
-  it("does not accept an aged auxiliary equivalence for confirmation", async () => {
-    setup({ reply: (body) => body.paymentCurrency === "USD" ? { equivalent: "20.00" } : {} });
-    await screen.findByText("Primera cuota pendiente", { exact: false });
-    upload(file("a.png")); fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "USD" } });
-    amount("a.png", "2"); await screen.findByText("Total en ARS: 20.00");
-    const now = Date.now();
-    const clock = vi.spyOn(Date, "now").mockReturnValue(now + 240_001);
-    try {
-      fireEvent.change(screen.getByLabelText("Método de pago"), { target: { value: "CASH" } });
-      expect(screen.queryByRole("checkbox")).toBeNull();
-      expect(submit()).toBeDisabled();
-    } finally { clock.mockRestore(); }
+    upload(file("a.png"), file("b.png"));
+    amount("a.png", "100");
+    fireEvent.change(screen.getByLabelText("Moneda de b.png"), { target: { value: "USD" } });
+    amount("b.png", "50");
+    expect(await screen.findByText(/misma moneda/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Moneda de b.png"), { target: { value: "ARS" } });
+    expect(await screen.findByText("Total en ARS: 150.00")).toBeInTheDocument();
+    expect(screen.queryByText(/misma moneda/)).toBeNull();
+    expect(confirm()).toBeInTheDocument();
   });
 
   it.each(["", "0", "-1", "1.005", "100000000", "oops"])("rejects invalid amount %s", async (value) => {
@@ -379,36 +350,29 @@ describe("receipt amount payment", () => {
     },
   );
 
-  it("blocks on auxiliary failure and never sends a final calculation", async () => {
+  it("blocks submission when the single-currency final calculation fails", async () => {
     const requests: Record<string, unknown>[] = [];
-    setup({ onCalculation: (body) => requests.push(body), reply: (body) => ({ failure: body.paymentCurrency === "USD" }) });
+    setup({ onCalculation: (body) => requests.push(body), reply: () => ({ failure: true }) });
     await screen.findByText("Adjuntar comprobantes (hasta 5)");
     upload(file("a.png")); fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "USD" } });
     amount("a.png", "1");
+    expect(await screen.findByText("Total en USD: 1.00")).toBeInTheDocument();
+    fireEvent.click(confirm());
     expect(await screen.findByRole("alert")).toHaveTextContent("No pudimos calcular");
-    expect(submit()).toBeDisabled(); expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(submit()).toBeDisabled();
     expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ paymentCurrency: "USD", reportedAmount: "1.00" });
   });
 
-  it("never accepts a stale conversion after a receipt amount changes", async () => {
-    let started: (() => void) | undefined;
-    const requestStarted = new Promise<void>((resolve) => { started = resolve; });
-    let release: (() => void) | undefined;
-    const delayed = new Promise<void>((resolve) => { release = resolve; });
-    setup({ onCalculation: (body) => {
-      if (body.paymentCurrency === "USD" && body.reportedAmount === "1.00") started?.();
-    }, reply: (body) => body.paymentCurrency === "USD" && body.reportedAmount === "1.00"
-      ? { delay: delayed, equivalent: "999.00" } : { equivalent: "3.00" } });
+  it("never accepts a stale total after a receipt amount changes", async () => {
+    setup({});
     await screen.findByText("Adjuntar comprobantes (hasta 5)");
-    upload(file("a.png")); fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "USD" } });
+    upload(file("a.png"));
     amount("a.png", "1");
-    try {
-      await requestStarted;
-      amount("a.png", "2");
-      await screen.findByText("Total en ARS: 3.00");
-      release?.();
-      await waitFor(() => expect(screen.getByText("Total en ARS: 3.00")).toBeInTheDocument());
-    } finally { release?.(); }
+    expect(await screen.findByText("Total en ARS: 1.00")).toBeInTheDocument();
+    amount("a.png", "2");
+    expect(await screen.findByText("Total en ARS: 2.00")).toBeInTheDocument();
+    expect(submit()).toBeDisabled();
   });
 
   it("blocks submission on a failed final query even if the old READY response stays cached", async () => {
@@ -484,15 +448,15 @@ describe("receipt amount payment", () => {
     expect(screen.getByText("comprobante.jpg")).toBeInTheDocument();
   });
 
-  it("keeps the bank account anchored to the trip currency, not a receipt currency", async () => {
+  it("anchors the bank account to the receipts currency, not the trip currency", async () => {
     setup({ installments: [installment({ tripCurrency: "USD", remainingAmount: "99.29", totalDue: 99.29 })],
       tripCurrency: "USD",
-      reply: (body) => body.paymentCurrency === "ARS" ? { equivalent: "10.16" } : {} });
+      reply: (body) => body.paymentCurrency === "ARS" ? { equivalent: "0.01" } : {} });
     await waitFor(() => expect(screen.getByLabelText("Cuenta donde acreditaste el pago")).toHaveValue("2"));
     upload(file("a.png")); amount("a.png", "10.16");
     fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "ARS" } });
-    await screen.findByText("Total en USD: 10.16");
-    expect(screen.getByLabelText("Cuenta donde acreditaste el pago")).toHaveValue("2");
+    await screen.findByText("Total en ARS: 10.16");
+    await waitFor(() => expect(screen.getByLabelText("Cuenta donde acreditaste el pago")).toHaveValue("1"));
     expect(confirm()).not.toBeChecked();
   });
 
@@ -545,33 +509,25 @@ describe("receipt amount payment", () => {
     } finally { vi.useRealTimers(); }
   });
 
-  it("does not leave the conversion verification stuck when the auxiliary quote expires mid-refetch", async () => {
-    let release: (() => void) | undefined;
-    const delayed = new Promise<void>((resolve) => { release = resolve; });
-    let usdCalls = 0;
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      setup({ reply: (body) => {
-        if (body.paymentCurrency !== "USD") return {};
-        usdCalls += 1;
-        // The display quote resolves; the confirmation-time refetch stays in flight.
-        return usdCalls === 1 ? { equivalent: "20.00" } : { delay: delayed, equivalent: "20.00" };
-      } });
-      await screen.findByText("Primera cuota pendiente", { exact: false });
-      upload(file("a.png"));
-      fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "USD" } });
-      amount("a.png", "2");
-      await screen.findByText("Total en ARS: 20.00");
-      fireEvent.click(confirm());
-      await waitFor(() => expect(screen.getByText(/Verificando la cotización/)).toBeInTheDocument());
-
-      await act(async () => { await vi.advanceTimersByTimeAsync(240_001); });
-      await waitFor(() => expect(screen.queryByText(/Verificando la cotización/)).toBeNull());
-      // The expired quote drops the total, so the confirmation block is either gone or unchecked.
-      const checkbox = screen.queryByRole("checkbox", { name: /Confirmo el total/ });
-      if (checkbox) expect(checkbox).not.toBeChecked();
-      expect(submit()).toBeDisabled();
-    } finally { release?.(); vi.useRealTimers(); }
+  it("sends the receipts currency as paymentCurrency when registering a cross-currency payment", async () => {
+    let payment: string | undefined;
+    const requests: Record<string, unknown>[] = [];
+    setup({ installments: [installment({ tripCurrency: "USD", remainingAmount: "99.29", totalDue: 99.29 })],
+      tripCurrency: "USD", onCalculation: (body) => requests.push(body),
+      onPayment: (data) => { payment = data; },
+      reply: (body) => body.paymentCurrency === "ARS" ? { equivalent: "0.01" } : {} });
+    await screen.findByText("Adjuntar comprobantes (hasta 5)");
+    upload(file("a.png"));
+    fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "ARS" } });
+    amount("a.png", "10.16");
+    expect(await screen.findByText("Total en ARS: 10.16")).toBeInTheDocument();
+    fireEvent.click(confirm());
+    await waitFor(() => expect(submit()).toBeEnabled());
+    expect(requests[0]).toMatchObject({ paymentCurrency: "ARS", reportedAmount: "10.16" });
+    fireEvent.submit(submit().closest("form")!);
+    await waitFor(() => expect(payment).toBeDefined());
+    expect(payment).toContain("10.16");
+    expect(payment).toContain("ARS");
   });
 
   it("revokes the previous preview object URL and promotes the next image when the first receipt is removed", async () => {

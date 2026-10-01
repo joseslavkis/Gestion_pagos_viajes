@@ -209,7 +209,10 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
                   {formatMoneyByCurrency(entry.reportedAmount, entry.paymentCurrency)}
                 </div>
                 <div>
-                  <span className={styles.strong}>Equivalente viaje:</span> {entry.amountInTripCurrency}
+                  <span className={styles.strong}>Equivalente imputado al viaje:</span>{" "}
+                  {entry.exchangeRate == null
+                    ? formatMoneyByCurrency(entry.amountInTripCurrency, entry.paymentCurrency)
+                    : `${entry.amountInTripCurrency} (moneda del viaje)`}
                 </div>
                 <div>
                   <span className={styles.strong}>Fecha:</span> {formatDate(entry.reportedPaymentDate)}
