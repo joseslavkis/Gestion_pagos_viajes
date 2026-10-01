@@ -30,19 +30,6 @@ export function centsToMoney(cents: bigint): string | null {
   return `${cents / 100n}.${String(cents % 100n).padStart(2, "0")}`;
 }
 
-export function receiptSubtotals(receipts: ReceiptAmount[]): Record<Currency, string> | null {
-  if (receipts.length < 1 || receipts.length > 5) return null;
-  const sums = { ARS: 0n, USD: 0n };
-  for (const receipt of receipts) {
-    const cents = moneyCents(receipt.amount);
-    if (cents == null || !(receipt.currency in sums)) return null;
-    sums[receipt.currency] += cents;
-  }
-  const ARS = centsToMoney(sums.ARS);
-  const USD = centsToMoney(sums.USD);
-  return ARS != null && USD != null ? { ARS, USD } : null;
-}
-
 export type SingleCurrencyTotal = { currency: Currency; total: string };
 
 /**

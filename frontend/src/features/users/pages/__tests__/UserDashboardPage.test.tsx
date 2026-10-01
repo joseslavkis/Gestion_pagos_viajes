@@ -75,6 +75,11 @@ function amount(name: string, value: string) {
   fireEvent.change(screen.getByLabelText(`Monto de ${name}`), { target: { value } });
 }
 const confirm = () => screen.getByRole("checkbox", { name: /Confirmo el total/ });
+/** A date guaranteed to differ from the initial "today" value of the form. */
+function otherDate(): string {
+  const initial = (screen.getByLabelText("Fecha de pago") as HTMLInputElement).value;
+  return initial.endsWith("01") ? `${initial.slice(0, -2)}02` : `${initial.slice(0, -2)}01`;
+}
 const allocation = (installmentId: number, number: number, amount: string, status: string | null) => ({
   receiptId: null, installmentId, installmentNumber: number, dueDate: `2026-0${number + 5}-25`,
   totalDue: "200.00", paidAmount: "0.00", remainingAmount: "200.00",
@@ -332,7 +337,10 @@ describe("receipt amount payment", () => {
     if (change === "amount") amount("a.png", "11");
     if (change === "currency") fireEvent.change(screen.getByLabelText("Moneda de a.png"), { target: { value: "USD" } });
     if (change === "files") upload(file("b.png"));
-    if (change === "date") fireEvent.change(screen.getByLabelText("Fecha de pago"), { target: { value: "2026-10-01" } });
+    // Must differ from the initial date, otherwise React fires no onChange and
+    // the confirmation is never revoked. Hardcoding a calendar date made this
+    // test silently time-bombed.
+    if (change === "date") fireEvent.change(screen.getByLabelText("Fecha de pago"), { target: { value: otherDate() } });
     if (change === "trip") fireEvent.change(screen.getByLabelText("Seleccioná el viaje"), { target: { value: "88:502" } });
     expect(submit()).toBeDisabled();
     if (screen.queryByRole("checkbox")) expect(confirm()).not.toBeChecked();

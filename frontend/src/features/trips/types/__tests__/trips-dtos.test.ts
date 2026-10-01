@@ -62,6 +62,7 @@ describe("trips-dtos schemas (rollout compatibility)", () => {
       uiStatusCode: "PAID" as const,
       uiStatusLabel: "Pagada",
       uiStatusTone: "green" as const,
+      tripCurrency: "ARS" as const,
     };
 
     const baseRow = {
@@ -144,6 +145,7 @@ describe("trips-dtos schemas (rollout compatibility)", () => {
       uiStatusCode: "UP_TO_DATE" as const,
       uiStatusLabel: "Al día",
       uiStatusTone: "green" as const,
+      tripCurrency: "ARS" as const,
     };
 
     it("ignora claves legacy `fineAmount` incluso si la API las devuelve", () => {
@@ -152,6 +154,17 @@ describe("trips-dtos schemas (rollout compatibility)", () => {
         fineAmount: 0,
       }) as unknown as Record<string, unknown>;
       expect(parsed).not.toHaveProperty("fineAmount");
+    });
+
+    it.each(["ARS", "USD"] as const)("expone tripCurrency %s para formatear importes del viaje", (currency) => {
+      expect(SpreadsheetRowInstallmentDTOSchema.parse({ ...baseInstallment, tripCurrency: currency })).toMatchObject({
+        tripCurrency: currency,
+      });
+    });
+
+    it("rechaza un installment sin tripCurrency conocido", () => {
+      const withoutCurrency = { ...baseInstallment, tripCurrency: undefined };
+      expect(SpreadsheetRowInstallmentDTOSchema.safeParse(withoutCurrency).success).toBe(false);
     });
   });
 });

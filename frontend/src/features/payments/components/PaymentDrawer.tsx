@@ -12,10 +12,11 @@ import styles from "@/features/trips/pages/SpreadsheetPage.module.css";
 import type { SpreadsheetRowDTO, SpreadsheetRowInstallmentDTO } from "@/features/trips/types/trips-dtos";
 import { createGsapMatchMedia, getMotionProfile, gsap, useGSAP } from "@/lib/gsap";
 
-const currencyFormatter = new Intl.NumberFormat("es-AR", {
-  style: "currency",
-  currency: "ARS",
-});
+/** Trip-denominated amounts must be formatted with the trip currency, never
+ *  inferred from the payment currency or from the presence of a rate. */
+function formatTripMoney(amount: number, tripCurrency: "ARS" | "USD"): string {
+  return new Intl.NumberFormat("es-AR", { style: "currency", currency: tripCurrency }).format(amount);
+}
 
 const historyStatusLabels: Record<PaymentHistoryStatus, string> = {
   PENDING: "Pendiente de revisión",
@@ -161,7 +162,8 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
       <aside ref={drawerRef} className={styles.drawer} role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <header className={styles.drawerHeader}>
           <h2 id={titleId} className={styles.drawerTitle}>
-            Cuota {installment.installmentNumber} · {currencyFormatter.format(installment.totalDue)}
+            Cuota {installment.installmentNumber} ·{" "}
+            {formatTripMoney(installment.totalDue, installment.tripCurrency)}
           </h2>
           <button type="button" className={styles.drawerCloseButton} onClick={onClose}>
             Cerrar
@@ -183,7 +185,10 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
                 Nro cuota: <span className={styles.strong}>{installment.installmentNumber}</span>
               </div>
               <div>
-                Total: <span className={styles.strong}>{currencyFormatter.format(installment.totalDue)}</span>
+                Total:{" "}
+                <span className={styles.strong}>
+                  {formatTripMoney(installment.totalDue, installment.tripCurrency)}
+                </span>
               </div>
               <div>
                 Vencimiento: <span className={styles.strong}>{formatDate(installment.dueDate)}</span>
@@ -210,9 +215,7 @@ export function PaymentDrawer({ installment, row, onClose }: PaymentDrawerProps)
                 </div>
                 <div>
                   <span className={styles.strong}>Equivalente imputado al viaje:</span>{" "}
-                  {entry.exchangeRate == null
-                    ? formatMoneyByCurrency(entry.amountInTripCurrency, entry.paymentCurrency)
-                    : `${entry.amountInTripCurrency} (moneda del viaje)`}
+                  {formatTripMoney(Number.parseFloat(entry.amountInTripCurrency), installment.tripCurrency)}
                 </div>
                 <div>
                   <span className={styles.strong}>Fecha:</span> {formatDate(entry.reportedPaymentDate)}

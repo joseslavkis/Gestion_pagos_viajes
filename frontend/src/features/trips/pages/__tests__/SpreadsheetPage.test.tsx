@@ -64,6 +64,7 @@ describe("SpreadsheetPage", () => {
                 uiStatusCode: "UP_TO_DATE",
                 uiStatusLabel: "Al día",
                 uiStatusTone: "green",
+                tripCurrency: "ARS",
               },
             ],
           },
