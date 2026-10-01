@@ -847,6 +847,11 @@ export function UserDashboardPage() {
                     : "Adjuntar comprobantes (hasta 5)"}
                 </p>
               </label>
+              {receipts.length === 0 ? (
+                <p className={styles.helperText}>
+                  Cargá el comprobante y elegí la moneda que figura en él. La cuenta se filtra según esa moneda.
+                </p>
+              ) : null}
               {receipts.length > 0 ? (
                 <ul className={styles.receiptList}>
                   {receipts.map((receipt) => (
