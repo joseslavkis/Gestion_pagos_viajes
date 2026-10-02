@@ -102,6 +102,7 @@ describe("payment decimal contracts", () => {
       studentName: null,
       studentDni: null,
       installments: [installment],
+      source: "CUSTOMER_SUBMISSION",
     });
 
     expect(result.success).toBe(true);
@@ -167,6 +168,7 @@ describe("payment decimal contracts", () => {
       bankAccountId: 1,
       bankAccountDisplayName: "Account",
       bankAccountAlias: "ACCOUNT",
+      source: "CUSTOMER_SUBMISSION",
     });
 
     expect(pending.exchangeRate).toBe("1015.50");

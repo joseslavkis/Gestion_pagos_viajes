@@ -10,6 +10,13 @@ import styles from "./AdminUserDetailPage.module.css";
 const arsFormatter = new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" });
 const usdFormatter = new Intl.NumberFormat("es-AR", { style: "currency", currency: "USD" });
 
+const paymentMethodLabels: Record<string, string> = {
+  BANK_TRANSFER: "Transferencia bancaria",
+  CASH: "Efectivo",
+  DEPOSIT: "Depósito",
+  OTHER: "Otro",
+};
+
 type AdminUserDetailPageProps = {
   userId: number;
 };
@@ -157,17 +164,28 @@ export function AdminUserDetailPage({ userId }: AdminUserDetailPageProps) {
                             </div>
                             <div>
                               <span className={styles.identityLabel}>Método</span>
-                              <strong>{payment.paymentMethod}</strong>
+                              <strong>
+                                {payment.source === "ADMIN_MANUAL"
+                                  ? "Imputación manual"
+                                  : (payment.paymentMethod
+                                      ? (paymentMethodLabels[payment.paymentMethod] ?? payment.paymentMethod)
+                                      : "No informado")}
+                              </strong>
                             </div>
-                            <div>
-                              <span className={styles.identityLabel}>Cuenta acreditada</span>
-                              <strong>{payment.bankAccountDisplayName ?? "Sin cuenta"}</strong>
-                            </div>
+                            {payment.source === "ADMIN_MANUAL" ? null : (
+                              <div>
+                                <span className={styles.identityLabel}>Cuenta acreditada</span>
+                                <strong>{payment.bankAccountDisplayName ?? "Sin cuenta"}</strong>
+                              </div>
+                            )}
                           </div>
+                          {payment.source === "ADMIN_MANUAL" && payment.manualReason ? (
+                            <p className={styles.observation}>Motivo: {payment.manualReason}</p>
+                          ) : null}
                           {payment.installments.length > 0 ? (
                             <p className={styles.observation}>Imputación: {formatInstallments(payment.installments)}</p>
                           ) : null}
-                          {payment.adminObservation ? (
+                          {payment.adminObservation && payment.source !== "ADMIN_MANUAL" ? (
                             <p className={styles.observation}>Observación: {payment.adminObservation}</p>
                           ) : null}
                           <AttachmentList receipt={payment} className={styles.attachmentLink} />

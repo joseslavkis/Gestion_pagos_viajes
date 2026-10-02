@@ -87,6 +87,7 @@ function buildAdminUserDetailResponse(userId: number) {
             status: "APPROVED",
           },
         ],
+        source: "CUSTOMER_SUBMISSION",
       },
     ],
   };

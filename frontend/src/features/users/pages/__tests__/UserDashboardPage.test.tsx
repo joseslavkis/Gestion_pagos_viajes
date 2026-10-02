@@ -26,6 +26,7 @@ const submission = {
   paymentMethod: "BANK_TRANSFER", fileKey: "", adminObservation: null, bankAccountId: 1,
   bankAccountDisplayName: "ICBC - ARS", bankAccountAlias: "ICBC.ARS", tripId: 77, tripName: "Mendoza",
   tripCurrency: "ARS", studentId: 501, studentName: "Martina", studentDni: "45678901", installments: [],
+  source: "CUSTOMER_SUBMISSION",
 };
 
 type Reply = { status?: string; equivalent?: string | null; token?: string | null; delay?: Promise<void>;

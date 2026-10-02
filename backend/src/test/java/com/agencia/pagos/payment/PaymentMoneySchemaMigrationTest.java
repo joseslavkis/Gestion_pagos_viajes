@@ -43,6 +43,8 @@ class PaymentMoneySchemaMigrationTest {
     private static final Path PREFLIGHT = Path.of("../scripts/check-payment-schema-readiness.sh");
     private static final Path ATTACHMENT_MIGRATION = Path.of("sql/20260928_payment_submission_attachments.sql");
     private static final Path ATTACHMENT_READINESS = Path.of("sql/payment_submission_attachments_readiness.sql");
+    private static final Path MANUAL_MIGRATION = Path.of("sql/20261002_manual_imputation.sql");
+    private static final Path MANUAL_READINESS = Path.of("sql/manual_imputation_schema_readiness.sql");
     private static final Path WORKFLOW = Path.of("../.github/workflows/ci-cd.yml");
 
     @TempDir
@@ -219,6 +221,7 @@ class PaymentMoneySchemaMigrationTest {
                 query="$(cat)"
                 case "$query" in
                   *to_regclass*) name=attachments; state="$MOCK_ATTACHMENT_STATE" ;;
+                  *manual_reason*) name=manual; state="$MOCK_MANUAL_STATE" ;;
                   *) name=money; state="$MOCK_MONEY_STATE" ;;
                 esac
                 printf '%s\\n' "$name" >> "$MOCK_QUERY_LOG"
@@ -226,15 +229,18 @@ class PaymentMoneySchemaMigrationTest {
                 printf '%s\\n' "$state"
                 """);
         assertThat(docker.toFile().setExecutable(true)).isTrue();
-        assertThat(runPreflight("READY", "NOT_READY")).isEqualTo(1);
-        assertThat(runPreflight("NOT_READY", "READY")).isEqualTo(1);
-        assertThat(runPreflight("READY", "ERROR")).isEqualTo(1);
-        assertThat(runPreflight("ERROR", "READY")).isEqualTo(1);
-        assertThat(runPreflight("READY", "READY\nREADY")).isEqualTo(1);
-        assertThat(runPreflight("READY", "READY")).isZero();
+        assertThat(runPreflight("READY", "NOT_READY", "READY")).isEqualTo(1);
+        assertThat(runPreflight("NOT_READY", "READY", "READY")).isEqualTo(1);
+        assertThat(runPreflight("READY", "READY", "NOT_READY")).isEqualTo(1);
+        assertThat(runPreflight("READY", "ERROR", "READY")).isEqualTo(1);
+        assertThat(runPreflight("READY", "READY", "ERROR")).isEqualTo(1);
+        assertThat(runPreflight("ERROR", "READY", "READY")).isEqualTo(1);
+        assertThat(runPreflight("READY", "READY\nREADY", "READY")).isEqualTo(1);
+        assertThat(runPreflight("READY", "READY", "READY")).isZero();
         String script = Files.readString(PREFLIGHT);
         assertThat(script).contains("payment_money_schema_readiness.sql")
                 .contains("payment_submission_attachments_readiness.sql")
+                .contains("manual_imputation_schema_readiness.sql")
                 .contains("psql -v ON_ERROR_STOP=1")
                 .doesNotContain("20260917_payment_money_invariants.sql");
 
@@ -293,8 +299,82 @@ class PaymentMoneySchemaMigrationTest {
     }
 
     @Test
-    void migratedSchemaValidatesWithProductionBackendMappings() throws Exception {
+    void manualMigrationBackfillsSourceAndEnforcesInvariants() throws Exception {
         try (Connection connection = dataSource.getConnection(); Statement sql = connection.createStatement()) {
+            sql.execute("CREATE SCHEMA migration_manual_test");
+            sql.execute("SET search_path TO migration_manual_test");
+            sql.execute("""
+                    CREATE TABLE payment_submissions (
+                        id BIGINT PRIMARY KEY, trip_id BIGINT NOT NULL,
+                        payment_currency VARCHAR(3) NOT NULL,
+                        reported_amount NUMERIC(10,2) NOT NULL,
+                        amount_in_trip_currency NUMERIC(10,2) NOT NULL,
+                        status VARCHAR(16) NOT NULL,
+                        payment_method VARCHAR(20) NOT NULL)
+                    """);
+            sql.execute("""
+                    INSERT INTO payment_submissions
+                        (id, trip_id, payment_currency, reported_amount,
+                         amount_in_trip_currency, status, payment_method)
+                    VALUES (1, 1, 'ARS', 10, 10, 'PENDING', 'BANK_TRANSFER')
+                    """);
+            sql.execute(Files.readString(MANUAL_MIGRATION));
+
+            // Backfill: históricos → CUSTOMER_SUBMISSION, source NOT NULL.
+            try (ResultSet rows = sql.executeQuery(
+                    "SELECT source FROM payment_submissions WHERE id = 1")) {
+                assertThat(rows.next()).isTrue();
+                assertThat(rows.getString(1)).isEqualTo("CUSTOMER_SUBMISSION");
+            }
+            assertThat(manualReadiness(sql)).isEqualTo("READY");
+
+            // source inválido y manual PENDING se rechazan a nivel DB.
+            sql.execute("BEGIN");
+            sql.execute("SAVEPOINT manual_invariants");
+            assertThatThrownBy(() -> sql.execute("""
+                    INSERT INTO payment_submissions
+                        (id, trip_id, payment_currency, reported_amount,
+                         amount_in_trip_currency, status, payment_method, source)
+                    VALUES (2, 1, 'ARS', 10, 10, 'PENDING', 'BANK_TRANSFER', 'WRONG')
+                    """)).isInstanceOf(SQLException.class)
+                    .extracting(error -> ((SQLException) error).getSQLState()).isEqualTo("23514");
+            sql.execute("ROLLBACK TO SAVEPOINT manual_invariants");
+            assertThatThrownBy(() -> sql.execute("""
+                    INSERT INTO payment_submissions
+                        (id, trip_id, payment_currency, reported_amount,
+                         amount_in_trip_currency, status, payment_method, source)
+                    VALUES (3, 1, 'ARS', 10, 10, 'PENDING', NULL, 'ADMIN_MANUAL')
+                    """)).isInstanceOf(SQLException.class)
+                    .extracting(error -> ((SQLException) error).getSQLState()).isEqualTo("23514");
+            sql.execute("ROLLBACK TO SAVEPOINT manual_invariants");
+            // Customer sin método se rechaza; manual sin método es válido.
+            assertThatThrownBy(() -> sql.execute("""
+                    INSERT INTO payment_submissions
+                        (id, trip_id, payment_currency, reported_amount,
+                         amount_in_trip_currency, status, payment_method, source)
+                    VALUES (4, 1, 'ARS', 10, 10, 'PENDING', NULL, 'CUSTOMER_SUBMISSION')
+                    """)).isInstanceOf(SQLException.class)
+                    .extracting(error -> ((SQLException) error).getSQLState()).isEqualTo("23514");
+            sql.execute("ROLLBACK TO SAVEPOINT manual_invariants");
+            sql.execute("""
+                    INSERT INTO payment_submissions
+                        (id, trip_id, payment_currency, reported_amount,
+                         amount_in_trip_currency, status, payment_method, source, manual_reason)
+                    VALUES (5, 1, 'ARS', 10, 10, 'RESOLVED', NULL, 'ADMIN_MANUAL', 'Efectivo')
+                    """);
+            sql.execute("COMMIT");
+            assertThat(manualReadiness(sql)).isEqualTo("READY");
+
+            // El readiness detecta la falta del nuevo CHECK y la migración es re-ejecutable.
+            sql.execute("ALTER TABLE payment_submissions DROP CONSTRAINT ck_payment_submissions_customer_requires_method");
+            assertThat(manualReadiness(sql)).isEqualTo("NOT_READY");
+            sql.execute(Files.readString(MANUAL_MIGRATION));
+            assertThat(manualReadiness(sql)).isEqualTo("READY");
+        }
+    }
+
+    @Test
+    void migratedSchemaValidatesWithProductionBackendMappings() throws Exception {        try (Connection connection = dataSource.getConnection(); Statement sql = connection.createStatement()) {
             sql.execute("SET search_path TO public");
             sql.execute(Files.readString(MIGRATION));
         }
@@ -377,7 +457,7 @@ class PaymentMoneySchemaMigrationTest {
         return findings;
     }
 
-    private int runPreflight(String money, String attachments) throws Exception {
+    private int runPreflight(String money, String attachments, String manual) throws Exception {
         Path log = temporaryDirectory.resolve("queries.log");
         Files.deleteIfExists(log);
         ProcessBuilder process = new ProcessBuilder("bash", PREFLIGHT.toAbsolutePath().toString())
@@ -386,19 +466,31 @@ class PaymentMoneySchemaMigrationTest {
         process.environment().put("PATH", temporaryDirectory + ":" + process.environment().get("PATH"));
         process.environment().put("MOCK_MONEY_STATE", money);
         process.environment().put("MOCK_ATTACHMENT_STATE", attachments);
+        process.environment().put("MOCK_MANUAL_STATE", manual);
         process.environment().put("MOCK_QUERY_LOG", log.toString());
         Process child = process.start();
         String output = new String(child.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         int exit = child.waitFor();
-        assertThat(output).contains(money.equals("READY") && attachments.equals("READY")
+        assertThat(output).contains(money.equals("READY") && attachments.equals("READY") && manual.equals("READY")
                 ? "Payment schema preflight passed" : "Payment schema is incompatible");
-        assertThat(Files.readAllLines(log)).containsExactlyElementsOf(
-                money.equals("READY") ? List.of("money", "attachments") : List.of("money"));
+        List<String> expectedLog = money.equals("READY")
+                ? (attachments.equals("READY") ? List.of("money", "attachments", "manual") : List.of("money", "attachments"))
+                : List.of("money");
+        assertThat(Files.readAllLines(log)).containsExactlyElementsOf(expectedLog);
         return exit;
     }
 
     private static String attachmentReadiness(Statement sql) throws Exception {
         try (ResultSet result = sql.executeQuery(Files.readString(ATTACHMENT_READINESS))) {
+            assertThat(result.next()).isTrue();
+            String state = result.getString(1);
+            assertThat(result.next()).isFalse();
+            return state;
+        }
+    }
+
+    private static String manualReadiness(Statement sql) throws Exception {
+        try (ResultSet result = sql.executeQuery(Files.readString(MANUAL_READINESS))) {
             assertThat(result.next()).isTrue();
             String state = result.getString(1);
             assertThat(result.next()).isFalse();

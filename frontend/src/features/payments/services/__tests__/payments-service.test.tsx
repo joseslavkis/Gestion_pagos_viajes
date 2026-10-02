@@ -86,6 +86,7 @@ const pendingSubmission = {
   studentName: null,
   studentDni: null,
   installments: [],
+  source: "CUSTOMER_SUBMISSION",
 };
 
 describe("payments-service", () => {

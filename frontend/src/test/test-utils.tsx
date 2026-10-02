@@ -36,7 +36,9 @@ export function renderWithProviders(ui: ReactElement, role: "ROLE_ADMIN" | "ROLE
 
   const queryClient = new QueryClient({
     mutationCache: new MutationCache({
-      onError: (error) => {
+      onError: (error, _variables, _context, mutation) => {
+        const meta = mutation?.options?.meta as { silentErrorToast?: boolean } | undefined;
+        if (meta?.silentErrorToast) return;
         const message = error instanceof Error ? error.message : "Ocurrió un error inesperado al procesar tu solicitud.";
         toast.error(message);
       },

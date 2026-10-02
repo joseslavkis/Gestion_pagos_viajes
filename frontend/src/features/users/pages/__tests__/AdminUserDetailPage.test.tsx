@@ -85,6 +85,35 @@ describe("AdminUserDetailPage", () => {
                   status: "APPROVED",
                 },
               ],
+              source: "CUSTOMER_SUBMISSION",
+              manualReason: null,
+            },
+            {
+              submissionId: 502,
+              status: "APPROVED",
+              reportedAmount: "100.00",
+              approvedAmount: "100.00",
+              rejectedAmount: "0.00",
+              paymentCurrency: "ARS",
+              exchangeRate: null,
+              amountInTripCurrency: "100.00",
+              approvedAmountInTripCurrency: "100.00",
+              reportedPaymentDate: "2026-04-03",
+              paymentMethod: null,
+              fileKey: "",
+              adminObservation: "Efectivo",
+              bankAccountId: null,
+              bankAccountDisplayName: null,
+              bankAccountAlias: null,
+              tripId: 9,
+              tripName: "Viaje a Mendoza",
+              tripCurrency: "ARS",
+              studentId: 88,
+              studentName: "Tomas Benitez",
+              studentDni: "44555666",
+              installments: [],
+              source: "ADMIN_MANUAL",
+              manualReason: "Efectivo",
             },
           ],
         }),
@@ -100,5 +129,64 @@ describe("AdminUserDetailPage", () => {
     expect(screen.getAllByText(/Pago verificado/)).toHaveLength(2);
     expect(screen.getByText("Pago #501")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Ver comprobante adjunto 1" })).toBeInTheDocument();
+    // Método con etiqueta legible, nunca el enum crudo.
+    expect(screen.getByText("Transferencia bancaria")).toBeInTheDocument();
+  });
+
+  it("muestra la imputación manual sin duplicar motivo ni fingir cuenta", async () => {
+    server.use(
+      http.get("http://localhost:30002/api/v1/users/admin/12/detail", () =>
+        HttpResponse.json({
+          id: 12,
+          email: "clara@test.com",
+          name: "Clara",
+          lastname: "Benitez",
+          dni: "33444555",
+          phone: "1133344455",
+          role: "USER",
+          students: [],
+          installments: [],
+          payments: [
+            {
+              submissionId: 502,
+              status: "APPROVED",
+              reportedAmount: "100.00",
+              approvedAmount: "100.00",
+              rejectedAmount: "0.00",
+              paymentCurrency: "ARS",
+              exchangeRate: null,
+              amountInTripCurrency: "100.00",
+              approvedAmountInTripCurrency: "100.00",
+              reportedPaymentDate: "2026-04-03",
+              paymentMethod: null,
+              fileKey: "",
+              adminObservation: "Efectivo",
+              bankAccountId: null,
+              bankAccountDisplayName: null,
+              bankAccountAlias: null,
+              tripId: 9,
+              tripName: "Viaje a Mendoza",
+              tripCurrency: "ARS",
+              studentId: 88,
+              studentName: "Tomas Benitez",
+              studentDni: "44555666",
+              installments: [],
+              source: "ADMIN_MANUAL",
+              manualReason: "Efectivo",
+            },
+          ],
+        }),
+      ),
+    );
+
+    renderWithProviders(<AdminUserDetailPage userId={12} />, "ROLE_ADMIN");
+
+    expect(await screen.findByText("Pago #502")).toBeInTheDocument();
+    expect(screen.getByText("Imputación manual")).toBeInTheDocument();
+    // Motivo una sola vez aunque adminObservation traiga el mismo texto.
+    expect(screen.getAllByText(/Efectivo/)).toHaveLength(1);
+    // Sin fila de cuenta para manuales.
+    expect(screen.queryByText("Cuenta acreditada")).not.toBeInTheDocument();
+    expect(screen.queryByText("Observación:")).not.toBeInTheDocument();
   });
 });

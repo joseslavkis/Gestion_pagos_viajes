@@ -175,6 +175,7 @@ describe("Admin trips and payments routes integration", () => {
           studentName: "Alumno Test",
           studentDni: "45678901",
           installments: [],
+          source: "CUSTOMER_SUBMISSION",
         });
       }),
     );

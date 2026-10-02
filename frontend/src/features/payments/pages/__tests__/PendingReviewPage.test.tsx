@@ -84,6 +84,7 @@ function approvedSubmissionResponse(overrides: Record<string, unknown>) {
     studentName: "Alumno Test",
     studentDni: "45678901",
     installments: [],
+    source: "CUSTOMER_SUBMISSION",
     ...overrides,
   };
 }
@@ -302,6 +303,7 @@ describe("PendingReviewPage", () => {
           studentName: "Alumno Test",
           studentDni: "45678901",
           installments: [],
+          source: "CUSTOMER_SUBMISSION",
         });
       }),
     );
@@ -366,6 +368,7 @@ describe("PendingReviewPage", () => {
           studentName: "Alumno Test",
           studentDni: "45678901",
           installments: [],
+          source: "CUSTOMER_SUBMISSION",
         });
       }),
     );

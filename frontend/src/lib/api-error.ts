@@ -1,16 +1,18 @@
-export type ApiErrorBody = { errors: string[] } | { message: string } | string;
+export type ApiErrorBody = { errors: string[] } | { message: string; code?: string } | string;
 
 export class ApiError extends Error {
   public status: number;
   public rawMessage: string;
   public fieldErrors: string[];
+  public code?: string;
 
-  constructor(status: number, message: string, rawMessage: string = "", fieldErrors: string[] = []) {
+  constructor(status: number, message: string, rawMessage = "", fieldErrors: string[] = [], code?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.rawMessage = rawMessage;
     this.fieldErrors = fieldErrors;
+    this.code = code;
   }
 }
 
@@ -48,6 +50,42 @@ function translateBackendMessage(message: string): string {
       "El usuario no fue encontrado.",
     "Installment not found":
       "La cuota no fue encontrada.",
+    "Hay pagos pendientes de aprobación. Revisalos antes de realizar una nueva imputación.":
+      "Hay pagos pendientes de aprobación. Revisalos antes de realizar una nueva imputación.",
+    "La imputación debe comenzar desde la primera cuota pendiente de pago.":
+      "La imputación debe comenzar desde la primera cuota pendiente de pago.",
+    "La imputación debe comenzar desde la cuota #":
+      "La imputación debe comenzar desde la cuota indicada, que es la primera cuota pendiente de pago.",
+    "Esta cuota ya está completamente pagada.":
+      "Esta cuota ya está completamente pagada.",
+    "Este viaje no tiene saldo pendiente.":
+      "Este viaje no tiene saldo pendiente.",
+    "El monto a imputar debe ser mayor a cero.":
+      "El monto a imputar debe ser mayor a cero.",
+    "El monto debe tener como máximo dos decimales.":
+      "El monto debe tener como máximo dos decimales.",
+    "El monto supera el máximo permitido de $ 99.999.999,99.":
+      "El monto supera el máximo permitido de $ 99.999.999,99.",
+    "El monto ingresado supera el saldo pendiente del viaje.":
+      "El monto ingresado supera el saldo pendiente del viaje.",
+    "El saldo cambió desde la última previsualización. Actualizá la imputación e intentá nuevamente.":
+      "El saldo cambió desde la última previsualización. Actualizá la imputación e intentá nuevamente.",
+    "La fecha de pago no puede ser futura.":
+      "La fecha de pago no puede ser futura.",
+    "No se pudo obtener la cotización para la fecha seleccionada. Intentá nuevamente.":
+      "No se pudo obtener la cotización para la fecha seleccionada. Intentá nuevamente.",
+    "La previsualización venció. Volvé a calcular la imputación.":
+      "La previsualización venció. Volvé a calcular la imputación.",
+    "La previsualización no corresponde a los datos ingresados. Volvé a calcular la imputación.":
+      "La previsualización no corresponde a los datos ingresados. Volvé a calcular la imputación.",
+    "Solo se admite un comprobante opcional por imputación manual":
+      "Solo se admite un comprobante opcional por imputación manual.",
+    "El motivo no puede superar los 500 caracteres":
+      "El motivo no puede superar los 500 caracteres.",
+    "El monto informado es demasiado bajo para imputarse":
+      "El monto informado es demasiado bajo para imputarse.",
+    "No tiene permisos para realizar una imputación manual":
+      "No tiene permisos para realizar una imputación manual.",
   };
 
   // Buscar coincidencia exacta primero
@@ -69,6 +107,7 @@ export async function handleApiResponse(response: Response): Promise<never> {
   const status = response.status;
   let rawMessage = "";
   let fieldErrors: string[] = [];
+  let code: string | undefined;
 
   try {
     const errorBody = await response.text();
@@ -84,6 +123,9 @@ export async function handleApiResponse(response: Response): Promise<never> {
           }
         } else if ("message" in json && typeof json.message === "string") {
           rawMessage = json.message;
+          if (typeof json.code === "string" && json.code.length > 0) {
+            code = json.code;
+          }
         }
       }
     } catch {
@@ -130,5 +172,5 @@ export async function handleApiResponse(response: Response): Promise<never> {
 
   // Si el backend nos da un mensaje legible, podríamos usarlo si es seguro,
   // pero generalmente para 409 o 401 devolvemos nuestro friendly message.
-  throw new ApiError(status, userFriendlyMessage, rawMessage, fieldErrors);
+  throw new ApiError(status, userFriendlyMessage, rawMessage, fieldErrors, code);
 }

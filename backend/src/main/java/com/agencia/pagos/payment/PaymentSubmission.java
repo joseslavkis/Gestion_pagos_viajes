@@ -104,12 +104,19 @@ public class PaymentSubmission {
     private String calculationVersion;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    @Column(nullable = true)
     private PaymentMethod paymentMethod;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private PaymentSubmissionStatus status = PaymentSubmissionStatus.PENDING;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 32)
+    private PaymentSubmissionSource source = PaymentSubmissionSource.CUSTOMER_SUBMISSION;
+
+    @Column(name = "manual_reason", length = 500)
+    private String manualReason;
 
     @Column(nullable = false, columnDefinition = "TEXT")
     private String fileKey;
@@ -128,6 +135,9 @@ public class PaymentSubmission {
     void onPersist() {
         if (status == null) {
             status = PaymentSubmissionStatus.PENDING;
+        }
+        if (source == null) {
+            source = PaymentSubmissionSource.CUSTOMER_SUBMISSION;
         }
         if (fileKey == null) {
             fileKey = "";
@@ -294,6 +304,22 @@ public class PaymentSubmission {
 
     public void setStatus(PaymentSubmissionStatus status) {
         this.status = status;
+    }
+
+    public PaymentSubmissionSource getSource() {
+        return source;
+    }
+
+    public void setSource(PaymentSubmissionSource source) {
+        this.source = source;
+    }
+
+    public String getManualReason() {
+        return manualReason;
+    }
+
+    public void setManualReason(String manualReason) {
+        this.manualReason = manualReason;
     }
 
     public String getFileKey() {

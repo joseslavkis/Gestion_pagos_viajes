@@ -19,6 +19,18 @@ public interface InstallmentRepository extends JpaRepository<Installment, Long> 
     @Query("SELECT i FROM Installment i JOIN FETCH i.trip WHERE i.id = :id")
     Optional<Installment> findByIdWithTrip(@Param("id") Long id);
 
+    /**
+     * Resuelve la clave de inscripción de una cuota sin cargar entidades.
+     * Ver {@link InstallmentScope}: usar esto para descubrir qué filas
+     * bloquear antes de adquirir locks pesimistas.
+     */
+    @Query("""
+        SELECT NEW com.agencia.pagos.trip.InstallmentScope(i.trip.id, i.user.id, i.student.id)
+        FROM Installment i
+        WHERE i.id = :id
+        """)
+    Optional<InstallmentScope> findScopeById(@Param("id") Long id);
+
     @Query("SELECT i FROM Installment i JOIN FETCH i.trip JOIN FETCH i.user LEFT JOIN FETCH i.student WHERE i.id = :id")
     Optional<Installment> findByIdWithTripUserAndStudent(@Param("id") Long id);
 

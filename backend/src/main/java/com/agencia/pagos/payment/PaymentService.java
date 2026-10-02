@@ -175,7 +175,8 @@ public class PaymentService {
                 reportedAmount,
                 dto.reportedPaymentDate(),
                 quote,
-                PaymentCalculationIntent.MANUAL
+                PaymentCalculationIntent.MANUAL,
+                plan
         );
         String previewToken = paymentPreviewTokenService.issueToken(snapshot);
         return toPreviewDTO(selection.anchorInstallment(), dto.reportedPaymentDate(), plan, quote, previewToken);
@@ -253,6 +254,8 @@ public class PaymentService {
         } catch (PaymentBalanceExceededException exceeded) {
             BigDecimal amountInTripCurrency = paymentMoneyPolicy.convertPaymentToTripCurrency(
                     reportedAmount, tripCurrency, dto.paymentCurrency(), exchangeRate);
+            // El mensaje es visible en UI: texto de negocio (los números
+            // viajan en maxAllowedAmount/tripCurrencyResidual, no en el texto).
             return new PaymentCalculationResponseDTO(
                     PaymentCalculationStatus.AMOUNT_EXCEEDS_BALANCE,
                     dto.intent(),
@@ -275,7 +278,7 @@ public class PaymentService {
                     PaymentPreviewTokenService.CURRENT_CALCULATION_VERSION,
                     null,
                     List.of(),
-                    exceeded.getMessage()
+                    "El monto ingresado supera el saldo pendiente del viaje."
             );
         }
         paymentAllocationPlanner.assertConservation(plan);
@@ -286,7 +289,8 @@ public class PaymentService {
                 plan.reportedAmount(),
                 dto.reportedPaymentDate(),
                 quote,
-                dto.intent()
+                dto.intent(),
+                plan
         );
         String previewToken = paymentPreviewTokenService.issueToken(snapshot);
         BigDecimal residual = calculationBalance.subtract(plan.amountInTripCurrency())
@@ -544,6 +548,8 @@ public class PaymentService {
         submission.setCalculationVersion(PaymentPreviewTokenService.CURRENT_CALCULATION_VERSION);
         submission.setPaymentMethod(paymentMethod);
         submission.setStatus(PaymentSubmissionStatus.PENDING);
+        submission.setSource(PaymentSubmissionSource.CUSTOMER_SUBMISSION);
+        submission.setManualReason(null);
         List<String> written = new ArrayList<>();
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
@@ -1153,7 +1159,8 @@ public class PaymentService {
             BigDecimal reportedAmount,
             LocalDate reportedPaymentDate,
             ExchangeRateQuote quote,
-            PaymentCalculationIntent intent
+            PaymentCalculationIntent intent,
+            PaymentAllocationPlanner.PlanResult confirmedPlan
     ) {
         return new PaymentPreviewTokenService.PreviewSnapshot(
                 user.getId(),
@@ -1168,7 +1175,9 @@ public class PaymentService {
                 quote == null ? null : quote.provider(),
                 quote == null ? null : quote.providerTimestamp(),
                 intent,
-                PaymentPreviewTokenService.CURRENT_CALCULATION_VERSION
+                PaymentPreviewTokenService.CURRENT_CALCULATION_VERSION,
+                PaymentAllocationPlanner.planFingerprint(confirmedPlan),
+                confirmedPlan.totalPendingAmountInTripCurrency()
         );
     }
 
@@ -1308,7 +1317,11 @@ public class PaymentService {
                 StudentNameFormatter.displayName(submission.getStudent()),
                 submission.getStudent() != null ? submission.getStudent().getDni() : null,
                 installments,
-                attachmentReferences(submission)
+                attachmentReferences(submission),
+                submission.getSource() != null
+                        ? submission.getSource()
+                        : PaymentSubmissionSource.CUSTOMER_SUBMISSION,
+                submission.getManualReason()
         );
     }
 
@@ -1432,7 +1445,9 @@ public class PaymentService {
                 resolveBankAccountId(receipt),
                 resolveBankAccountDisplayName(receipt),
                 resolveBankAccountAlias(receipt),
-                references
+                references,
+                PaymentSubmissionSource.CUSTOMER_SUBMISSION,
+                null
         );
     }
 
@@ -1461,7 +1476,11 @@ public class PaymentService {
                 submission.getBankAccount() != null ? submission.getBankAccount().getId() : null,
                 submission.getBankAccount() != null ? formatBankAccountDisplay(submission.getBankAccount()) : null,
                 submission.getBankAccount() != null ? submission.getBankAccount().getAlias() : null,
-                attachmentReferences(submission)
+                attachmentReferences(submission),
+                submission.getSource() != null
+                        ? submission.getSource()
+                        : PaymentSubmissionSource.CUSTOMER_SUBMISSION,
+                submission.getManualReason()
         );
     }
 
@@ -1563,7 +1582,9 @@ public class PaymentService {
                 StudentNameFormatter.displayName(student),
                 student != null ? student.getDni() : null,
                 sortedReceipts.stream().map(this::toLegacyInstallmentDTO).toList(),
-                references
+                references,
+                PaymentSubmissionSource.CUSTOMER_SUBMISSION,
+                null
         );
     }
 
