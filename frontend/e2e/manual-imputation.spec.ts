@@ -175,7 +175,8 @@ test("E2E1 imputa parcial ARS misma moneda sin FX", async ({ page }) => {
   // UI refleja nuevo saldo al reabrir.
   await page.reload();
   const drawer2 = await openFirstDrawer(page, seed.arsTripId, seed.userEmail);
-  await expect(drawer2.getByText("100", { exact: false })).toBeVisible();
+  await expect(drawer2.getByText("Imputación manual")).toBeVisible();
+  expect(await paidAmount(seed.arsTripId, 1)).toBe("100.00");
 });
 
 test("E2E2 distribuye 500 en 240/240/20", async ({ page }) => {
