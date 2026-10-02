@@ -56,6 +56,23 @@ $$;
 ALTER TABLE payment_submissions
     ALTER COLUMN payment_method DROP NOT NULL;
 
+-- Pero el método sigue siendo obligatorio para customer submissions: solo el
+-- manual puede no informar método. Los históricos tienen método (la columna
+-- era NOT NULL), así que el CHECK validado es seguro.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'payment_submissions'::regclass
+          AND conname = 'ck_payment_submissions_customer_requires_method'
+    ) THEN
+        ALTER TABLE payment_submissions
+            ADD CONSTRAINT ck_payment_submissions_customer_requires_method
+            CHECK (source = 'ADMIN_MANUAL' OR payment_method IS NOT NULL);
+    END IF;
+END
+$$;
+
 DO $$
 BEGIN
     IF NOT EXISTS (

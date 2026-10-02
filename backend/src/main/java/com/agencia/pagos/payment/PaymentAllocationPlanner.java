@@ -50,6 +50,29 @@ public class PaymentAllocationPlanner {
     public record PaymentLimit(BigDecimal balanceInTripCurrency, BigDecimal maxAllowedAmount) {
     }
 
+    /**
+     * Representación canónica del plan financiero confirmado: una línea
+     * {@code installmentId:montoEnMonedaDelViaje} por cuota afectada, ordenada
+     * por orden de imputación. Permite comparar, bajo lock y sin estado
+     * server-side, que el plan a ejecutar sea exactamente el previsualizado.
+     */
+    public static String planFingerprint(PlanResult plan) {
+        if (plan == null || plan.allocations() == null || plan.allocations().isEmpty()) {
+            throw new IllegalArgumentException("El plan confirmado no contiene imputaciones");
+        }
+        return plan.allocations().stream()
+                .sorted(Comparator.comparingInt(PlannedAllocation::allocationOrder))
+                .map(allocation -> {
+                    if (allocation.installment() == null || allocation.installment().getId() == null) {
+                        throw new IllegalArgumentException("El plan confirmado no contiene imputaciones");
+                    }
+                    return allocation.installment().getId() + ":"
+                            + allocation.amountInTripCurrency().toPlainString();
+                })
+                .reduce((left, right) -> left + ";" + right)
+                .orElseThrow(() -> new IllegalArgumentException("El plan confirmado no contiene imputaciones"));
+    }
+
     private final PaymentMoneyPolicy moneyPolicy;
 
     public PaymentAllocationPlanner() {

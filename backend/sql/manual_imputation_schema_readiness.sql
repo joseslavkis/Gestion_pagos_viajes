@@ -32,11 +32,20 @@ SELECT CASE
         WHERE conrelid = 'payment_submissions'::regclass
           AND conname = 'ck_payment_submissions_manual_not_pending'
     )
+    AND EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'payment_submissions'::regclass
+          AND conname = 'ck_payment_submissions_customer_requires_method'
+    )
     AND NOT EXISTS (
         SELECT 1 FROM payment_submissions WHERE source IS NULL
     )
     AND NOT EXISTS (
         SELECT 1 FROM payment_submissions WHERE source = 'ADMIN_MANUAL' AND status = 'PENDING'
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM payment_submissions
+        WHERE source <> 'ADMIN_MANUAL' AND payment_method IS NULL
     )
     THEN 'READY'
     ELSE 'NOT_READY'

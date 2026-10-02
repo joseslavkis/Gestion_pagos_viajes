@@ -175,7 +175,8 @@ public class PaymentService {
                 reportedAmount,
                 dto.reportedPaymentDate(),
                 quote,
-                PaymentCalculationIntent.MANUAL
+                PaymentCalculationIntent.MANUAL,
+                plan
         );
         String previewToken = paymentPreviewTokenService.issueToken(snapshot);
         return toPreviewDTO(selection.anchorInstallment(), dto.reportedPaymentDate(), plan, quote, previewToken);
@@ -286,7 +287,8 @@ public class PaymentService {
                 plan.reportedAmount(),
                 dto.reportedPaymentDate(),
                 quote,
-                dto.intent()
+                dto.intent(),
+                plan
         );
         String previewToken = paymentPreviewTokenService.issueToken(snapshot);
         BigDecimal residual = calculationBalance.subtract(plan.amountInTripCurrency())
@@ -1155,7 +1157,8 @@ public class PaymentService {
             BigDecimal reportedAmount,
             LocalDate reportedPaymentDate,
             ExchangeRateQuote quote,
-            PaymentCalculationIntent intent
+            PaymentCalculationIntent intent,
+            PaymentAllocationPlanner.PlanResult confirmedPlan
     ) {
         return new PaymentPreviewTokenService.PreviewSnapshot(
                 user.getId(),
@@ -1170,7 +1173,9 @@ public class PaymentService {
                 quote == null ? null : quote.provider(),
                 quote == null ? null : quote.providerTimestamp(),
                 intent,
-                PaymentPreviewTokenService.CURRENT_CALCULATION_VERSION
+                PaymentPreviewTokenService.CURRENT_CALCULATION_VERSION,
+                PaymentAllocationPlanner.planFingerprint(confirmedPlan),
+                confirmedPlan.totalPendingAmountInTripCurrency()
         );
     }
 

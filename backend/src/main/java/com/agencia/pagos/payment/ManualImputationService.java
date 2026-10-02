@@ -2,11 +2,13 @@ package com.agencia.pagos.payment;
 
 import com.agencia.pagos.payment.dto.ManualImputationContextDTO;
 import com.agencia.pagos.payment.dto.PaymentBatchInstallmentDTO;
+import com.agencia.pagos.payment.dto.PaymentCalculationIntent;
 import com.agencia.pagos.payment.dto.PaymentSubmissionDTO;
 import com.agencia.pagos.payment.storage.PaymentAttachmentStorageService;
 import com.agencia.pagos.shared.money.Currency;
 import com.agencia.pagos.trip.Installment;
 import com.agencia.pagos.trip.InstallmentRepository;
+import com.agencia.pagos.trip.InstallmentScope;
 import com.agencia.pagos.trip.TripRepository;
 import com.agencia.pagos.user.Role;
 import com.agencia.pagos.user.Student;
@@ -198,10 +200,7 @@ public class ManualImputationService {
         try {
             normalized = paymentMoneyPolicy.requirePositivePersistableMoney(reportedAmount, "reportedAmount");
         } catch (IllegalArgumentException e) {
-            if (reportedAmount == null || safeCompare(reportedAmount) <= 0) {
-                throw new IllegalArgumentException("El monto a imputar debe ser mayor a cero.", e);
-            }
-            throw new IllegalArgumentException("El monto ingresado supera el saldo pendiente del viaje.", e);
+            throw toManualAmountError(reportedAmount, e);
         }
         try {
             paymentBusinessDatePolicy.requireNotFuture(reportedPaymentDate);
@@ -218,13 +217,22 @@ public class ManualImputationService {
         User admin = getAdminByEmail(adminEmail);
 
         // Lock order Trip → Installments, igual que registerPayment y unassign.
-        Long tripId = installmentRepository.findByIdWithTrip(anchorInstallmentId)
-                .map(i -> i.getTrip().getId())
+        // El scope se resuelve con una query escalar para NO cargar la cuota
+        // al persistence context antes de los locks: una entidad leída
+        // pre-lock quedaría managed con saldo viejo y los queries locked
+        // devolverían esa misma instancia stale (doble imputación).
+        InstallmentScope scope = installmentRepository.findScopeById(anchorInstallmentId)
                 .orElseThrow(() -> new EntityNotFoundException("Installment not found with id " + anchorInstallmentId));
-        tripRepository.findByIdForUpdate(tripId)
-                .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + tripId));
+        tripRepository.findByIdForUpdate(scope.tripId())
+                .orElseThrow(() -> new EntityNotFoundException("Trip not found with id " + scope.tripId()));
 
-        Installment anchor = installmentRepository.findByIdWithTripUserAndStudent(anchorInstallmentId)
+        List<Installment> scoped = installmentRepository.findByTripIdAndUserIdAndStudentIdForUpdate(
+                scope.tripId(), scope.userId(), scope.studentId());
+        // El anchor se resuelve DENTRO del alcance recién bloqueado: es la
+        // primera lectura de estado financiero y por lo tanto es fresca.
+        Installment anchor = scoped.stream()
+                .filter(i -> i.getId().equals(anchorInstallmentId))
+                .findFirst()
                 .orElseThrow(() -> new EntityNotFoundException("Installment not found with id " + anchorInstallmentId));
         Long studentId = anchor.getStudent() != null ? anchor.getStudent().getId() : null;
 
@@ -232,8 +240,6 @@ public class ManualImputationService {
             throw ManualImputationException.pendingReview();
         }
 
-        List<Installment> scoped = installmentRepository.findByTripIdAndUserIdAndStudentIdForUpdate(
-                anchor.getTrip().getId(), anchor.getUser().getId(), studentId);
         List<Installment> payable = scoped.stream()
                 .filter(i -> getRemaining(i).compareTo(BigDecimal.ZERO) > 0)
                 .sorted(Comparator.comparing(Installment::getInstallmentNumber)).toList();
@@ -300,9 +306,22 @@ public class ManualImputationService {
             if (msg.contains("demasiado bajo")) {
                 throw new IllegalArgumentException("El monto informado es demasiado bajo para imputarse.", e);
             }
+            if (msg.contains("must not exceed")) {
+                throw new IllegalArgumentException(
+                        "El monto supera el máximo permitido de $ 99.999.999,99.", e);
+            }
             throw new IllegalArgumentException("El monto ingresado supera el saldo pendiente del viaje.", e);
         }
         paymentAllocationPlanner.assertConservation(plan);
+
+        // Comparación final bajo lock: el plan recalculado sobre el estado
+        // recién bloqueado debe coincidir con el plan confirmado. Si el saldo
+        // cambió (otra operación imputó en el medio), el plan difiere aunque
+        // los totales cierren: se rechaza TODO sin persistir nada.
+        if (totalPending.compareTo(snapshot.totalPendingAtPreview()) != 0
+                || !PaymentAllocationPlanner.planFingerprint(plan).equals(snapshot.planFingerprint())) {
+            throw ManualImputationException.staleBalance();
+        }
 
         return persistManual(
                 anchor, payable, plan, quote, paymentCurrency, reportedPaymentDate, manualReason,
@@ -326,6 +345,15 @@ public class ManualImputationService {
             throw ManualImputationException.previewMismatch();
         }
         PaymentPreviewTokenService.PreviewSnapshot snapshot = validation.snapshot().get();
+        if (snapshot.intent() != PaymentCalculationIntent.MANUAL) {
+            throw ManualImputationException.previewMismatch();
+        }
+        if (snapshot.planFingerprint() == null || snapshot.planFingerprint().isBlank()
+                || snapshot.totalPendingAtPreview() == null) {
+            // Token legacy sin binding al plan financiero: no se puede
+            // garantizar que se ejecute lo confirmado. Recalcular.
+            throw ManualImputationException.previewMismatch();
+        }
         if (!snapshot.anchorInstallmentId().equals(anchorInstallmentId)
                 || snapshot.paymentCurrency() != paymentCurrency
                 || !snapshot.reportedPaymentDate().equals(reportedPaymentDate)
@@ -428,7 +456,11 @@ public class ManualImputationService {
 
             return toManualDTO(saved, savedOutcome, plan);
         } catch (RuntimeException e) {
-            cleanupWritten(written);
+            // Con transacción activa, la limpieza la hace el hook
+            // afterCompletion (exactly-once); sin sincronización, acá.
+            if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+                cleanupWritten(written);
+            }
             throw e;
         }
     }
@@ -521,12 +553,34 @@ public class ManualImputationService {
         return v == null ? BigDecimal.ZERO : v;
     }
 
-    private int safeCompare(BigDecimal v) {
-        try {
-            return paymentMoneyPolicy.requireMoney(v, "reportedAmount").signum();
-        } catch (RuntimeException e) {
-            return -1;
+    /**
+     * Traduce un rechazo de {@link PaymentMoneyPolicy} a un mensaje de negocio
+     * preciso: cada causa (cero/negativo, precisión, máximo) tiene su mensaje
+     * propio en lugar del genérico "supera el saldo".
+     */
+    private IllegalArgumentException toManualAmountError(BigDecimal reportedAmount, IllegalArgumentException cause) {
+        String detail = cause != null && cause.getMessage() != null ? cause.getMessage() : "";
+        if (detail.contains("greater than zero")) {
+            return new IllegalArgumentException("El monto a imputar debe ser mayor a cero.", cause);
         }
+        if (detail.contains("fractions smaller than one cent")) {
+            return new IllegalArgumentException("El monto debe tener como máximo dos decimales.", cause);
+        }
+        if (detail.contains("must not exceed")) {
+            return new IllegalArgumentException(
+                    "El monto supera el máximo permitido de $ 99.999.999,99.", cause);
+        }
+        if (reportedAmount == null) {
+            return new IllegalArgumentException("El monto a imputar debe ser mayor a cero.", cause);
+        }
+        try {
+            if (paymentMoneyPolicy.requireMoney(reportedAmount, "reportedAmount").signum() <= 0) {
+                return new IllegalArgumentException("El monto a imputar debe ser mayor a cero.", cause);
+            }
+        } catch (RuntimeException e) {
+            return new IllegalArgumentException("El monto debe tener como máximo dos decimales.", cause);
+        }
+        return new IllegalArgumentException("El monto ingresado supera el saldo pendiente del viaje.", cause);
     }
 
     private void cleanupWritten(List<String> written) {

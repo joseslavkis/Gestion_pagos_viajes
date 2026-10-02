@@ -357,7 +357,7 @@ class ManualImputationIntegrationTest extends ControllerIntegrationTestSupport {
                 .willReturn("fx.png");
 
         // REMAINING en ARS para cubrir 150 USD a 1500 => 225000 ARS.
-        String token = calculationToken(f.adminTokens(), f.i1().getId(), null,
+        String remainingToken = calculationToken(f.adminTokens(), f.i1().getId(), null,
                 Currency.ARS, HISTORICAL_DATE, PaymentCalculationIntent.REMAINING);
         PaymentCalculationResponseDTO calc = objectMapper.readValue(
                 mockMvc.perform(post("/api/v1/payments/calculation")
@@ -372,7 +372,13 @@ class ManualImputationIntegrationTest extends ControllerIntegrationTestSupport {
                         .getResponse().getContentAsString(),
                 PaymentCalculationResponseDTO.class);
         assertThat(calc.reportedAmount()).isEqualByComparingTo("225000.00");
+        assertThat(remainingToken).isNotNull();
 
+        // La ejecución manual exige un preview de semántica MANUAL: la quick
+        // action solo vuelca el monto al input, el token a confirmar se
+        // calcula como MANUAL.
+        String token = calculationToken(f.adminTokens(), f.i1().getId(), "225000.00",
+                Currency.ARS, HISTORICAL_DATE, PaymentCalculationIntent.MANUAL);
         PaymentSubmissionDTO dto = manualImputationService.execute(f.i1().getId(),
                 new BigDecimal("225000.00"), HISTORICAL_DATE, Currency.ARS, token, null, List.of(), admin);
         assertThat(dto.amountInTripCurrency()).isEqualByComparingTo("150.00");
@@ -461,6 +467,8 @@ class ManualImputationIntegrationTest extends ControllerIntegrationTestSupport {
         String tokenI1 = calculationToken(f.adminTokens(), f.i1().getId(), "10.00",
                 Currency.ARS, HISTORICAL_DATE, PaymentCalculationIntent.MANUAL);
         // Intentar ejecutar con anchor #2 usando token de #1 → mismatch.
+        // #2 es válido sintácticamente pero inválido por estado de negocio
+        // (#1 sigue impaga): conflicto 409, no request malformada.
         mockMvc.perform(multipart("/api/v1/payments/manual-imputations")
                         .param("anchorInstallmentId", String.valueOf(f.i2().getId()))
                         .param("reportedAmount", "10.00")
@@ -468,7 +476,9 @@ class ManualImputationIntegrationTest extends ControllerIntegrationTestSupport {
                         .param("paymentCurrency", "ARS")
                         .param("previewToken", tokenI1)
                         .header("Authorization", "Bearer " + f.adminTokens().accessToken()))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("MANUAL_IMPUTATION_INVALID_ANCHOR"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("cuota #1")));
 
         assertThat(installmentRepository.findById(f.i2().getId()).orElseThrow().getPaidAmount())
                 .isEqualByComparingTo("0.00");
@@ -485,14 +495,14 @@ class ManualImputationIntegrationTest extends ControllerIntegrationTestSupport {
         given(paymentAttachmentStorageService.resolveFileReference(any()))
                 .willAnswer(inv -> inv.getArgument(0));
 
-        String tokenJson = calculationToken(f.adminTokens(), f.i1().getId(), "20.00",
+        String tokenJson = calculationToken(f.adminTokens(), f.i1().getId(), "100.00",
                 Currency.ARS, HISTORICAL_DATE, PaymentCalculationIntent.MANUAL);
         mockMvc.perform(post("/api/v1/payments/manual-imputations")
                         .header("Authorization", "Bearer " + f.adminTokens().accessToken())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(java.util.Map.of(
                                 "anchorInstallmentId", f.i1().getId(),
-                                "reportedAmount", "20.00",
+                                "reportedAmount", "100.00",
                                 "paymentCurrency", "ARS",
                                 "reportedPaymentDate", HISTORICAL_DATE.toString(),
                                 "previewToken", tokenJson,
@@ -500,6 +510,7 @@ class ManualImputationIntegrationTest extends ControllerIntegrationTestSupport {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.source").value("ADMIN_MANUAL"));
 
+        // #1 quedó completa: el anchor válido ahora es #2.
         String tokenMulti = calculationToken(f.adminTokens(), f.i2().getId(), "30.00",
                 Currency.ARS, HISTORICAL_DATE, PaymentCalculationIntent.MANUAL);
         MockMultipartFile file = new MockMultipartFile("file", "c.png", "image/png", new byte[]{1, 2, 3});
@@ -520,11 +531,8 @@ class ManualImputationIntegrationTest extends ControllerIntegrationTestSupport {
 
     @Test
     void concurrent_twoManualsOnSameHundred_onlyOneWins() throws Exception {
+        // Solo #1 tiene saldo (100); #2 y #3 con capital 0 ya están cubiertas.
         ManualFixture f = createManualFixture("conc", Currency.ARS, "100.00", "0.00", "0.00");
-        // Dejar solo una cuota con saldo 100: las otras en 0 ya están pagadas.
-        // Nuestro fixture crea 3 cuotas; ponemos i2/i3 en 0 total para aislar saldo 100.
-        // Simplificamos: usar solo i1 con 100 y las demás también 100 pero el test
-        // imputa 100 exacto desde i1; la segunda debe fallar por stale/anchor.
         String admin = adminEmail(f.adminTokens());
         given(paymentAttachmentStorageService.storeReceipt(
                 nullable(org.springframework.web.multipart.MultipartFile.class),
@@ -576,10 +584,26 @@ class ManualImputationIntegrationTest extends ControllerIntegrationTestSupport {
         assertThat(successes).isEqualTo(1);
         assertThat(conflicts).isEqualTo(1);
 
-        // Solo una acreditación efectiva de 100.
+        // Solo una acreditación efectiva de 100: exactamente una operación
+        // efectiva, la perdedora no deja PaymentSubmission (falla antes de
+        // persistir y su transacción hace rollback completo).
         BigDecimal paid = installmentRepository.findById(f.i1().getId()).orElseThrow().getPaidAmount();
         assertThat(paid).isEqualByComparingTo("100.00");
-        assertThat(paymentSubmissionRepository.count()).isEqualTo(1);
+        List<PaymentSubmission> submissions = paymentSubmissionRepository.findAll();
+        assertThat(submissions).hasSize(1);
+        PaymentSubmission winner = submissions.get(0);
+        assertThat(winner.getSource()).isEqualTo(PaymentSubmissionSource.ADMIN_MANUAL);
+        assertThat(winner.getStatus()).isEqualTo(PaymentSubmissionStatus.RESOLVED);
+        assertThat(winner.getReportedAmount()).isEqualByComparingTo("100.00");
+        assertThat(winner.getAnchorInstallment().getId()).isEqualTo(f.i1().getId());
+        assertThat(paymentOutcomeRepository.findAll())
+                .hasSize(1)
+                .allSatisfy(outcome ->
+                        assertThat(outcome.getStatus()).isEqualTo(PaymentOutcomeStatus.APPROVED));
+        assertThat(paymentAllocationRepository.findAll())
+                .hasSize(1)
+                .allSatisfy(allocation -> assertThat(allocation.getAmountInTripCurrency())
+                        .isEqualByComparingTo("100.00"));
     }
 
     @Test
@@ -603,8 +627,7 @@ class ManualImputationIntegrationTest extends ControllerIntegrationTestSupport {
     }
 
     @Test
-    void manual_preservesTripThenInstallmentsLockOrder() throws Exception {
-        ManualFixture f = createManualFixture("lock", Currency.ARS, "100.00", "100.00", "100.00");
+    void manual_preservesTripThenInstallmentsLockOrder() throws Exception {        ManualFixture f = createManualFixture("lock", Currency.ARS, "100.00", "100.00", "100.00");
         String admin = adminEmail(f.adminTokens());
         given(paymentAttachmentStorageService.storeReceipt(
                 nullable(org.springframework.web.multipart.MultipartFile.class),
@@ -624,5 +647,373 @@ class ManualImputationIntegrationTest extends ControllerIntegrationTestSupport {
         lockOrder.verify(installmentRepositorySpy).findByTripIdAndUserIdAndStudentIdForUpdate(
                 f.trip().getId(), f.user().getId(), f.student().getId());
         lockOrder.verify(paymentSubmissionRepositorySpy).save(any(PaymentSubmission.class));
+    }
+
+    // ── Stale preview: el plan confirmado es el plan ejecutado ────
+
+    @Test
+    void execute_rejectsStalePreviewWhenBalanceChangedAfterCalculation() throws Exception {
+        ManualFixture f = createManualFixture("stale", Currency.ARS, "100.00", "100.00", "100.00");
+        String admin = adminEmail(f.adminTokens());
+        given(paymentAttachmentStorageService.storeReceipt(
+                nullable(org.springframework.web.multipart.MultipartFile.class),
+                any(Long.class), any(Long.class), any()))
+                .willReturn("s.png");
+
+        // Preview A sobre #1=100/#2=100: 150 → #1 100 + #2 50.
+        String tokenA = calculationToken(f.adminTokens(), f.i1().getId(), "150.00",
+                Currency.ARS, HISTORICAL_DATE, PaymentCalculationIntent.MANUAL);
+        // Operación intermedia válida: #1 recibe 50 (queda #1=50/#2=100).
+        String tokenMid = calculationToken(f.adminTokens(), f.i1().getId(), "50.00",
+                Currency.ARS, HISTORICAL_DATE, PaymentCalculationIntent.MANUAL);
+        manualImputationService.execute(f.i1().getId(), new BigDecimal("50.00"),
+                HISTORICAL_DATE, Currency.ARS, tokenMid, null, List.of(), admin);
+
+        // Confirmar A recalcularía #1 50 + #2 100: plan distinto al
+        // confirmado. Debe rechazarse TODO, sin adaptar silenciosamente.
+        assertThatThrownBy(() -> manualImputationService.execute(f.i1().getId(),
+                new BigDecimal("150.00"), HISTORICAL_DATE, Currency.ARS, tokenA, null, List.of(), admin))
+                .isInstanceOfSatisfying(ManualImputationException.class, e -> {
+                    assertThat(e.getCode()).isEqualTo(ManualImputationException.Code.STALE_BALANCE);
+                    assertThat(e.getMessage()).contains("saldo cambió");
+                });
+
+        // Solo persiste la operación intermedia.
+        assertThat(paymentSubmissionRepository.count()).isEqualTo(1);
+        assertThat(installmentRepository.findById(f.i1().getId()).orElseThrow().getPaidAmount())
+                .isEqualByComparingTo("50.00");
+        assertThat(installmentRepository.findById(f.i2().getId()).orElseThrow().getPaidAmount())
+                .isEqualByComparingTo("0.00");
+        assertThat(paymentAllocationRepository.findAll())
+                .hasSize(1)
+                .allSatisfy(allocation -> assertThat(allocation.getAmountInTripCurrency())
+                        .isEqualByComparingTo("50.00"));
+    }
+
+    @Test
+    void execute_rejectsConfirmationExceedingRemainingAsStale() throws Exception {
+        ManualFixture f = createManualFixture("stale2", Currency.ARS, "100.00", "100.00", "100.00");
+        String admin = adminEmail(f.adminTokens());
+        given(paymentAttachmentStorageService.storeReceipt(
+                nullable(org.springframework.web.multipart.MultipartFile.class),
+                any(Long.class), any(Long.class), any()))
+                .willReturn("s2.png");
+
+        // Preview por el total (300) y consumo intermedio parcial de 50 en #1
+        // (el anchor sigue siendo el primero pagable, pero el total ya no cierra).
+        String tokenFull = calculationToken(f.adminTokens(), f.i1().getId(), "300.00",
+                Currency.ARS, HISTORICAL_DATE, PaymentCalculationIntent.MANUAL);
+        String tokenMid = calculationToken(f.adminTokens(), f.i1().getId(), "50.00",
+                Currency.ARS, HISTORICAL_DATE, PaymentCalculationIntent.MANUAL);
+        manualImputationService.execute(f.i1().getId(), new BigDecimal("50.00"),
+                HISTORICAL_DATE, Currency.ARS, tokenMid, null, List.of(), admin);
+
+        // Confirmar 300 con restante 250: excede y el plan ya no existe.
+        assertThatThrownBy(() -> manualImputationService.execute(f.i1().getId(),
+                new BigDecimal("300.00"), HISTORICAL_DATE, Currency.ARS, tokenFull, null, List.of(), admin))
+                .isInstanceOfSatisfying(ManualImputationException.class, e ->
+                        assertThat(e.getCode()).isEqualTo(ManualImputationException.Code.STALE_BALANCE));
+
+        assertThat(paymentSubmissionRepository.count()).isEqualTo(1);
+        assertThat(installmentRepository.findById(f.i1().getId()).orElseThrow().getPaidAmount())
+                .isEqualByComparingTo("50.00");
+    }
+
+    @Test
+    void execute_rejectsRemainingIntentToken() throws Exception {
+        ManualFixture f = createManualFixture("intent", Currency.ARS, "100.00", "100.00", "100.00");
+        String admin = adminEmail(f.adminTokens());
+        // Token REMAINING válido para la quick action, pero sin semántica MANUAL.
+        String remainingToken = calculationToken(f.adminTokens(), f.i1().getId(), null,
+                Currency.ARS, HISTORICAL_DATE, PaymentCalculationIntent.REMAINING);
+        assertThatThrownBy(() -> manualImputationService.execute(f.i1().getId(),
+                new BigDecimal("100.00"), HISTORICAL_DATE, Currency.ARS, remainingToken, null, List.of(), admin))
+                .isInstanceOfSatisfying(ManualImputationException.class, e ->
+                        assertThat(e.getCode()).isEqualTo(ManualImputationException.Code.PREVIEW_MISMATCH));
+        assertThat(paymentSubmissionRepository.count()).isZero();
+    }
+
+    @Test
+    void execute_rejectsLegacyTokenWithoutPlanBinding() throws Exception {
+        ManualFixture f = createManualFixture("legacy", Currency.ARS, "100.00", "100.00", "100.00");
+        String admin = adminEmail(f.adminTokens());
+        Long adminId = extractId(f.adminTokens().accessToken());
+        // Token firmado válido pero sin fingerprint del plan financiero.
+        String legacyToken = previewTokenService.issueToken(
+                new PaymentPreviewTokenService.PreviewSnapshot(
+                        adminId, f.i1().getId(), Currency.ARS, new BigDecimal("10.00"),
+                        HISTORICAL_DATE, null, null, null, null, "legacy"));
+        assertThatThrownBy(() -> manualImputationService.execute(f.i1().getId(),
+                new BigDecimal("10.00"), HISTORICAL_DATE, Currency.ARS, legacyToken, null, List.of(), admin))
+                .isInstanceOfSatisfying(ManualImputationException.class, e ->
+                        assertThat(e.getCode()).isEqualTo(ManualImputationException.Code.PREVIEW_MISMATCH));
+        assertThat(paymentSubmissionRepository.count()).isZero();
+    }
+
+    @Test
+    void execute_rejectsMismatchedDateAndAnchorTokens() throws Exception {
+        ManualFixture f = createManualFixture("tdate", Currency.ARS, "100.00", "100.00", "100.00");
+        String admin = adminEmail(f.adminTokens());
+        given(paymentAttachmentStorageService.storeReceipt(
+                nullable(org.springframework.web.multipart.MultipartFile.class),
+                any(Long.class), any(Long.class), any()))
+                .willReturn("t.png");
+        LocalDate otherDate = LocalDate.of(2020, 1, 10);
+        String datedToken = calculationToken(f.adminTokens(), f.i1().getId(), "10.00",
+                Currency.ARS, otherDate, PaymentCalculationIntent.MANUAL);
+        // Fecha distinta a la del token.
+        assertThatThrownBy(() -> manualImputationService.execute(f.i1().getId(),
+                new BigDecimal("10.00"), HISTORICAL_DATE, Currency.ARS, datedToken, null, List.of(), admin))
+                .isInstanceOfSatisfying(ManualImputationException.class, e ->
+                        assertThat(e.getCode()).isEqualTo(ManualImputationException.Code.PREVIEW_MISMATCH));
+
+        // Completar #1 para que #2 sea anchor válido, y cruzar anchors.
+        String tokenI1 = calculationToken(f.adminTokens(), f.i1().getId(), "100.00",
+                Currency.ARS, HISTORICAL_DATE, PaymentCalculationIntent.MANUAL);
+        manualImputationService.execute(f.i1().getId(), new BigDecimal("100.00"),
+                HISTORICAL_DATE, Currency.ARS, tokenI1, null, List.of(), admin);
+        String tokenI2 = calculationToken(f.adminTokens(), f.i2().getId(), "10.00",
+                Currency.ARS, HISTORICAL_DATE, PaymentCalculationIntent.MANUAL);
+        // Token de #2 ejecutado sobre #1 (ya paga): el anchor manda primero.
+        assertThatThrownBy(() -> manualImputationService.execute(f.i1().getId(),
+                new BigDecimal("10.00"), HISTORICAL_DATE, Currency.ARS, tokenI2, null, List.of(), admin))
+                .isInstanceOf(ManualImputationException.class);
+        assertThat(paymentSubmissionRepository.count()).isEqualTo(1);
+    }
+
+    // ── Matriz de montos ──────────────────────────────────────────
+
+    @Test
+    void execute_rejectsInvalidMoneyWithPreciseMessages() {
+        assertThatThrownBy(() -> manualImputationService.execute(999_999L,
+                BigDecimal.ZERO, HISTORICAL_DATE, Currency.ARS, "dummy", null, List.of(), "admin@x.com"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("mayor a cero");
+        assertThatThrownBy(() -> manualImputationService.execute(999_999L,
+                new BigDecimal("-1.00"), HISTORICAL_DATE, Currency.ARS, "dummy", null, List.of(), "admin@x.com"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("mayor a cero");
+        assertThatThrownBy(() -> manualImputationService.execute(999_999L,
+                new BigDecimal("0.001"), HISTORICAL_DATE, Currency.ARS, "dummy", null, List.of(), "admin@x.com"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("dos decimales");
+        assertThatThrownBy(() -> manualImputationService.execute(999_999L,
+                new BigDecimal("1.005"), HISTORICAL_DATE, Currency.ARS, "dummy", null, List.of(), "admin@x.com"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("dos decimales");
+        assertThatThrownBy(() -> manualImputationService.execute(999_999L,
+                new BigDecimal("100000000.00"), HISTORICAL_DATE, Currency.ARS, "dummy", null, List.of(),
+                        "admin@x.com"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("máximo permitido");
+        assertThatThrownBy(() -> manualImputationService.execute(999_999L,
+                null, HISTORICAL_DATE, Currency.ARS, "dummy", null, List.of(), "admin@x.com"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("mayor a cero");
+        assertThat(paymentSubmissionRepository.count()).isZero();
+    }
+
+    @Test
+    void execute_acceptsExactTotalBalance() throws Exception {
+        ManualFixture f = createManualFixture("exact", Currency.ARS, "100.00", "100.00", "100.00");
+        String admin = adminEmail(f.adminTokens());
+        given(paymentAttachmentStorageService.storeReceipt(
+                nullable(org.springframework.web.multipart.MultipartFile.class),
+                any(Long.class), any(Long.class), any()))
+                .willReturn("e.png");
+        String token = calculationToken(f.adminTokens(), f.i1().getId(), "300.00",
+                Currency.ARS, HISTORICAL_DATE, PaymentCalculationIntent.MANUAL);
+        PaymentSubmissionDTO dto = manualImputationService.execute(f.i1().getId(),
+                new BigDecimal("300.00"), HISTORICAL_DATE, Currency.ARS, token, null, List.of(), admin);
+        assertThat(dto.installments()).hasSize(3);
+        assertThat(dto.amountInTripCurrency()).isEqualByComparingTo("300.00");
+        assertThat(installmentRepository.findById(f.i3().getId()).orElseThrow().getPaidAmount())
+                .isEqualByComparingTo("100.00");
+    }
+
+    // ── Concurrencia manual vs cliente ────────────────────────────
+
+    @Test
+    void concurrent_manualVsCustomerRegistration_neverOverpays() throws Exception {
+        ManualFixture f = createManualFixture("mix", Currency.ARS, "100.00", "100.00", "100.00");
+        String admin = adminEmail(f.adminTokens());
+        var bank = bankAccountRepository.save(com.agencia.pagos.payment.BankAccount.builder()
+                .bankName("B").accountLabel("L").accountHolder("H")
+                .accountNumber("0002-" + System.nanoTime()).taxId("30-71131646-5")
+                .cbu(String.valueOf(System.nanoTime())).alias("M." + System.nanoTime())
+                .currency(Currency.ARS).active(true).displayOrder(1).build());
+        given(paymentAttachmentStorageService.storeReceipt(
+                nullable(org.springframework.web.multipart.MultipartFile.class),
+                any(Long.class), any(Long.class), any()))
+                .willReturn("mix.png");
+
+        String manualToken = calculationToken(f.adminTokens(), f.i1().getId(), "100.00",
+                Currency.ARS, HISTORICAL_DATE, PaymentCalculationIntent.MANUAL);
+        String customerToken = calculationToken(f.userTokens(), f.i1().getId(), "100.00",
+                Currency.ARS, HISTORICAL_DATE, PaymentCalculationIntent.MANUAL);
+
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch go = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<Object> manualResult =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<Object> customerResult =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        Future<?> fa = pool.submit(() -> {
+            ready.countDown();
+            try {
+                go.await(10, TimeUnit.SECONDS);
+                manualResult.set(manualImputationService.execute(f.i1().getId(),
+                        new BigDecimal("100.00"), HISTORICAL_DATE, Currency.ARS, manualToken, null,
+                        List.of(), admin));
+            } catch (Exception e) {
+                manualResult.set(e);
+            }
+            return null;
+        });
+        Future<?> fb = pool.submit(() -> {
+            ready.countDown();
+            try {
+                go.await(10, TimeUnit.SECONDS);
+                customerResult.set(paymentService.registerPayment(f.i1().getId(),
+                        new BigDecimal("100.00"), HISTORICAL_DATE, Currency.ARS,
+                        PaymentMethod.BANK_TRANSFER, bank.getId(), null, customerToken,
+                        f.user().getEmail()));
+            } catch (Exception e) {
+                customerResult.set(e);
+            }
+            return null;
+        });
+        assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+        go.countDown();
+        fa.get(30, TimeUnit.SECONDS);
+        fb.get(30, TimeUnit.SECONDS);
+        pool.shutdownNow();
+
+        // Sin deadlock y sin errores técnicos: solo resultados de dominio.
+        assertThat(manualResult.get()).isInstanceOfAny(
+                PaymentSubmissionDTO.class, ManualImputationException.class);
+        assertThat(customerResult.get()).isInstanceOfAny(
+                PaymentSubmissionDTO.class, RuntimeException.class);
+
+        BigDecimal paid = installmentRepository.findById(f.i1().getId()).orElseThrow().getPaidAmount();
+        assertThat(paid.compareTo(BigDecimal.ZERO) >= 0
+                && paid.compareTo(new BigDecimal("100.00")) <= 0).isTrue();
+        boolean manualWon = manualResult.get() instanceof PaymentSubmissionDTO;
+        assertThat(paid.compareTo(BigDecimal.ZERO) > 0).isEqualTo(manualWon);
+
+        long manualSubmissions = paymentSubmissionRepository.findAll().stream()
+                .filter(s -> s.getSource() == PaymentSubmissionSource.ADMIN_MANUAL).count();
+        assertThat(manualSubmissions).isIn(0L, 1L);
+        if (manualWon) {
+            assertThat(manualSubmissions).isEqualTo(1L);
+        } else {
+            // El manual solo pierde si ya había un PENDING establecido.
+            assertThat(manualResult.get())
+                    .isInstanceOfSatisfying(ManualImputationException.class, e ->
+                            assertThat(e.getCode())
+                                    .isEqualTo(ManualImputationException.Code.PENDING_REVIEW));
+        }
+
+        // Exposición combinada nunca supera el saldo inicial (300).
+        BigDecimal customerPending = paymentSubmissionRepository.findAll().stream()
+                .filter(s -> s.getSource() == PaymentSubmissionSource.CUSTOMER_SUBMISSION
+                        && s.getStatus() == PaymentSubmissionStatus.PENDING)
+                .map(PaymentSubmission::getReportedAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        assertThat(paid.add(customerPending)).isLessThanOrEqualTo(new BigDecimal("300.00"));
+    }
+
+    // ── Historial, void y adjuntos ────────────────────────────────
+
+    @Test
+    void execute_persistsHistoryVisiblePerInstallment() throws Exception {
+        ManualFixture f = createManualFixture("hist", Currency.ARS, "240.00", "240.00", "240.00");
+        String admin = adminEmail(f.adminTokens());
+        given(paymentAttachmentStorageService.storeReceipt(
+                nullable(org.springframework.web.multipart.MultipartFile.class),
+                any(Long.class), any(Long.class), any()))
+                .willReturn("hist-key");
+        given(paymentAttachmentStorageService.resolveFileReference(any()))
+                .willAnswer(inv -> inv.getArgument(0));
+        MockMultipartFile file = new MockMultipartFile("file", "c.png", "image/png", new byte[]{1, 2, 3});
+
+        String token = calculationToken(f.adminTokens(), f.i1().getId(), "500.00",
+                Currency.ARS, HISTORICAL_DATE, PaymentCalculationIntent.MANUAL);
+        PaymentSubmissionDTO dto = manualImputationService.execute(f.i1().getId(),
+                new BigDecimal("500.00"), HISTORICAL_DATE, Currency.ARS, token,
+                "Pago en efectivo", List.of(file), admin);
+
+        // Cada cuota afectada muestra el mismo submission con su allocation.
+        MvcResult historyI1 = mockMvc.perform(get("/api/v1/payments/installment/" + f.i1().getId())
+                        .header("Authorization", "Bearer " + f.adminTokens().accessToken()))
+                .andExpect(status().isOk()).andReturn();
+        MvcResult historyI3 = mockMvc.perform(get("/api/v1/payments/installment/" + f.i3().getId())
+                        .header("Authorization", "Bearer " + f.adminTokens().accessToken()))
+                .andExpect(status().isOk()).andReturn();
+        String i1Body = historyI1.getResponse().getContentAsString();
+        String i3Body = historyI3.getResponse().getContentAsString();
+        assertThat(i1Body).contains("\"source\":\"ADMIN_MANUAL\"");
+        assertThat(i1Body).contains("Pago en efectivo");
+        assertThat(i1Body).contains("\"status\":\"APPROVED\"");
+        assertThat(i1Body).contains(dto.submissionId().toString());
+        assertThat(i3Body).contains(dto.submissionId().toString());
+        assertThat(i3Body).contains("20.00");
+        // Adjunto asociado al manual correcto.
+        assertThat(i1Body).contains("hist-key");
+    }
+
+    @Test
+    void manual_multiInstallmentCanBeVoidedReversingExactly() throws Exception {
+        ManualFixture f = createManualFixture("voidm", Currency.ARS, "240.00", "240.00", "240.00");
+        String admin = adminEmail(f.adminTokens());
+        given(paymentAttachmentStorageService.storeReceipt(
+                nullable(org.springframework.web.multipart.MultipartFile.class),
+                any(Long.class), any(Long.class), any()))
+                .willReturn("vm.png");
+        String token = calculationToken(f.adminTokens(), f.i1().getId(), "500.00",
+                Currency.ARS, HISTORICAL_DATE, PaymentCalculationIntent.MANUAL);
+        PaymentSubmissionDTO dto = manualImputationService.execute(f.i1().getId(),
+                new BigDecimal("500.00"), HISTORICAL_DATE, Currency.ARS, token, "Ajuste", List.of(), admin);
+
+        paymentService.voidPayment(dto.submissionId(), admin);
+
+        assertThat(installmentRepository.findById(f.i1().getId()).orElseThrow().getPaidAmount())
+                .isEqualByComparingTo("0.00");
+        assertThat(installmentRepository.findById(f.i2().getId()).orElseThrow().getPaidAmount())
+                .isEqualByComparingTo("0.00");
+        assertThat(installmentRepository.findById(f.i3().getId()).orElseThrow().getPaidAmount())
+                .isEqualByComparingTo("0.00");
+        // Auditoría preservada: el void no pierde origen ni motivo.
+        PaymentSubmission reloaded = paymentSubmissionRepository.findByIdWithContext(dto.submissionId())
+                .orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(PaymentSubmissionStatus.VOIDED);
+        assertThat(reloaded.getSource()).isEqualTo(PaymentSubmissionSource.ADMIN_MANUAL);
+        assertThat(reloaded.getManualReason()).isEqualTo("Ajuste");
+    }
+
+    @Test
+    void execute_storageFailureLeavesNoSubmission() throws Exception {
+        ManualFixture f = createManualFixture("stor", Currency.ARS, "100.00", "100.00", "100.00");
+        String admin = adminEmail(f.adminTokens());
+        given(paymentAttachmentStorageService.storeReceipt(
+                nullable(org.springframework.web.multipart.MultipartFile.class),
+                any(Long.class), any(Long.class), any()))
+                .willThrow(new IllegalStateException("boom-store"));
+        MockMultipartFile file = new MockMultipartFile("file", "c.png", "image/png", new byte[]{1, 2, 3});
+
+        String token = calculationToken(f.adminTokens(), f.i1().getId(), "10.00",
+                Currency.ARS, HISTORICAL_DATE, PaymentCalculationIntent.MANUAL);
+        assertThatThrownBy(() -> manualImputationService.execute(f.i1().getId(),
+                new BigDecimal("10.00"), HISTORICAL_DATE, Currency.ARS, token, null, List.of(file), admin))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("boom-store");
+
+        // Nada persistido y nada para limpiar (el archivo nunca se escribió).
+        assertThat(paymentSubmissionRepository.count()).isZero();
+        assertThat(installmentRepository.findById(f.i1().getId()).orElseThrow().getPaidAmount())
+                .isEqualByComparingTo("0.00");
+        org.mockito.Mockito.verify(paymentAttachmentStorageService, org.mockito.Mockito.never())
+                .deleteReceipt(any());
     }
 }

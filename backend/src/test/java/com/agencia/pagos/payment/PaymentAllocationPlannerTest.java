@@ -478,6 +478,46 @@ class PaymentAllocationPlannerTest {
         return buildInstallment(installmentNumber, totalDue, paidAmount, Currency.ARS);
     }
 
+    @Test
+    void planFingerprint_bindsInstallmentIdsAndTripAmountsInAllocationOrder() {
+        List<Installment> installments = List.of(
+                buildInstallment(1, "100.00", "0.00"),
+                buildInstallment(2, "100.00", "0.00"),
+                buildInstallment(3, "100.00", "0.00")
+        );
+        installments.get(0).setId(11L);
+        installments.get(1).setId(22L);
+        installments.get(2).setId(33L);
+
+        PaymentAllocationPlanner.PlanResult plan = planner.plan(
+                installments, new BigDecimal("150.00"), Currency.ARS, null);
+
+        assertEquals("11:100.00;22:50.00",
+                PaymentAllocationPlanner.planFingerprint(plan));
+    }
+
+    @Test
+    void planFingerprint_differsWhenAnyAllocationChanges() {
+        List<Installment> installments = List.of(
+                buildInstallment(1, "100.00", "0.00"),
+                buildInstallment(2, "100.00", "0.00")
+        );
+        installments.get(0).setId(11L);
+        installments.get(1).setId(22L);
+
+        PaymentAllocationPlanner.PlanResult before = planner.plan(
+                installments, new BigDecimal("150.00"), Currency.ARS, null);
+        installments.get(0).setPaidAmount(new BigDecimal("50.00"));
+        PaymentAllocationPlanner.PlanResult after = planner.plan(
+                installments, new BigDecimal("150.00"), Currency.ARS, null);
+
+        String beforeFingerprint = PaymentAllocationPlanner.planFingerprint(before);
+        String afterFingerprint = PaymentAllocationPlanner.planFingerprint(after);
+        assertEquals("11:100.00;22:50.00", beforeFingerprint);
+        assertEquals("11:50.00;22:100.00", afterFingerprint);
+        assertTrue(!beforeFingerprint.equals(afterFingerprint));
+    }
+
     private List<Installment> randomInstallments(
             Random random,
             int installmentCount,

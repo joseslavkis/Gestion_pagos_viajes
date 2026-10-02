@@ -40,6 +40,8 @@ public class PaymentPreviewTokenService {
     private static final String CLAIM_QUOTE_TIMESTAMP = "quoteProviderTimestamp";
     private static final String CLAIM_CALCULATION_VERSION = "cv";
     private static final String CLAIM_INTENT = "intent";
+    private static final String CLAIM_PLAN_FINGERPRINT = "plan";
+    private static final String CLAIM_TOTAL_PENDING = "totalPending";
     private static final String PREVIEW_TYPE = "payment-preview";
     public static final String CURRENT_CALCULATION_VERSION = "2";
 
@@ -84,6 +86,10 @@ public class PaymentPreviewTokenService {
                 .claim(CLAIM_QUOTE_PROVIDER, snapshot.quoteProvider())
                 .claim(CLAIM_QUOTE_TIMESTAMP, snapshot.quoteProviderTimestamp())
                 .claim(CLAIM_INTENT, snapshot.intent().name())
+                .claim(CLAIM_PLAN_FINGERPRINT, snapshot.planFingerprint())
+                .claim(CLAIM_TOTAL_PENDING, snapshot.totalPendingAtPreview() == null
+                        ? null
+                        : snapshot.totalPendingAtPreview().toPlainString())
                 .claim(CLAIM_CALCULATION_VERSION, snapshot.calculationVersion())
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(expiry))
@@ -161,7 +167,9 @@ public class PaymentPreviewTokenService {
                 quoteProvider,
                 quoteTimestamp,
                 intent,
-                CURRENT_CALCULATION_VERSION
+                CURRENT_CALCULATION_VERSION,
+                claims.get(CLAIM_PLAN_FINGERPRINT, String.class),
+                optionalDecimal(claims.get(CLAIM_TOTAL_PENDING))
         );
     }
 
@@ -204,8 +212,44 @@ public class PaymentPreviewTokenService {
             String quoteProvider,
             String quoteProviderTimestamp,
             PaymentCalculationIntent intent,
-            String calculationVersion
+            String calculationVersion,
+            String planFingerprint,
+            BigDecimal totalPendingAtPreview
     ) {
+        public PreviewSnapshot(
+                Long userId,
+                Long anchorInstallmentId,
+                com.agencia.pagos.shared.money.Currency paymentCurrency,
+                BigDecimal reportedAmount,
+                java.time.LocalDate reportedPaymentDate,
+                BigDecimal quoteSellRate,
+                java.time.LocalDate quoteRequestedDate,
+                java.time.LocalDate quoteEffectiveDate,
+                String quoteSource,
+                String quoteProvider,
+                String quoteProviderTimestamp,
+                PaymentCalculationIntent intent,
+                String calculationVersion
+        ) {
+            this(
+                    userId,
+                    anchorInstallmentId,
+                    paymentCurrency,
+                    reportedAmount,
+                    reportedPaymentDate,
+                    quoteSellRate,
+                    quoteRequestedDate,
+                    quoteEffectiveDate,
+                    quoteSource,
+                    quoteProvider,
+                    quoteProviderTimestamp,
+                    intent,
+                    calculationVersion,
+                    null,
+                    null
+            );
+        }
+
         public PreviewSnapshot(
                 Long userId,
                 Long anchorInstallmentId,
@@ -231,7 +275,9 @@ public class PaymentPreviewTokenService {
                     quoteSource,
                     quoteProviderTimestamp,
                     PaymentCalculationIntent.MANUAL,
-                    CURRENT_CALCULATION_VERSION
+                    CURRENT_CALCULATION_VERSION,
+                    null,
+                    null
             );
         }
     }
@@ -263,6 +309,10 @@ public class PaymentPreviewTokenService {
         }
         if (snapshot.intent() == null) {
             throw new IllegalArgumentException("Payment calculation intent is required");
+        }
+        if ((snapshot.planFingerprint() == null) != (snapshot.totalPendingAtPreview() == null)
+                || (snapshot.planFingerprint() != null && snapshot.planFingerprint().isBlank())) {
+            throw new IllegalArgumentException("Confirmed plan binding is incomplete");
         }
         if (snapshot.quoteSellRate() == null) {
             return;
