@@ -836,6 +836,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                 .andExpect(jsonPath("$.anchorRemainingAmount").value("100.00"))
                 .andExpect(jsonPath("$.maxAllowedAmount").value("100.00"))
                 .andExpect(jsonPath("$.tripCurrencyResidual").value("0.01"))
+                .andExpect(jsonPath("$.message").value("El monto ingresado supera el saldo pendiente del viaje."))
                 .andExpect(jsonPath("$.previewToken").doesNotExist());
     }
 

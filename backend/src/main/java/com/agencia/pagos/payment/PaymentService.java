@@ -254,6 +254,8 @@ public class PaymentService {
         } catch (PaymentBalanceExceededException exceeded) {
             BigDecimal amountInTripCurrency = paymentMoneyPolicy.convertPaymentToTripCurrency(
                     reportedAmount, tripCurrency, dto.paymentCurrency(), exchangeRate);
+            // El mensaje es visible en UI: texto de negocio (los números
+            // viajan en maxAllowedAmount/tripCurrencyResidual, no en el texto).
             return new PaymentCalculationResponseDTO(
                     PaymentCalculationStatus.AMOUNT_EXCEEDS_BALANCE,
                     dto.intent(),
@@ -276,7 +278,7 @@ public class PaymentService {
                     PaymentPreviewTokenService.CURRENT_CALCULATION_VERSION,
                     null,
                     List.of(),
-                    exceeded.getMessage()
+                    "El monto ingresado supera el saldo pendiente del viaje."
             );
         }
         paymentAllocationPlanner.assertConservation(plan);
