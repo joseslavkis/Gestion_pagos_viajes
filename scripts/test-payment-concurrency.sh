@@ -300,14 +300,20 @@ done
 [[ "$status" == 200 ]] || { printf 'Authentication readiness failed (HTTP %s)\n' "$status" >&2; exit 1; }
 admin_token="$(jq -er '.accessToken' "$TMP_DIR/auth-ready.body")"
 
-# Local/update bootstraps only this disposable database. Apply the PR1 SQL,
-# verify readiness, then exercise HTTP flows against production/validate.
+# Local/update bootstraps only this disposable database. Apply the PR1 SQL +
+# manual imputation migration, verify readiness, then exercise HTTP flows
+# against production/validate.
 "${COMPOSE[@]}" stop backend >/dev/null
 "${COMPOSE[@]}" exec -T db psql -X -v ON_ERROR_STOP=1 -U "$DB_USERNAME" -d "$DB_NAME" \
   <"$ROOT_DIR/backend/sql/20260917_payment_money_invariants.sql" >/dev/null
+"${COMPOSE[@]}" exec -T db psql -X -v ON_ERROR_STOP=1 -U "$DB_USERNAME" -d "$DB_NAME" \
+  <"$ROOT_DIR/backend/sql/20261002_manual_imputation.sql" >/dev/null
 schema_state="$("${COMPOSE[@]}" exec -T db psql -X -tA -v ON_ERROR_STOP=1 \
   -U "$DB_USERNAME" -d "$DB_NAME" <"$ROOT_DIR/backend/sql/payment_money_schema_readiness.sql")"
 [[ "$schema_state" == READY ]] || { printf 'Migrated payment schema is not ready: %s\n' "$schema_state" >&2; exit 1; }
+manual_state="$("${COMPOSE[@]}" exec -T db psql -X -tA -v ON_ERROR_STOP=1 \
+  -U "$DB_USERNAME" -d "$DB_NAME" <"$ROOT_DIR/backend/sql/manual_imputation_schema_readiness.sql")"
+[[ "$manual_state" == READY ]] || { printf 'Manual imputation schema is not ready: %s\n' "$manual_state" >&2; exit 1; }
 ISOLATED_SPRING_PROFILE=production
 "${COMPOSE[@]}" up -d --no-build --force-recreate backend >/dev/null
 BACKEND_HOST_PORT="$(discover_port backend 8080)"

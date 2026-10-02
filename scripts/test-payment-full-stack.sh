@@ -121,13 +121,22 @@ BACKEND_PID=""
 
 docker exec -i "$POSTGRES_CONTAINER" psql -v ON_ERROR_STOP=1 -U payment_e2e -d payment_e2e \
   < "$ROOT_DIR/backend/sql/20260917_payment_money_invariants.sql" >/dev/null
+docker exec -i "$POSTGRES_CONTAINER" psql -v ON_ERROR_STOP=1 -U payment_e2e -d payment_e2e \
+  < "$ROOT_DIR/backend/sql/20261002_manual_imputation.sql" >/dev/null
 READINESS="$(docker exec -i "$POSTGRES_CONTAINER" psql -At -v ON_ERROR_STOP=1 -U payment_e2e -d payment_e2e \
   < "$ROOT_DIR/backend/sql/payment_money_schema_readiness.sql")"
 if [[ "$READINESS" != READY ]]; then
   printf 'PR1 schema readiness failed: %s\n' "$READINESS" >&2
   exit 1
 fi
+MANUAL_READINESS="$(docker exec -i "$POSTGRES_CONTAINER" psql -At -v ON_ERROR_STOP=1 -U payment_e2e -d payment_e2e \
+  < "$ROOT_DIR/backend/sql/manual_imputation_schema_readiness.sql")"
+if [[ "$MANUAL_READINESS" != READY ]]; then
+  printf 'Manual imputation schema readiness failed: %s\n' "$MANUAL_READINESS" >&2
+  exit 1
+fi
 printf 'Disposable PostgreSQL PR1 migration: READY\n'
+printf 'Disposable PostgreSQL manual imputation migration: READY\n'
 
 mkdir -p "$TMP_DIR/src/com/agencia/pagos/payment" "$TMP_DIR/classes"
 cat >"$TMP_DIR/src/com/agencia/pagos/payment/PaymentE2eApplication.java" <<'JAVA'

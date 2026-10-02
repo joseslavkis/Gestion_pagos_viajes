@@ -544,6 +544,8 @@ public class PaymentService {
         submission.setCalculationVersion(PaymentPreviewTokenService.CURRENT_CALCULATION_VERSION);
         submission.setPaymentMethod(paymentMethod);
         submission.setStatus(PaymentSubmissionStatus.PENDING);
+        submission.setSource(PaymentSubmissionSource.CUSTOMER_SUBMISSION);
+        submission.setManualReason(null);
         List<String> written = new ArrayList<>();
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
@@ -1308,7 +1310,11 @@ public class PaymentService {
                 StudentNameFormatter.displayName(submission.getStudent()),
                 submission.getStudent() != null ? submission.getStudent().getDni() : null,
                 installments,
-                attachmentReferences(submission)
+                attachmentReferences(submission),
+                submission.getSource() != null
+                        ? submission.getSource()
+                        : PaymentSubmissionSource.CUSTOMER_SUBMISSION,
+                submission.getManualReason()
         );
     }
 
@@ -1432,7 +1438,9 @@ public class PaymentService {
                 resolveBankAccountId(receipt),
                 resolveBankAccountDisplayName(receipt),
                 resolveBankAccountAlias(receipt),
-                references
+                references,
+                PaymentSubmissionSource.CUSTOMER_SUBMISSION,
+                null
         );
     }
 
@@ -1461,7 +1469,11 @@ public class PaymentService {
                 submission.getBankAccount() != null ? submission.getBankAccount().getId() : null,
                 submission.getBankAccount() != null ? formatBankAccountDisplay(submission.getBankAccount()) : null,
                 submission.getBankAccount() != null ? submission.getBankAccount().getAlias() : null,
-                attachmentReferences(submission)
+                attachmentReferences(submission),
+                submission.getSource() != null
+                        ? submission.getSource()
+                        : PaymentSubmissionSource.CUSTOMER_SUBMISSION,
+                submission.getManualReason()
         );
     }
 
@@ -1563,7 +1575,9 @@ public class PaymentService {
                 StudentNameFormatter.displayName(student),
                 student != null ? student.getDni() : null,
                 sortedReceipts.stream().map(this::toLegacyInstallmentDTO).toList(),
-                references
+                references,
+                PaymentSubmissionSource.CUSTOMER_SUBMISSION,
+                null
         );
     }
 

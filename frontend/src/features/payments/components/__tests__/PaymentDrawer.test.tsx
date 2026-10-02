@@ -71,6 +71,20 @@ vi.mock("@/features/payments/services/payments-service", () => ({
   }),
 }));
 
+vi.mock("@/features/payments/services/manual-imputation-service", () => ({
+  useManualImputationContext: () => ({
+    data: undefined,
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+  }),
+  useManualImputation: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+    error: null,
+  }),
+}));
+
 async function renderDrawer(
   tripCurrency: "ARS" | "USD",
   totalDue: number,

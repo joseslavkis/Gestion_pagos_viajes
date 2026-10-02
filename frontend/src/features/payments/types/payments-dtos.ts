@@ -24,6 +24,9 @@ export type Currency = z.infer<typeof CurrencySchema>;
 export const PaymentMethodSchema = z.enum(["BANK_TRANSFER", "CASH", "DEPOSIT", "OTHER"]);
 export type PaymentMethod = z.infer<typeof PaymentMethodSchema>;
 
+export const PaymentSubmissionSourceSchema = z.enum(["CUSTOMER_SUBMISSION", "ADMIN_MANUAL"]);
+export type PaymentSubmissionSource = z.infer<typeof PaymentSubmissionSourceSchema>;
+
 export const ReceiptStatusSchema = z.enum(["PENDING", "APPROVED", "REJECTED"]);
 export type ReceiptStatus = z.infer<typeof ReceiptStatusSchema>;
 
@@ -108,7 +111,7 @@ export const PaymentSubmissionDTOSchema = z.object({
   quoteProvider: z.string().nullish(),
   quoteProviderTimestamp: z.string().nullish(),
   calculationVersion: z.string().nullish(),
-  paymentMethod: PaymentMethodSchema,
+  paymentMethod: PaymentMethodSchema.nullable(),
   fileKey: z.string(),
   fileKeys: z.array(z.string()).optional(),
   adminObservation: z.string().nullable(),
@@ -122,6 +125,8 @@ export const PaymentSubmissionDTOSchema = z.object({
   studentName: z.string().nullable(),
   studentDni: z.string().nullable(),
   installments: PaymentBatchInstallmentDTOSchema.array(),
+  source: PaymentSubmissionSourceSchema.optional(),
+  manualReason: z.string().nullable().optional(),
 });
 export type PaymentSubmissionDTO = z.infer<typeof PaymentSubmissionDTOSchema>;
 
@@ -151,7 +156,7 @@ export const PaymentInstallmentHistoryDTOSchema = z.object({
   quoteProvider: z.string().nullish(),
   quoteProviderTimestamp: z.string().nullish(),
   calculationVersion: z.string().nullish(),
-  paymentMethod: PaymentMethodSchema,
+  paymentMethod: PaymentMethodSchema.nullable(),
   status: PaymentHistoryStatusSchema,
   fileKey: z.string(),
   fileKeys: z.array(z.string()).optional(),
@@ -159,6 +164,8 @@ export const PaymentInstallmentHistoryDTOSchema = z.object({
   bankAccountId: z.number().nullable(),
   bankAccountDisplayName: z.string().nullable(),
   bankAccountAlias: z.string().nullable(),
+  source: PaymentSubmissionSourceSchema.optional(),
+  manualReason: z.string().nullable().optional(),
 });
 export type PaymentInstallmentHistoryDTO = z.infer<typeof PaymentInstallmentHistoryDTOSchema>;
 

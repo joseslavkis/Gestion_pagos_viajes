@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AttachmentList } from "@/features/payments/components/AttachmentList";
-import { useInstallmentReceipts, useVoidPayment } from "@/features/payments/services/payments-service";
+import { ManualImputationSection } from "@/features/payments/components/ManualImputationSection";
+import {
+  useInstallmentReceipts,
+  useVoidPayment,
+} from "@/features/payments/services/payments-service";
+import { useQueryClient } from "@tanstack/react-query";
 import type { Currency, PaymentHistoryStatus, PaymentInstallmentHistoryDTO } from "@/features/payments/types/payments-dtos";
 import {
   getSpreadsheetParticipantParentLabel,
@@ -67,6 +72,7 @@ type PaymentDrawerProps = {
 export function PaymentDrawer({ installment, row, tripCurrency, onClose }: PaymentDrawerProps) {
   const { data: history, isLoading: isHistoryLoading, error: historyError } = useInstallmentReceipts(installment.id);
   const voidPayment = useVoidPayment();
+  const queryClient = useQueryClient();
 
   const [voidError, setVoidError] = useState<string | null>(null);
   const titleId = `payment-drawer-title-${installment.id}`;
@@ -205,6 +211,14 @@ export function PaymentDrawer({ installment, row, tripCurrency, onClose }: Payme
             </div>
           </section>
 
+          <ManualImputationSection
+            installmentId={installment.id}
+            onImputed={() => {
+              queryClient.invalidateQueries({ queryKey: ["payments", "installment", installment.id] });
+              queryClient.invalidateQueries({ queryKey: ["spreadsheet"] });
+            }}
+          />
+
           <section className={styles.drawerSection}>
             <div className={styles.drawerLabel}>Historial del pago imputado</div>
             {isHistoryLoading ? <div>Cargando movimientos...</div> : null}
@@ -228,8 +242,17 @@ export function PaymentDrawer({ installment, row, tripCurrency, onClose }: Payme
                 </div>
                 <div>
                   <span className={styles.strong}>Método:</span>{" "}
-                  {paymentMethodLabels[entry.paymentMethod] ?? entry.paymentMethod}
+                  {entry.source === "ADMIN_MANUAL"
+                    ? "Imputación manual"
+                    : (entry.paymentMethod
+                        ? (paymentMethodLabels[entry.paymentMethod] ?? entry.paymentMethod)
+                        : "No informado")}
                 </div>
+                {entry.source === "ADMIN_MANUAL" && entry.manualReason ? (
+                  <div>
+                    <span className={styles.strong}>Motivo:</span> {entry.manualReason}
+                  </div>
+                ) : null}
                 <div>
                   <span className={styles.strong}>Cuenta acreditada:</span>{" "}
                   {entry.bankAccountDisplayName ?? "Cuenta no informada"}

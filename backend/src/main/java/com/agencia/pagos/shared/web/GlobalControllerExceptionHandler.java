@@ -69,6 +69,17 @@ public class GlobalControllerExceptionHandler {
         return new ResponseEntity<>(message, ex.getStatusCode());
     }
 
+    @ExceptionHandler(com.agencia.pagos.payment.ManualImputationException.class)
+    public ResponseEntity<Map<String, String>> handleManualImputation(
+            com.agencia.pagos.payment.ManualImputationException ex) {
+        logger.warn("Manual imputation rejected: code={} message={}", ex.getCode(), ex.getMessage());
+        return new ResponseEntity<>(
+                Map.of(
+                        "code", "MANUAL_IMPUTATION_" + ex.getCode().name(),
+                        "message", ex.getMessage()),
+                ex.getHttpStatus());
+    }
+
     @ExceptionHandler(IllegalStateException.class)
     public ResponseEntity<String> handleIllegalState(IllegalStateException ex) {
         return new ResponseEntity<>(ex.getMessage(), HttpStatus.CONFLICT);

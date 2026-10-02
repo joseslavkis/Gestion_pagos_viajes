@@ -3,6 +3,7 @@ package com.agencia.pagos.payment.dto;
 import com.agencia.pagos.shared.money.Currency;
 import com.agencia.pagos.payment.PaymentHistoryStatus;
 import com.agencia.pagos.payment.PaymentMethod;
+import com.agencia.pagos.payment.PaymentSubmissionSource;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 
 import java.math.BigDecimal;
@@ -39,6 +40,8 @@ public record PaymentSubmissionDTO(
         String studentName,
         String studentDni,
         List<PaymentBatchInstallmentDTO> installments,
-        List<String> fileKeys
+        List<String> fileKeys,
+        PaymentSubmissionSource source,
+        String manualReason
 ) {
 }
