@@ -176,7 +176,7 @@ test("E2E1 imputa parcial ARS misma moneda sin FX", async ({ page }) => {
   await page.reload();
   const drawer2 = await openFirstDrawer(page, seed.arsTripId, seed.userEmail);
   await expect(drawer2.getByText("Imputación manual")).toBeVisible();
-  expect(await paidAmount(seed.arsTripId, 1)).toBe("100.00");
+  expect(await paidAmount(seed.arsTripId, 1)).toBe(100);
 });
 
 test("E2E2 distribuye 500 en 240/240/20", async ({ page }) => {
@@ -335,10 +335,10 @@ async function firstInstallmentId(tripId: number): Promise<number> {
   return Number(installments[0].installmentId);
 }
 
-async function paidAmount(tripId: number, number: number): Promise<string> {
+async function paidAmount(tripId: number, number: number): Promise<number> {
   const installments = (await getJson(api, "/api/v1/payments/my/installments", seed.userToken) as Array<Record<string, unknown>>)
     .filter((i) => Number(i.tripId) === tripId && Number(i.installmentNumber) === number);
-  return String(installments[0].paidAmount);
+  return Number(installments[0].paidAmount);
 }
 
 test("E2E20 quick action completa la cuota actual misma moneda", async ({ page }) => {
@@ -358,8 +358,8 @@ test("E2E20 quick action completa la cuota actual misma moneda", async ({ page }
   await drawer.getByRole("button", { name: "Confirmar imputación" }).click();
   expect((await resp).status()).toBe(201);
   // Cuota completa y siguiente intacta.
-  expect(await paidAmount(seed.quickTripId, 1)).toBe("150.00");
-  expect(await paidAmount(seed.quickTripId, 2)).toBe("0.00");
+  expect(await paidAmount(seed.quickTripId, 1)).toBe(150);
+  expect(await paidAmount(seed.quickTripId, 2)).toBe(0);
 });
 
 test("E2E21 quick action cross-currency usa el cálculo del backend", async ({ page }) => {
@@ -389,7 +389,7 @@ test("E2E22 monto superior al saldo no persiste y avisa", async ({ page }) => {
   await expect(drawer.getByText("El monto ingresado supera el saldo pendiente del viaje.")).toBeVisible();
   await page.waitForTimeout(1500);
   expect(posted).toBe(false);
-  expect(await paidAmount(seed.limitTripId, 1)).toBe("0.00");
+  expect(await paidAmount(seed.limitTripId, 1)).toBe(0);
 });
 
 test("E2E23 comprobante opcional: sin y con archivo", async ({ page }) => {
@@ -493,6 +493,6 @@ test("E2E25 stale preview real: confirma viejo, recalcula y confirma nuevo", asy
     r.url().includes("/manual-imputations") && r.request().method() === "POST");
   await drawer.getByRole("button", { name: "Confirmar imputación" }).click();
   expect((await fresh).status()).toBe(201);
-  expect(await paidAmount(seed.staleTripId, 1)).toBe("150.00");
-  expect(await paidAmount(seed.staleTripId, 2)).toBe("50.00");
+  expect(await paidAmount(seed.staleTripId, 1)).toBe(150);
+  expect(await paidAmount(seed.staleTripId, 2)).toBe(50);
 });
