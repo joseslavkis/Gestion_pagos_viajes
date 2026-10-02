@@ -365,13 +365,14 @@ test("E2E20 quick action completa la cuota actual misma moneda", async ({ page }
 
 test("E2E21 quick action cross-currency usa el cálculo del backend", async ({ page }) => {
   const anchorId = await firstInstallmentId(seed.usdTripId);
-  // Monto autoritativo para completar el saldo USD restante en ARS.
+  // Monto autoritativo para completar el saldo USD restante en ARS, misma fecha.
   const calc = await manualCalculation(anchorId, undefined, "ARS", "REMAINING");
   const expected = String(calc.reportedAmount);
   expect(Number(expected)).toBeGreaterThan(0);
 
   const drawer = await openFirstDrawer(page, seed.usdTripId, seed.userEmail);
   await drawer.getByRole("button", { name: "Imputar pago" }).click();
+  await drawer.getByLabel("Fecha de pago").fill(MANUAL_DATE);
   await drawer.getByText("Completar cuota actual").click();
   // El frontend no multiplica tasa a mano: vuelca el cálculo del backend.
   await expect(drawer.getByLabel("Monto a imputar")).toHaveValue(expected);
