@@ -53,6 +53,8 @@ export function useManualImputation() {
   const queryClient = useQueryClient();
 
   return useMutation<PaymentSubmissionDTO, ApiError, ManualImputationPayload>({
+    // Errores con UI inline propia en ManualImputationForm: sin toast global.
+    meta: { silentErrorToast: true },
     mutationFn: async (payload) => {
       const formData = new FormData();
       formData.append("anchorInstallmentId", String(payload.anchorInstallmentId));
