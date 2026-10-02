@@ -304,14 +304,14 @@ test("E2E6 cuota posterior es rechazada en UI y API", async () => {
 });
 
 test("E2E10 reconfirmación: el primer preview no persiste", async ({ page }) => {
-  const drawer = await openFirstDrawer(page, seed.threeTripId, seed.userEmail);
+  const drawer = await openFirstDrawer(page, seed.quickTripId, seed.userEmail);
   await drawer.getByRole("button", { name: "Imputar pago" }).click();
   await drawer.getByLabel("Monto a imputar").fill("100");
   await drawer.getByLabel("Fecha de pago").fill(MANUAL_DATE);
   await drawer.getByRole("button", { name: "Continuar" }).click();
   await expect(drawer.getByRole("heading", { name: "Confirmar imputación" })).toBeVisible();
   await drawer.getByRole("button", { name: "Volver" }).click();
-  await drawer.getByLabel("Monto a imputar").fill("200");
+  await drawer.getByLabel("Monto a imputar").fill("120");
   // Cambiar monto invalida el preview anterior: debe recalcular.
   await drawer.getByRole("button", { name: "Continuar" }).click();
   await expect(drawer.getByRole("heading", { name: "Confirmar imputación" })).toBeVisible();
@@ -319,7 +319,7 @@ test("E2E10 reconfirmación: el primer preview no persiste", async ({ page }) =>
 
 test("E2E12 mobile básico usable", async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 740 });
-  const drawer = await openFirstDrawer(page, seed.threeTripId, seed.userEmail);
+  const drawer = await openFirstDrawer(page, seed.limitTripId, seed.userEmail);
   await drawer.getByRole("button", { name: "Imputar pago" }).click();
   const amount = drawer.getByLabel("Monto a imputar");
   await expect(amount).toBeVisible();
