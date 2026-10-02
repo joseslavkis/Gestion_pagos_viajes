@@ -7,12 +7,14 @@ import {
 } from "@/features/payments/services/manual-imputation-service";
 import type { Currency } from "@/features/payments/types/payments-dtos";
 import type { PaymentCalculationResponseDTO } from "@/features/payments/types/payments-dtos";
+import { ApiError } from "@/lib/api-error";
 import {
   compareNonNegativeDecimalStrings,
   normalizePaymentMoneyInput,
 } from "@/features/payments/types/decimal-strings";
 import {
   formatDecimalMoney,
+  formatRateEs,
   shouldKeepCompleteAnchorChecked,
   todayIsoDate,
 } from "@/features/payments/types/manual-imputation-helpers";
@@ -207,6 +209,12 @@ export function ManualImputationForm({ installmentId, onSuccess }: Props) {
       setFile(null);
       onSuccess();
     } catch (error) {
+      // El plan stale no se conserva como confirmable: se vuelve al
+      // formulario para recalcular y confirmar el plan nuevo.
+      if (error instanceof ApiError && error.code === "MANUAL_IMPUTATION_STALE_BALANCE") {
+        setConfirmedPreview(null);
+        setManualPayload(null);
+      }
       setFormError(error instanceof Error ? error.message : "No se pudo registrar la imputación.");
     }
   };
@@ -263,7 +271,7 @@ export function ManualImputationForm({ installmentId, onSuccess }: Props) {
         {preview.exchangeRate ? (
           <div className={styles.confirmationRow}>
             <span>Cotización utilizada:</span>
-            <span className={styles.confirmationStrong}>${preview.exchangeRate} / USD</span>
+            <span className={styles.confirmationStrong}>$ {formatRateEs(preview.exchangeRate)} / USD</span>
           </div>
         ) : null}
         {preview.amountInTripCurrency ? (
@@ -338,6 +346,19 @@ export function ManualImputationForm({ installmentId, onSuccess }: Props) {
         handleContinue();
       }}
     >
+      {context.anchorRemainingAmount != null &&
+      context.totalRemainingAmountInTripCurrency != null ? (
+        <p className={styles.balances}>
+          <span>
+            Saldo de la cuota:{" "}
+            {formatDecimalMoney(context.anchorRemainingAmount, context.tripCurrency)}
+          </span>
+          <span>
+            Saldo pendiente del viaje:{" "}
+            {formatDecimalMoney(context.totalRemainingAmountInTripCurrency, context.tripCurrency)}
+          </span>
+        </p>
+      ) : null}
       <div className={styles.field}>
         <label className={styles.label} htmlFor={`manual-amount-${installmentId}`}>
           Monto a imputar
@@ -411,8 +432,9 @@ export function ManualImputationForm({ installmentId, onSuccess }: Props) {
           maxLength={500}
           placeholder="Pago en efectivo, transferencia verificada, ajuste…"
           onChange={(event) => {
+            // El motivo es metadata no financiera: no invalida el cálculo ni
+            // el preview confirmado. Se envía el valor vigente al confirmar.
             setReason(event.target.value);
-            setConfirmedPreview(null);
           }}
         />
       </div>

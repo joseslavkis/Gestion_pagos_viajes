@@ -24,6 +24,7 @@ const historyEntry = (overrides: Partial<PaymentInstallmentHistoryDTO> = {}): Pa
   bankAccountId: 1,
   bankAccountDisplayName: "ICBC - pesos",
   bankAccountAlias: "ICBC.PESOS",
+  source: "CUSTOMER_SUBMISSION",
   ...overrides,
 });
 
@@ -182,6 +183,30 @@ describe("PaymentDrawer", () => {
       const total = historyRow(/^Total:$/);
       expect(total).toHaveTextContent("US$");
       expect(total).toHaveTextContent("2.000,00");
+    });
+  });
+
+  describe("imputación manual en historial", () => {
+    const manualEntry = () =>
+      historyEntry({
+        paymentMethod: null,
+        adminObservation: "Efectivo",
+        bankAccountId: null,
+        bankAccountDisplayName: null,
+        bankAccountAlias: null,
+        source: "ADMIN_MANUAL",
+        manualReason: "Efectivo",
+      });
+
+    it("muestra tipo y motivo una sola vez, sin fila de cuenta", async () => {
+      await renderDrawer("ARS", 1000, manualEntry());
+
+      await screen.findByText("Perez, Luca");
+      expect(screen.getByText("Imputación manual")).toBeInTheDocument();
+      // Motivo una sola vez aunque la observación traiga el mismo texto.
+      expect(screen.getAllByText(/Efectivo/)).toHaveLength(1);
+      expect(screen.queryByText("Cuenta acreditada")).not.toBeInTheDocument();
+      expect(screen.queryByText("Observación:")).not.toBeInTheDocument();
     });
   });
 });

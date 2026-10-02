@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -185,6 +185,13 @@ describe("ManualImputation progressive disclosure", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Imputar pago" }));
     const checkbox = (await screen.findByText("Completar cuota actual")).closest("label")?.querySelector("input");
     expect(checkbox).toBeDefined();
+    await userEvent.click(screen.getByText("Completar cuota actual"));
+    const amount = screen.getByLabelText("Monto a imputar");
+    await waitFor(() => expect(amount).toHaveValue("150.00"));
+    expect(checkbox).toBeChecked();
+    await userEvent.clear(amount);
+    await userEvent.type(amount, "150.01");
+    await waitFor(() => expect(checkbox).not.toBeChecked());
   });
 
   it("muestra confirmación con allocations antes de persistir y ejecuta una sola vez con doble click", async () => {
@@ -233,8 +240,8 @@ describe("ManualImputation progressive disclosure", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Imputar pago" }));
     await userEvent.type(await screen.findByLabelText("Monto a imputar"), "300000.00");
     await userEvent.click(screen.getByRole("button", { name: "Continuar" }));
-    expect(await screen.findByText("Confirmar imputación")).toBeInTheDocument();
-    expect(screen.getByText("Cuota #2")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Confirmar imputación" })).toBeInTheDocument();
+    expect(screen.getByText("Cuota #2", { exact: false })).toBeInTheDocument();
     // Antes de confirmar no hubo POST de ejecución.
     expect(executeCalls).toBe(0);
     const confirm = screen.getByRole("button", { name: "Confirmar imputación" });
@@ -242,8 +249,7 @@ describe("ManualImputation progressive disclosure", () => {
     await waitFor(() => expect(executeCalls).toBe(1));
   });
 
-  it("nunca muestra códigos técnicos en errores de negocio", async () => {
-    server.use(
+  it("nunca muestra códigos técnicos en errores de negocio", async () => {    server.use(
       http.post("http://localhost:30002/api/v1/payments/calculation", () =>
         HttpResponse.json({ ...calculationReady, status: "AMOUNT_EXCEEDS_BALANCE", message: "El monto ingresado supera el saldo pendiente del viaje.", installments: [], previewToken: null }),
       ),
@@ -260,5 +266,197 @@ describe("ManualImputation progressive disclosure", () => {
     for (const tech of ["IllegalStateException", "reportedAmount", "PaymentAllocationPlanner", "FIN-001", "balanceLimitInTripCurrency"]) {
       expect(document.body.textContent ?? "").not.toContain(tech);
     }
+  });
+
+  it("muestra saldos de cuota y viaje arriba del monto", async () => {
+    renderWithProviders(
+      <ManualImputationSection installmentId={1} onImputed={vi.fn()} />,
+      "ROLE_ADMIN",
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Imputar pago" }));
+    expect(await screen.findByText(/Saldo de la cuota:/)).toBeInTheDocument();
+    expect(screen.getByText(/Saldo pendiente del viaje:/)).toBeInTheDocument();
+    // es-AR con moneda del viaje (USD del contexto).
+    expect(screen.getByText(/US\$\s?150,00/)).toBeInTheDocument();
+    expect(screen.getByText(/US\$\s?450,00/)).toBeInTheDocument();
+  });
+
+  it("deshabilita el trigger para anchor posterior, cuota pagada y viaje sin saldo", async () => {
+    mockContext(contextLaterAnchor);
+    const { unmount } = renderWithProviders(
+      <ManualImputationSection installmentId={4} onImputed={vi.fn()} />,
+      "ROLE_ADMIN",
+    );
+    expect(await screen.findByRole("button", { name: "Imputar pago" })).toBeDisabled();
+    unmount();
+
+    mockContext({
+      ...contextEligible,
+      eligible: false,
+      anchorRemainingAmount: "0.00",
+      message: "Esta cuota ya está completamente pagada. Seleccioná la primera cuota pendiente de pago (#2).",
+    });
+    renderWithProviders(
+      <ManualImputationSection installmentId={1} onImputed={vi.fn()} />,
+      "ROLE_ADMIN",
+    );
+    expect(await screen.findByRole("button", { name: "Imputar pago" })).toBeDisabled();
+    expect(await screen.findByText(/completamente pagada/)).toBeInTheDocument();
+  });
+
+  it("invalidar la confirmación al cambiar moneda o fecha", async () => {
+    renderWithProviders(
+      <ManualImputationSection installmentId={1} onImputed={vi.fn()} />,
+      "ROLE_ADMIN",
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Imputar pago" }));
+    await userEvent.type(await screen.findByLabelText("Monto a imputar"), "300000.00");
+    await userEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    expect(await screen.findByRole("heading", { name: "Confirmar imputación" })).toBeInTheDocument();
+
+    // Volver descarta el preview: cambiar moneda y continuar recalcula,
+    // nunca confirma el preview anterior.
+    await userEvent.click(screen.getByRole("button", { name: "Volver" }));
+    expect(screen.queryByRole("heading", { name: "Confirmar imputación" })).not.toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText("Moneda del pago"), "USD");
+    await userEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    expect(await screen.findByRole("heading", { name: "Confirmar imputación" })).toBeInTheDocument();
+  });
+
+  it("ante STALE vuelve al formulario y permite recalcular", async () => {
+    server.use(
+      http.post("http://localhost:30002/api/v1/payments/manual-imputations", () =>
+        HttpResponse.json(
+          {
+            code: "MANUAL_IMPUTATION_STALE_BALANCE",
+            message: "El saldo cambió desde la última previsualización. Actualizá la imputación e intentá nuevamente.",
+          },
+          { status: 409 },
+        ),
+      ),
+    );
+    renderWithProviders(
+      <ManualImputationSection installmentId={1} onImputed={vi.fn()} />,
+      "ROLE_ADMIN",
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Imputar pago" }));
+    await userEvent.type(await screen.findByLabelText("Monto a imputar"), "300000.00");
+    await userEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    expect(await screen.findByRole("heading", { name: "Confirmar imputación" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Confirmar imputación" }));
+    // El plan stale no queda confirmable: vuelve al formulario con el mensaje.
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: "Confirmar imputación" })).not.toBeInTheDocument();
+    });
+    const section = screen.getByRole("region", { name: "Imputación manual" });
+    expect(
+      within(section).getByText(/El saldo cambió desde la última previsualización/),
+    ).toBeInTheDocument();
+    expect(within(section).getByLabelText("Monto a imputar")).toBeInTheDocument();
+  });
+
+  it("el motivo vigente se envía al confirmar sin recalcular finanzas", async () => {
+    let capturedReason: string | null = null;
+    server.use(
+      http.post("http://localhost:30002/api/v1/payments/manual-imputations", async ({ request }) => {
+        const form = await request.formData();
+        const reason = form.get("reason");
+        capturedReason = typeof reason === "string" ? reason : null;
+        return HttpResponse.json(
+          {
+            submissionId: 99,
+            status: "APPROVED",
+            reportedAmount: "300000.00",
+            approvedAmount: "300000.00",
+            rejectedAmount: "0.00",
+            paymentCurrency: "ARS",
+            exchangeRate: "1500.00",
+            amountInTripCurrency: "200.00",
+            approvedAmountInTripCurrency: "200.00",
+            reportedPaymentDate: "2026-10-01",
+            calculationVersion: "2",
+            paymentMethod: null,
+            fileKey: "",
+            adminObservation: null,
+            bankAccountId: null,
+            bankAccountDisplayName: null,
+            bankAccountAlias: null,
+            tripId: 1,
+            tripName: "Viaje",
+            tripCurrency: "USD",
+            studentId: 1,
+            studentName: "Luca",
+            studentDni: "40111222",
+            installments: [],
+            source: "ADMIN_MANUAL",
+            manualReason: capturedReason,
+          },
+          { status: 201 },
+        );
+      }),
+    );
+    renderWithProviders(
+      <ManualImputationSection installmentId={1} onImputed={vi.fn()} />,
+      "ROLE_ADMIN",
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Imputar pago" }));
+    await userEvent.type(await screen.findByLabelText("Monto a imputar"), "300000.00");
+    // El motivo se informa en el formulario y viaja vigente al confirmar.
+    await userEvent.type(screen.getByLabelText(/Motivo/), "Pago en efectivo");
+    await userEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    expect(await screen.findByRole("heading", { name: "Confirmar imputación" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Confirmar imputación" }));
+    await waitFor(() => expect(capturedReason).toBe("Pago en efectivo"));
+  });
+
+  it("al confirmar con éxito muestra mensaje y refresca", async () => {
+    const onImputed = vi.fn();
+    server.use(
+      http.post("http://localhost:30002/api/v1/payments/manual-imputations", () =>
+        HttpResponse.json(
+          {
+            submissionId: 100,
+            status: "APPROVED",
+            reportedAmount: "300000.00",
+            approvedAmount: "300000.00",
+            rejectedAmount: "0.00",
+            paymentCurrency: "ARS",
+            exchangeRate: "1500.00",
+            amountInTripCurrency: "200.00",
+            approvedAmountInTripCurrency: "200.00",
+            reportedPaymentDate: "2026-10-01",
+            calculationVersion: "2",
+            paymentMethod: null,
+            fileKey: "",
+            adminObservation: null,
+            bankAccountId: null,
+            bankAccountDisplayName: null,
+            bankAccountAlias: null,
+            tripId: 1,
+            tripName: "Viaje",
+            tripCurrency: "USD",
+            studentId: 1,
+            studentName: "Luca",
+            studentDni: "40111222",
+            installments: [],
+            source: "ADMIN_MANUAL",
+            manualReason: null,
+          },
+          { status: 201 },
+        ),
+      ),
+    );
+    renderWithProviders(
+      <ManualImputationSection installmentId={1} onImputed={onImputed} />,
+      "ROLE_ADMIN",
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Imputar pago" }));
+    await userEvent.type(await screen.findByLabelText("Monto a imputar"), "300000.00");
+    await userEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Confirmar imputación" }));
+    expect(await screen.findByText("Imputación registrada correctamente.")).toBeInTheDocument();
+    expect(onImputed).toHaveBeenCalled();
   });
 });

@@ -52,6 +52,19 @@
   padding: 0.55rem 0.7rem;
 }
 
+.balances {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #0f2f57;
+  background: rgba(11, 91, 207, 0.06);
+  border: 1px solid rgba(11, 91, 207, 0.2);
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
 .form {
   display: flex;
   flex-direction: column;

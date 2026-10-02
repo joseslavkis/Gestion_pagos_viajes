@@ -125,7 +125,9 @@ export const PaymentSubmissionDTOSchema = z.object({
   studentName: z.string().nullable(),
   studentDni: z.string().nullable(),
   installments: PaymentBatchInstallmentDTOSchema.array(),
-  source: PaymentSubmissionSourceSchema.optional(),
+  // El backend siempre envía source (con fallback a CUSTOMER_SUBMISSION):
+  // requerido para no esconder respuestas incompletas.
+  source: PaymentSubmissionSourceSchema,
   manualReason: z.string().nullable().optional(),
 });
 export type PaymentSubmissionDTO = z.infer<typeof PaymentSubmissionDTOSchema>;
@@ -164,7 +166,8 @@ export const PaymentInstallmentHistoryDTOSchema = z.object({
   bankAccountId: z.number().nullable(),
   bankAccountDisplayName: z.string().nullable(),
   bankAccountAlias: z.string().nullable(),
-  source: PaymentSubmissionSourceSchema.optional(),
+  // El backend siempre envía source (con fallback a CUSTOMER_SUBMISSION).
+  source: PaymentSubmissionSourceSchema,
   manualReason: z.string().nullable().optional(),
 });
 export type PaymentInstallmentHistoryDTO = z.infer<typeof PaymentInstallmentHistoryDTOSchema>;

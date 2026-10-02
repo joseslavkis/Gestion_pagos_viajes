@@ -253,12 +253,14 @@ export function PaymentDrawer({ installment, row, tripCurrency, onClose }: Payme
                     <span className={styles.strong}>Motivo:</span> {entry.manualReason}
                   </div>
                 ) : null}
-                <div>
-                  <span className={styles.strong}>Cuenta acreditada:</span>{" "}
-                  {entry.bankAccountDisplayName ?? "Cuenta no informada"}
-                  {entry.bankAccountAlias ? ` · ${entry.bankAccountAlias}` : ""}
-                </div>
-                {entry.adminObservation ? (
+                {entry.source === "ADMIN_MANUAL" ? null : (
+                  <div>
+                    <span className={styles.strong}>Cuenta acreditada:</span>{" "}
+                    {entry.bankAccountDisplayName ?? "Cuenta no informada"}
+                    {entry.bankAccountAlias ? ` · ${entry.bankAccountAlias}` : ""}
+                  </div>
+                )}
+                {entry.adminObservation && entry.source !== "ADMIN_MANUAL" ? (
                   <div>
                     <span className={styles.strong}>Observación:</span> {entry.adminObservation}
                   </div>

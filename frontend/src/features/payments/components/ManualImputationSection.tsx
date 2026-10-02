@@ -43,11 +43,16 @@ export function ManualImputationSection({ installmentId, onImputed }: Props) {
   }
 
   if (!open) {
+    // El backend es la autoridad: cualquier contexto inelegible (PENDING,
+    // anchor posterior, cuota pagada, viaje sin saldo) deshabilita el trigger.
+    const triggerDisabled = !context?.eligible;
     return (
       <section className={styles.section} aria-label="Imputación manual">
         <button
           type="button"
           className={styles.triggerButton}
+          disabled={triggerDisabled}
+          aria-disabled={triggerDisabled}
           onClick={() => setOpen(true)}
         >
           Imputar pago

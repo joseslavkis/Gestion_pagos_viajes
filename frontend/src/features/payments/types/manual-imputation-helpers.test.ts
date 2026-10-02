@@ -7,12 +7,16 @@ import {
 
 describe("manual imputation helpers", () => {
   it("keeps quick action checked only when amount still matches exactly", () => {
-    expect(shouldKeepCompleteAnchorChecked(true, "150", "150.00")).toBe(false);
+    // Dos representaciones del mismo monto monetario son semánticamente
+    // iguales: el normalizador las unifica, el checkbox se mantiene.
+    expect(shouldKeepCompleteAnchorChecked(true, "150", "150.00")).toBe(true);
     expect(shouldKeepCompleteAnchorChecked(true, "150.00", "150.00")).toBe(true);
     expect(shouldKeepCompleteAnchorChecked(true, "150.01", "150.00")).toBe(false);
+    expect(shouldKeepCompleteAnchorChecked(true, "149.99", "150.00")).toBe(false);
     expect(shouldKeepCompleteAnchorChecked(false, "150.00", "150.00")).toBe(false);
     expect(shouldKeepCompleteAnchorChecked(true, "150.00", null)).toBe(false);
     expect(shouldKeepCompleteAnchorChecked(true, "abc", "150.00")).toBe(false);
+    expect(shouldKeepCompleteAnchorChecked(true, "", "150.00")).toBe(false);
   });
 
   it("validates money input without floating point", () => {
