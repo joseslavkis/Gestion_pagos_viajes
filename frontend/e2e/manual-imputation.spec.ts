@@ -318,8 +318,8 @@ test("E2E10 reconfirmación: el primer preview no persiste", async ({ page }) =>
 });
 
 test("E2E12 mobile básico usable", async ({ page }) => {
-  await page.setViewportSize({ width: 360, height: 740 });
   const drawer = await openFirstDrawer(page, seed.limitTripId, seed.userEmail);
+  await page.setViewportSize({ width: 360, height: 740 });
   await drawer.getByRole("button", { name: "Imputar pago" }).click();
   const amount = drawer.getByLabel("Monto a imputar");
   await expect(amount).toBeVisible();
