@@ -495,6 +495,6 @@ test("E2E25 stale preview real: confirma viejo, recalcula y confirma nuevo", asy
     r.url().includes("/manual-imputations") && r.request().method() === "POST");
   await drawer.getByRole("button", { name: "Confirmar imputación" }).click();
   expect((await fresh).status()).toBe(201);
-  expect(await paidAmount(seed.staleTripId, 1)).toBe(150);
-  expect(await paidAmount(seed.staleTripId, 2)).toBe(50);
+  expect(await paidAmount(seed.staleTripId, 1)).toBe(100);
+  expect(await paidAmount(seed.staleTripId, 2)).toBe(100);
 });
