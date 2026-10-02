@@ -288,11 +288,12 @@ test("E2E5 PENDING bloquea y el endpoint rechaza directo", async ({ page }) => {
 });
 
 test("E2E6 cuota posterior es rechazada en UI y API", async () => {
+  // Trip fresco: la segunda cuota nunca es anchor válido.
   const installments = (await getJson(api, "/api/v1/payments/my/installments", seed.userToken) as Array<Record<string, unknown>>)
-    .filter((i) => Number(i.tripId) === seed.threeTripId)
+    .filter((i) => Number(i.tripId) === seed.quickTripId)
     .sort((a, b) => Number(a.installmentNumber) - Number(b.installmentNumber));
-  const fourth = installments[2];
-  const anchorId = Number(fourth.installmentId);
+  const second = installments[1];
+  const anchorId = Number(second.installmentId);
   const ctxRes = await api.get(
     `/api/v1/payments/manual-imputations/context?installmentId=${anchorId}`,
     { headers: { Authorization: `Bearer ${seed.adminToken}` } },
