@@ -231,12 +231,23 @@ export function PaymentDrawer({ installment, row, tripCurrency, onClose }: Payme
                 </div>
                 <div>
                   <span className={styles.strong}>Monto reportado:</span>{" "}
-                  {formatMoneyByCurrency(entry.reportedAmount, entry.paymentCurrency)}
+                  {formatMoneyByCurrency(entry.originalReportedAmount, entry.paymentCurrency)}
+                </div>
+                <div>
+                  <span className={styles.strong}>Monto acreditado asignado:</span>{" "}
+                  {formatMoneyByCurrency(entry.reportedAmount, entry.allocationCurrency)}
                 </div>
                 <div>
                   <span className={styles.strong}>Equivalente imputado al viaje:</span>{" "}
                   {formatTripMoney(Number.parseFloat(entry.amountInTripCurrency), tripCurrency)}
                 </div>
+                {entry.allocationExchangeRate !== null ? (
+                  <div>
+                    <span className={styles.strong}>Cotización de la acreditación:</span>{" "}
+                    {entry.allocationExchangeRate} ARS por USD
+                    {entry.allocationQuoteEffectiveDate ? ` · ${formatDate(entry.allocationQuoteEffectiveDate)}` : ""}
+                  </div>
+                ) : null}
                 <div>
                   <span className={styles.strong}>Fecha:</span> {formatDate(entry.reportedPaymentDate)}
                 </div>

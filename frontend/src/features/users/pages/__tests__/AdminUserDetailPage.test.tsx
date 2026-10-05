@@ -53,6 +53,9 @@ describe("AdminUserDetailPage", () => {
               status: "APPROVED",
               reportedAmount: "15000.00",
               approvedAmount: "15000.00",
+              approvedCurrency: "ARS", approvedExchangeRate: null, approvedQuoteRequestedDate: null,
+              approvedQuoteEffectiveDate: null, approvedQuoteSource: null, approvedQuoteProvider: null,
+              approvedQuoteProviderTimestamp: null, approvedCalculationVersion: "2", rejectedCurrency: null,
               rejectedAmount: "0.00",
               paymentCurrency: "ARS",
               exchangeRate: null,
@@ -83,6 +86,7 @@ describe("AdminUserDetailPage", () => {
                   reportedAmount: "15000.00",
                   amountInTripCurrency: "15000.00",
                   status: "APPROVED",
+                  allocationCurrency: "ARS",
                 },
               ],
               source: "CUSTOMER_SUBMISSION",
@@ -93,6 +97,9 @@ describe("AdminUserDetailPage", () => {
               status: "APPROVED",
               reportedAmount: "100.00",
               approvedAmount: "100.00",
+              approvedCurrency: "ARS", approvedExchangeRate: null, approvedQuoteRequestedDate: null,
+              approvedQuoteEffectiveDate: null, approvedQuoteSource: null, approvedQuoteProvider: null,
+              approvedQuoteProviderTimestamp: null, approvedCalculationVersion: "2", rejectedCurrency: null,
               rejectedAmount: "0.00",
               paymentCurrency: "ARS",
               exchangeRate: null,
@@ -152,6 +159,9 @@ describe("AdminUserDetailPage", () => {
               status: "APPROVED",
               reportedAmount: "100.00",
               approvedAmount: "100.00",
+              approvedCurrency: "ARS", approvedExchangeRate: null, approvedQuoteRequestedDate: null,
+              approvedQuoteEffectiveDate: null, approvedQuoteSource: null, approvedQuoteProvider: null,
+              approvedQuoteProviderTimestamp: null, approvedCalculationVersion: "2", rejectedCurrency: null,
               rejectedAmount: "0.00",
               paymentCurrency: "ARS",
               exchangeRate: null,
@@ -188,5 +198,30 @@ describe("AdminUserDetailPage", () => {
     // Sin fila de cuenta para manuales.
     expect(screen.queryByText("Cuenta acreditada")).not.toBeInTheDocument();
     expect(screen.queryByText("Observación:")).not.toBeInTheDocument();
+  });
+
+  it("labels original ARS and administrative USD amounts independently", async () => {
+    server.use(http.get("http://localhost:30002/api/v1/users/admin/12/detail", () => HttpResponse.json({
+      id: 12, email: "clara@test.com", name: "Clara", lastname: "Benitez", dni: "33444555",
+      phone: "1133344455", role: "USER", students: [], installments: [], payments: [{
+        submissionId: 503, status: "PARTIALLY_APPROVED", reportedAmount: "306000.00", approvedAmount: "150.00",
+        rejectedAmount: "76500.00", paymentCurrency: "ARS", exchangeRate: "1530.00000000",
+        amountInTripCurrency: "200.00", approvedAmountInTripCurrency: "150.00", reportedPaymentDate: "2026-09-03",
+        approvedCurrency: "USD", approvedExchangeRate: null, approvedQuoteRequestedDate: null,
+        approvedQuoteEffectiveDate: null, approvedQuoteSource: null, approvedQuoteProvider: null,
+        approvedQuoteProviderTimestamp: null, approvedCalculationVersion: "2", rejectedCurrency: "ARS",
+        paymentMethod: "CASH", fileKey: "", adminObservation: "Confirmed credit", bankAccountId: null,
+        bankAccountDisplayName: null, bankAccountAlias: null, tripId: 9, tripName: "Trip", tripCurrency: "USD",
+        studentId: null, studentName: null, studentDni: null, installments: [], source: "CUSTOMER_SUBMISSION",
+      }],
+    })));
+    renderWithProviders(<AdminUserDetailPage userId={12} />, "ROLE_ADMIN");
+    await screen.findByText("Pago #503");
+    expect(screen.getByText("Monto informado").nextElementSibling).toHaveTextContent("306.000,00");
+    expect(screen.getByText("Monto informado").nextElementSibling).not.toHaveTextContent("US$");
+    expect(screen.getByText("Aprobado", { selector: "span" }).nextElementSibling).toHaveTextContent("US$");
+    expect(screen.getByText("Imputado al viaje").nextElementSibling).toHaveTextContent("US$");
+    expect(screen.getByText(/Rechazado:/)).toHaveTextContent("76.500,00");
+    expect(screen.queryByText(/Cotización de la aprobación:/)).not.toBeInTheDocument();
   });
 });

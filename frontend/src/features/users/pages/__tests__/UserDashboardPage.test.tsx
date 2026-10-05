@@ -20,6 +20,9 @@ const account = (currency: "ARS" | "USD", id: number) => ({
   taxId: "20-123", cbu: "456", alias: `ICBC.${currency}`, currency, active: true, displayOrder: id,
 });
 const submission = {
+  approvedCurrency: null, approvedExchangeRate: null, approvedQuoteRequestedDate: null,
+  approvedQuoteEffectiveDate: null, approvedQuoteSource: null, approvedQuoteProvider: null,
+  approvedQuoteProviderTimestamp: null, approvedCalculationVersion: null, rejectedCurrency: null,
   submissionId: 999, status: "PENDING", reportedAmount: "12.00", approvedAmount: "0.00",
   rejectedAmount: "0.00", paymentCurrency: "ARS", exchangeRate: null,
   amountInTripCurrency: "12.00", approvedAmountInTripCurrency: "0.00", reportedPaymentDate: "2026-03-31",
@@ -58,7 +61,8 @@ function setup(options: {
         maxAllowedAmount: "200.00", tripCurrencyResidual: "0.00", exchangeRate: null,
         reportedPaymentDate: body.reportedPaymentDate, calculationVersion: "2",
         previewToken: reply.token === undefined ? `token-${body.paymentCurrency}-${reportedAmount}` : reply.token,
-        installments: reply.installments ?? [], message: reply.status && reply.status !== "READY" ? reply.status : null,
+        installments: (reply.installments ?? []).map((item) => ({ ...item, allocationCurrency: body.paymentCurrency })),
+        message: reply.status && reply.status !== "READY" ? reply.status : null,
       });
     }),
     http.post(`${ROOT}/payments`, async ({ request }) => {
@@ -90,7 +94,7 @@ function otherDate(): string {
 const allocation = (installmentId: number, number: number, amount: string, status: string | null) => ({
   receiptId: null, installmentId, installmentNumber: number, dueDate: `2026-0${number + 5}-25`,
   totalDue: "200.00", paidAmount: "0.00", remainingAmount: "200.00",
-  reportedAmount: amount, amountInTripCurrency: amount, status,
+  reportedAmount: amount, amountInTripCurrency: amount, allocationCurrency: "ARS", status,
 });
 
 /** Capture browser File objects before MSW's Node serializer loses jsdom file names/content. */

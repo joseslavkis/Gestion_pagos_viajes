@@ -433,6 +433,7 @@ public class ManualImputationService {
             outcome.setStatus(PaymentOutcomeStatus.APPROVED);
             outcome.setReportedAmount(plan.reportedAmount());
             outcome.setAmountInTripCurrency(plan.amountInTripCurrency());
+            outcome.applySnapshot(PaymentOutcomeSnapshot.fromSubmission(saved));
             outcome.setAdminObservation(manualReason);
             outcome.setResolvedByEmail(adminEmail);
             PaymentOutcome savedOutcome = paymentOutcomeRepository.save(outcome);
@@ -480,7 +481,7 @@ public class ManualImputationService {
                         a.remainingAmount(),
                         a.reportedAmount(),
                         a.amountInTripCurrency(),
-                        ReceiptStatus.APPROVED))
+                        ReceiptStatus.APPROVED, outcome.getCurrency()))
                 .toList();
         BigDecimal zero = BigDecimal.ZERO.setScale(PaymentMoneyPolicy.MONEY_SCALE);
         return new PaymentSubmissionDTO(
@@ -515,7 +516,14 @@ public class ManualImputationService {
                 installments,
                 attachmentRefs(submission),
                 PaymentSubmissionSource.ADMIN_MANUAL,
-                submission.getManualReason());
+                submission.getManualReason(),
+                outcome.getCurrency(),
+                outcome.getExchangeRate() == null || outcome.getExchangeRateScale() == null
+                        ? outcome.getExchangeRate()
+                        : outcome.getExchangeRate().setScale(outcome.getExchangeRateScale(), RoundingMode.UNNECESSARY),
+                outcome.getExchangeRateRequestedDate(), outcome.getExchangeRateEffectiveDate(),
+                outcome.getExchangeRateSource(), outcome.getExchangeRateProvider(),
+                outcome.getExchangeRateProviderTimestamp(), outcome.getCalculationVersion(), null);
     }
 
     private User getAdminByEmail(String email) {

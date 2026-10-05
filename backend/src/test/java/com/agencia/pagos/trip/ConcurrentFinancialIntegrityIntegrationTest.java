@@ -112,6 +112,64 @@ class ConcurrentFinancialIntegrityIntegrationTest extends ControllerIntegrationT
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @MockBean
+    private com.agencia.pagos.payment.ExchangeRateService exchangeRateService;
+
+    @Test
+    void historicalQuotePreparationRaceRevalidatesPendingAfterAnotherReviewCommits() throws Exception {
+        PaymentFixture fixture = createPaymentFixture(false);
+        LocalDate date = fixture.submission().getReportedPaymentDate();
+        CountDownLatch quoteStarted = new CountDownLatch(1);
+        CountDownLatch releaseQuote = new CountDownLatch(1);
+        org.mockito.Mockito.when(exchangeRateService.getOfficialQuoteForDate(date)).thenAnswer(invocation -> {
+            assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());
+            quoteStarted.countDown();
+            await(releaseQuote, "historical quote release");
+            return new com.agencia.pagos.payment.ExchangeRateQuote(new BigDecimal("100"), date, date,
+                    "test-history", "test-provider", "test-time");
+        });
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<?> preparedReview = executor.submit(() -> paymentServiceSpy.reviewPayment(fixture.submission().getId(),
+                    new ReviewPaymentDTO(new BigDecimal("1.00"), Currency.USD, "Confirmed USD credit"), "admin@test.com"));
+            assertTrue(quoteStarted.await(10, TimeUnit.SECONDS));
+            paymentServiceSpy.reviewPayment(fixture.submission().getId(),
+                    new ReviewPaymentDTO(new BigDecimal("100.00"), Currency.ARS, null), "admin@test.com");
+            releaseQuote.countDown();
+            var error = org.junit.jupiter.api.Assertions.assertThrows(java.util.concurrent.ExecutionException.class,
+                    () -> preparedReview.get(10, TimeUnit.SECONDS));
+            assertEquals("Este pago ya fue revisado", error.getCause().getMessage());
+            assertEquals(1, paymentOutcomeRepository.count());
+            assertEquals(new BigDecimal("100.00"), allocationSum(fixture.submission().getId(), "amount_in_trip_currency"));
+            assertEquals(new BigDecimal("100.00"), installmentRepository.findById(
+                    fixture.submission().getAnchorInstallment().getId()).orElseThrow().getPaidAmount());
+        } finally {
+            releaseQuote.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void historicalQuotePreparationRejectsChangedApplicabilityScopeBeforeAccounting() {
+        PaymentFixture fixture = createPaymentFixture(false);
+        LocalDate date = fixture.submission().getReportedPaymentDate();
+        org.mockito.Mockito.when(exchangeRateService.getOfficialQuoteForDate(date)).thenAnswer(invocation -> {
+            transactionTemplate.executeWithoutResult(status -> jdbcTemplate.update(
+                    "UPDATE payment_submissions SET reported_payment_date = ? WHERE id = ?",
+                    date.minusDays(1), fixture.submission().getId()));
+            return new com.agencia.pagos.payment.ExchangeRateQuote(new BigDecimal("100"), date, date,
+                    "test-history", "test-provider", "test-time");
+        });
+        var error = org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                () -> paymentServiceSpy.reviewPayment(fixture.submission().getId(),
+                        new ReviewPaymentDTO(new BigDecimal("1.00"), Currency.USD, "Confirmed USD credit"), "admin@test.com"));
+        assertEquals("El pago cambió durante la revisión. Actualice la información e intente nuevamente.", error.getMessage());
+        assertEquals(0, paymentOutcomeRepository.count());
+        assertEquals(0, paymentAllocationRepository.count());
+        assertEquals(PaymentSubmissionStatus.PENDING, paymentSubmissionRepository.findById(fixture.submission().getId()).orElseThrow().getStatus());
+        assertEquals(new BigDecimal("0.00"), installmentRepository.findById(fixture.submission().getAnchorInstallment().getId()).orElseThrow().getPaidAmount());
+    }
+
     @Test
     void registration_preservesTripThenScopedInstallmentsLockOrderAgainstUnassign() {
         RegistrationFixture fixture = createRegistrationFixture();
@@ -147,7 +205,7 @@ class ConcurrentFinancialIntegrityIntegrationTest extends ControllerIntegrationT
 
         paymentServiceSpy.reviewPayment(
                 submission.getId(),
-                new ReviewPaymentDTO(new BigDecimal("100.00"), null),
+                new ReviewPaymentDTO(new BigDecimal("100.00"), Currency.ARS, null),
                 "admin@test.com");
 
         org.mockito.InOrder lockOrder = inOrder(paymentSubmissionRepositorySpy, installmentRepositorySpy);
@@ -180,7 +238,7 @@ class ConcurrentFinancialIntegrityIntegrationTest extends ControllerIntegrationT
 
         ConcurrentOperationResult result = runConcurrently(() -> paymentServiceSpy.reviewPayment(
                 fixture.submission().getId(),
-                new ReviewPaymentDTO(new BigDecimal("1.00"), null),
+                new ReviewPaymentDTO(new BigDecimal("1.00"), Currency.USD, null),
                 "admin@test.com"
         ));
 
@@ -322,7 +380,7 @@ class ConcurrentFinancialIntegrityIntegrationTest extends ControllerIntegrationT
                 );
                 payment = executor.submit(() -> paymentServiceSpy.reviewPayment(
                         fixture.submission().getId(),
-                        new ReviewPaymentDTO(new BigDecimal("100.00"), null),
+                        new ReviewPaymentDTO(new BigDecimal("100.00"), Currency.ARS, null),
                         "admin@test.com"
                 ));
             } else {
@@ -691,6 +749,7 @@ class ConcurrentFinancialIntegrityIntegrationTest extends ControllerIntegrationT
         if (approved) {
             outcome = new PaymentOutcome();
             outcome.setSubmission(submission);
+            outcome.applySnapshot(com.agencia.pagos.payment.PaymentOutcomeSnapshot.fromSubmission(submission));
             outcome.setStatus(PaymentOutcomeStatus.APPROVED);
             outcome.setReportedAmount(new BigDecimal("100.00"));
             outcome.setAmountInTripCurrency(new BigDecimal("100.00"));
@@ -730,6 +789,7 @@ class ConcurrentFinancialIntegrityIntegrationTest extends ControllerIntegrationT
 
         if (fixture.outcome() != null) {
             fixture.outcome().setReportedAmount(new BigDecimal("1.00"));
+            fixture.outcome().applySnapshot(com.agencia.pagos.payment.PaymentOutcomeSnapshot.fromSubmission(submission));
             paymentOutcomeRepository.save(fixture.outcome());
             fixture.outcome().getAllocations().forEach(allocation -> {
                 allocation.setReportedAmount(new BigDecimal("1.00"));

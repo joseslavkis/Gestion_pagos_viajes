@@ -14,6 +14,15 @@ const historyEntry = (overrides: Partial<PaymentInstallmentHistoryDTO> = {}): Pa
   installmentNumber: 1,
   reportedAmount: "240000.00",
   paymentCurrency: "ARS",
+  originalReportedAmount: overrides.reportedAmount ?? "240000.00",
+  allocationCurrency: overrides.paymentCurrency ?? "ARS",
+  allocationExchangeRate: null,
+  allocationQuoteRequestedDate: null,
+  allocationQuoteEffectiveDate: null,
+  allocationQuoteSource: null,
+  allocationQuoteProvider: null,
+  allocationQuoteProviderTimestamp: null,
+  allocationCalculationVersion: null,
   exchangeRate: "1200",
   amountInTripCurrency: "200.00",
   reportedPaymentDate: "2026-05-10",
@@ -109,6 +118,32 @@ function historyRow(label: RegExp): HTMLElement {
 }
 
 describe("PaymentDrawer", () => {
+  it("keeps the original ARS report separate from accredited USD allocations", async () => {
+    await renderDrawer("USD", 200, historyEntry({
+      originalReportedAmount: "306000.00", reportedAmount: "150.00",
+      paymentCurrency: "ARS", allocationCurrency: "USD", amountInTripCurrency: "150.00",
+    }));
+    expect(historyRow(/Monto reportado:/)).toHaveTextContent("306.000,00");
+    expect(historyRow(/Monto reportado:/)).not.toHaveTextContent("US$");
+    expect(historyRow(/Monto acreditado asignado:/)).toHaveTextContent("US$");
+    expect(historyRow(/Monto acreditado asignado:/)).toHaveTextContent("150,00");
+    expect(historyRow(/Equivalente imputado al viaje:/)).toHaveTextContent("150,00");
+    expect(screen.queryByText(/Cotización de la acreditación:/)).not.toBeInTheDocument();
+  });
+
+  it("retains the approved historical quote on voided ARS credit to a USD trip", async () => {
+    await renderDrawer("USD", 200, historyEntry({
+      originalReportedAmount: "200.00", paymentCurrency: "USD", exchangeRate: null,
+      reportedAmount: "153000.00", allocationCurrency: "ARS", amountInTripCurrency: "100.00",
+      allocationExchangeRate: "1530.00000000", allocationQuoteEffectiveDate: "2026-09-02", status: "VOIDED",
+    }));
+    expect(historyRow(/Monto reportado:/)).toHaveTextContent("US$");
+    expect(historyRow(/Monto acreditado asignado:/)).toHaveTextContent("153.000,00");
+    expect(historyRow(/Monto acreditado asignado:/)).not.toHaveTextContent("US$");
+    expect(historyRow(/Cotización de la acreditación:/)).toHaveTextContent("1530.00000000 ARS por USD");
+    expect(historyRow(/Cotización de la acreditación:/)).toHaveTextContent("02/09/2026");
+    expect(screen.getByText("Anulado")).toBeInTheDocument();
+  });
   it("muestra alumno primero y usa color neutral para Al día", async () => {
     await renderDrawer("ARS", 1000, historyEntry());
 

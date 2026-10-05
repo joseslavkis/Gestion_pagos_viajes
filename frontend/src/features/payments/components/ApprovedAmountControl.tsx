@@ -20,6 +20,8 @@ export type ApprovedAmountControlProps = {
   inputId: string;
   reportedAmount: DecimalString;
   paymentCurrency: Currency;
+  originalCurrency: Currency;
+  disabled: boolean;
   value: string;
   validationError: string | null;
   validAmount: DecimalString | null;
@@ -41,6 +43,8 @@ export function ApprovedAmountControl({
   inputId,
   reportedAmount,
   paymentCurrency,
+  originalCurrency,
+  disabled,
   value,
   validationError,
   validAmount,
@@ -58,7 +62,8 @@ export function ApprovedAmountControl({
     [baseRange, upperOverrideCents],
   );
 
-  const validCents = validAmount == null ? null : decimalStringToCents(validAmount);
+  const canCompareOriginalAmount = paymentCurrency === originalCurrency;
+  const validCents = !canCompareOriginalAmount || validAmount == null ? null : decimalStringToCents(validAmount);
 
   // When the manual input is invalid the thumb freezes at the last valid
   // position instead of jumping back to the center.
@@ -74,7 +79,7 @@ export function ApprovedAmountControl({
   const handleManualChange = (next: string) => {
     onValueChange(next);
     const cents = decimalStringToCents(next);
-    if (cents != null && cents > range.upperCents && !exceedsMaxMoney(next)) {
+    if (canCompareOriginalAmount && cents != null && cents > range.upperCents && !exceedsMaxMoney(next)) {
       onUpperOverrideChange(cents);
     }
   };
@@ -112,6 +117,7 @@ export function ApprovedAmountControl({
             id={inputId}
             className={styles.amountInput}
             value={value}
+            disabled={disabled}
             aria-invalid={validationError != null}
             aria-describedby={validationError ? errorId : undefined}
             onChange={(event) => handleManualChange(event.target.value)}
@@ -126,6 +132,7 @@ export function ApprovedAmountControl({
         </p>
       ) : null}
 
+      {canCompareOriginalAmount ? <>
       <div className={styles.sliderGroup}>
         <input
           type="range"
@@ -134,6 +141,7 @@ export function ApprovedAmountControl({
           max={SLIDER_MAX_POSITION}
           step={1}
           value={position}
+          disabled={disabled}
           onChange={(event) => handleSliderChange(Number(event.target.value))}
           aria-label="Corregir monto con barra deslizante"
           aria-valuetext={sliderValueText}
@@ -145,9 +153,10 @@ export function ApprovedAmountControl({
         <span className={styles.scaleCenter}>Informado</span>
         <span>Más</span>
       </div>
+      </> : null}
 
       <div className={styles.badgeRow} aria-live="polite">
-        {correction === "none" ? (
+        {canCompareOriginalAmount && correction === "none" ? (
           <span className={styles.neutralNote}>{correctionLabel}</span>
         ) : (
           <span className={styles.correctionBadge}>{correctionLabel}</span>
@@ -158,8 +167,8 @@ export function ApprovedAmountControl({
           {differenceLabel}
         </p>
       ) : null}
-      {correction !== "none" && validAmount != null ? (
-        <button type="button" className={styles.resetButton} onClick={onReset}>
+      {!canCompareOriginalAmount || value === "" || (correction !== "none" && validAmount != null) ? (
+        <button type="button" className={styles.resetButton} onClick={onReset} disabled={disabled}>
           Restablecer al monto informado
         </button>
       ) : null}

@@ -1,6 +1,7 @@
 package com.agencia.pagos.payment.dto;
 
 import com.agencia.pagos.payment.ReceiptStatus;
+import com.agencia.pagos.shared.money.Currency;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 
 import java.math.BigDecimal;
@@ -16,6 +17,7 @@ public record PaymentBatchInstallmentDTO(
         @JsonSerialize(using = CanonicalDecimalSerializer.class) BigDecimal remainingAmount,
         @JsonSerialize(using = CanonicalDecimalSerializer.class) BigDecimal reportedAmount,
         @JsonSerialize(using = CanonicalDecimalSerializer.class) BigDecimal amountInTripCurrency,
-        ReceiptStatus status
+        ReceiptStatus status,
+        Currency allocationCurrency
 ) {
 }

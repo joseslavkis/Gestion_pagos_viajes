@@ -51,6 +51,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
@@ -107,6 +108,7 @@ public class PaymentService {
     private final PaymentAttachmentStorageService paymentAttachmentStorageService;
     private final PaymentPreviewTokenService paymentPreviewTokenService;
     private final PaymentBusinessDatePolicy paymentBusinessDatePolicy;
+    private final PaymentReviewService paymentReviewService;
 
     @Autowired
     public PaymentService(
@@ -127,7 +129,8 @@ public class PaymentService {
             PaymentInstallmentOverlayService paymentInstallmentOverlayService,
             PaymentAttachmentStorageService paymentAttachmentStorageService,
             PaymentPreviewTokenService paymentPreviewTokenService,
-            PaymentBusinessDatePolicy paymentBusinessDatePolicy
+            PaymentBusinessDatePolicy paymentBusinessDatePolicy,
+            PaymentReviewService paymentReviewService
     ) {
         this.paymentReceiptRepository = paymentReceiptRepository;
         this.paymentBatchRepository = paymentBatchRepository;
@@ -147,6 +150,7 @@ public class PaymentService {
         this.paymentAttachmentStorageService = paymentAttachmentStorageService;
         this.paymentPreviewTokenService = paymentPreviewTokenService;
         this.paymentBusinessDatePolicy = paymentBusinessDatePolicy;
+        this.paymentReviewService = paymentReviewService;
     }
 
     @Transactional(readOnly = true)
@@ -316,7 +320,7 @@ public class PaymentService {
                 quote == null ? null : quote.providerTimestamp(),
                 PaymentPreviewTokenService.CURRENT_CALCULATION_VERSION,
                 previewToken,
-                toInstallmentDTOs(plan.allocations(), null),
+                toInstallmentDTOs(plan.allocations(), null, plan.paymentCurrency()),
                 null
         );
     }
@@ -580,7 +584,7 @@ public class PaymentService {
             }
             submission.setFileKey(written.isEmpty() ? "" : written.get(0));
             PaymentSubmission saved = paymentSubmissionRepository.save(submission);
-            return toSubmissionDTO(saved, toInstallmentDTOs(plan.allocations(), null));
+            return toSubmissionDTO(saved, toInstallmentDTOs(plan.allocations(), null, plan.paymentCurrency()));
         } catch (RuntimeException exception) {
             cleanupWrittenAttachments(written);
             if (!written.isEmpty()) {
@@ -673,149 +677,9 @@ public class PaymentService {
         return keys.isEmpty() ? "" : keys.get(0);
     }
 
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public PaymentSubmissionDTO reviewPayment(Long submissionId, ReviewPaymentDTO dto, String reviewerEmail) {
-        paymentSubmissionRepository.findByIdForUpdate(submissionId)
-                .orElseThrow(() -> new EntityNotFoundException("PaymentSubmission not found with id " + submissionId));
-        PaymentSubmission submission = paymentSubmissionRepository.findByIdWithContext(submissionId)
-                .orElseThrow(() -> new EntityNotFoundException("PaymentSubmission not found with id " + submissionId));
-
-        if (submission.getStatus() != PaymentSubmissionStatus.PENDING) {
-            throw new IllegalStateException("Este pago ya fue revisado");
-        }
-
-        BigDecimal approvedAmount = paymentMoneyPolicy.requirePersistableMoney(dto.approvedAmount(), "approvedAmount");
-        BigDecimal reportedAmount = paymentMoneyPolicy.requireMoney(submission.getReportedAmount(), "reportedAmount");
-        if (approvedAmount.compareTo(BigDecimal.ZERO) < 0) {
-            throw new IllegalArgumentException("El monto aprobado no puede ser negativo");
-        }
-
-        // Administrative correction: the approved amount may be higher or lower than
-        // what the client reported. The reported amount stays immutable; the approved
-        // outcome carries the real credited amount. rejectedAmount is only meaningful
-        // for downward corrections, so it is clamped at zero and never negative.
-        BigDecimal rejectedAmount = reportedAmount.subtract(approvedAmount).setScale(2, RoundingMode.HALF_UP);
-        if (rejectedAmount.compareTo(BigDecimal.ZERO) < 0) {
-            rejectedAmount = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
-        }
-        if (approvedAmount.compareTo(reportedAmount) != 0
-                && (dto.adminObservation() == null || dto.adminObservation().isBlank())) {
-            throw new IllegalStateException("Se requiere una observación al corregir el monto informado");
-        }
-        String trimmedObservation = dto.adminObservation() == null ? null : dto.adminObservation().trim();
-        if (trimmedObservation != null && trimmedObservation.length() > 500) {
-            throw new IllegalArgumentException(
-                    "La observación administrativa no puede superar los 500 caracteres");
-        }
-
-        List<Installment> scopedInstallments = installmentRepository.findByTripIdAndUserIdAndStudentIdForUpdate(
-                submission.getTrip().getId(),
-                submission.getUser().getId(),
-                submission.getStudent() != null ? submission.getStudent().getId() : null
-        );
-
-        // The historical converted cents of a v1 cross-currency partial cannot
-        // be reconstructed from the rounded rate; require manual reconciliation.
-        // This also covers upward administrative corrections on legacy
-        // cross-currency submissions, which cannot be derived safely either.
-        // Rejections (approved = 0) remain allowed without reconstruction.
-        if (isLegacyPendingSubmission(submission) && approvedAmount.signum() > 0
-                && approvedAmount.compareTo(reportedAmount) != 0
-                && submission.getPaymentCurrency() != submission.getTrip().getCurrency()) {
-            throw new IllegalStateException(
-                    "Conflicto administrativo: un pago histórico v1 requiere conciliación manual para corrección administrativa");
-        }
-
-        BigDecimal approvedTripAmount = BigDecimal.ZERO;
-        if (approvedAmount.compareTo(BigDecimal.ZERO) > 0) {
-            PaymentAllocationPlanner.PlanResult approvedPlan;
-            try {
-                approvedPlan = paymentAllocationPlanner.plan(
-                        scopedInstallments,
-                        approvedAmount,
-                        submission.getPaymentCurrency(),
-                        submission.getExchangeRate()
-                );
-            } catch (PaymentBalanceExceededException exception) {
-                throw new IllegalStateException(exception.getMessage(), exception);
-            }
-            paymentAllocationPlanner.assertConservation(approvedPlan);
-            if (isLegacyPendingSubmission(submission) && approvedAmount.compareTo(reportedAmount) == 0
-                    && approvedPlan.amountInTripCurrency().compareTo(paymentMoneyPolicy.requireMoney(
-                            submission.getAmountInTripCurrency(), "amountInTripCurrency")) != 0) {
-                throw new IllegalStateException(
-                        "Conflicto administrativo: el importe histórico v1 no coincide con el saldo convertido persistido");
-            }
-            approvedTripAmount = approvedPlan.amountInTripCurrency();
-
-            PaymentOutcome approvedOutcome = new PaymentOutcome();
-            approvedOutcome.setSubmission(submission);
-            approvedOutcome.setStatus(PaymentOutcomeStatus.APPROVED);
-            approvedOutcome.setReportedAmount(approvedPlan.reportedAmount());
-            approvedOutcome.setAmountInTripCurrency(approvedPlan.amountInTripCurrency());
-            // The correction reason must survive on the approved outcome itself:
-            // upward corrections have no REJECTED outcome to carry it.
-            // For legacy v1 the human reason is persisted verbatim when the
-            // amount was corrected: prefixing the technical reconciliation note
-            // could overflow the 500-char column, and the v1 calculation
-            // version on the submission already identifies the legacy origin.
-            // Without correction the technical note is kept as before.
-            // trimmedObservation was length-checked on entry, so it always fits.
-            boolean corrected = approvedAmount.compareTo(reportedAmount) != 0;
-            String legacyObservation = !isLegacyPendingSubmission(submission)
-                    ? null
-                    : !corrected
-                            ? LEGACY_RECONCILIATION_OBSERVATION
-                            : trimmedObservation;
-            approvedOutcome.setAdminObservation(legacyObservation != null
-                    ? legacyObservation
-                    : (trimmedObservation == null || trimmedObservation.isEmpty()
-                            ? null
-                            : trimmedObservation));
-            approvedOutcome.setResolvedByEmail(reviewerEmail);
-            PaymentOutcome savedOutcome = paymentOutcomeRepository.save(approvedOutcome);
-            submission.getOutcomes().add(savedOutcome);
-
-            List<PaymentAllocation> allocations = new ArrayList<>();
-            for (PaymentAllocationPlanner.PlannedAllocation allocation : approvedPlan.allocations()) {
-                Installment installment = allocation.installment();
-                installment.setPaidAmount(safeAmount(installment.getPaidAmount()).add(allocation.amountInTripCurrency()));
-
-                PaymentAllocation entity = new PaymentAllocation();
-                entity.setOutcome(savedOutcome);
-                entity.setInstallment(installment);
-                entity.setAllocationOrder(allocation.allocationOrder());
-                entity.setReportedAmount(allocation.reportedAmount());
-                entity.setAmountInTripCurrency(allocation.amountInTripCurrency());
-                allocations.add(entity);
-            }
-            installmentRepository.saveAll(scopedInstallments);
-            paymentAllocationRepository.saveAll(allocations);
-            savedOutcome.getAllocations().addAll(allocations);
-        }
-
-        if (rejectedAmount.compareTo(BigDecimal.ZERO) > 0) {
-            BigDecimal rejectedTripAmount = paymentMoneyPolicy.requireMoney(
-                    submission.getAmountInTripCurrency(), "amountInTripCurrency")
-                    .subtract(approvedTripAmount)
-                    .setScale(PaymentMoneyPolicy.MONEY_SCALE, RoundingMode.UNNECESSARY);
-            if (rejectedTripAmount.signum() < 0) {
-                throw new IllegalStateException(
-                        "FIN-001: los resultados aprobado y rechazado superan el importe convertido original");
-            }
-            PaymentOutcome rejectedOutcome = new PaymentOutcome();
-            rejectedOutcome.setSubmission(submission);
-            rejectedOutcome.setStatus(PaymentOutcomeStatus.REJECTED);
-            rejectedOutcome.setReportedAmount(rejectedAmount);
-            rejectedOutcome.setAmountInTripCurrency(rejectedTripAmount);
-            rejectedOutcome.setAdminObservation(trimmedObservation);
-            rejectedOutcome.setResolvedByEmail(reviewerEmail);
-            submission.getOutcomes().add(paymentOutcomeRepository.save(rejectedOutcome));
-        }
-
-        submission.setStatus(PaymentSubmissionStatus.RESOLVED);
-        paymentSubmissionRepository.save(submission);
-
-        return toSubmissionDTO(paymentSubmissionRepository.findByIdWithContext(submissionId).orElseThrow(), null);
+        return toSubmissionDTO(paymentReviewService.review(submissionId, dto, reviewerEmail), null);
     }
 
     public PaymentSubmissionDTO voidPayment(Long submissionId, String reviewerEmail) {
@@ -864,6 +728,7 @@ public class PaymentService {
         voidOutcome.setStatus(PaymentOutcomeStatus.VOIDED);
         voidOutcome.setReportedAmount(approvedOutcome.getReportedAmount());
         voidOutcome.setAmountInTripCurrency(approvedOutcome.getAmountInTripCurrency());
+        voidOutcome.applySnapshot(PaymentOutcomeSnapshot.fromOutcome(approvedOutcome));
         voidOutcome.setAdminObservation("Anulado por administrador");
         voidOutcome.setResolvedByEmail(reviewerEmail);
         submission.getOutcomes().add(paymentOutcomeRepository.save(voidOutcome));
@@ -1252,7 +1117,7 @@ public class PaymentService {
                 quote == null ? null : quote.providerTimestamp(),
                 PaymentPreviewTokenService.CURRENT_CALCULATION_VERSION,
                 previewToken,
-                toInstallmentDTOs(plan.allocations(), null)
+                toInstallmentDTOs(plan.allocations(), null, plan.paymentCurrency())
         );
     }
 
@@ -1321,7 +1186,17 @@ public class PaymentService {
                 submission.getSource() != null
                         ? submission.getSource()
                         : PaymentSubmissionSource.CUSTOMER_SUBMISSION,
-                submission.getManualReason()
+                submission.getManualReason(),
+                approvedOutcome == null ? null : approvedOutcome.getCurrency(),
+                approvedOutcome == null ? null : outcomeExchangeRateForDto(approvedOutcome),
+                approvedOutcome == null ? null : approvedOutcome.getExchangeRateRequestedDate(),
+                approvedOutcome == null ? null : approvedOutcome.getExchangeRateEffectiveDate(),
+                approvedOutcome == null ? null : approvedOutcome.getExchangeRateSource(),
+                approvedOutcome == null ? null : approvedOutcome.getExchangeRateProvider(),
+                approvedOutcome == null ? null : approvedOutcome.getExchangeRateProviderTimestamp(),
+                approvedOutcome == null ? null : approvedOutcome.getCalculationVersion(),
+                submission.getOutcomes().stream().filter(o -> o.getStatus() == PaymentOutcomeStatus.REJECTED)
+                        .map(PaymentOutcome::getCurrency).findFirst().orElse(null)
         );
     }
 
@@ -1380,7 +1255,7 @@ public class PaymentService {
                     submission.getExchangeRate()
             );
             ReceiptStatus projectedStatus = status == PaymentHistoryStatus.PENDING ? ReceiptStatus.PENDING : ReceiptStatus.REJECTED;
-            return toInstallmentDTOs(plan.allocations(), projectedStatus);
+            return toInstallmentDTOs(plan.allocations(), projectedStatus, plan.paymentCurrency());
         } catch (IllegalStateException | IllegalArgumentException ex) {
             return List.of();
         }
@@ -1447,7 +1322,9 @@ public class PaymentService {
                 resolveBankAccountAlias(receipt),
                 references,
                 PaymentSubmissionSource.CUSTOMER_SUBMISSION,
-                null
+                null,
+                receipt.getReportedAmount(), receipt.getPaymentCurrency(), receipt.getExchangeRate(),
+                null, null, null, null, null, null
         );
     }
 
@@ -1480,7 +1357,16 @@ public class PaymentService {
                 submission.getSource() != null
                         ? submission.getSource()
                         : PaymentSubmissionSource.CUSTOMER_SUBMISSION,
-                submission.getManualReason()
+                submission.getManualReason(),
+                submission.getReportedAmount(),
+                allocation.getOutcome().getCurrency(),
+                outcomeExchangeRateForDto(allocation.getOutcome()),
+                allocation.getOutcome().getExchangeRateRequestedDate(),
+                allocation.getOutcome().getExchangeRateEffectiveDate(),
+                allocation.getOutcome().getExchangeRateSource(),
+                allocation.getOutcome().getExchangeRateProvider(),
+                allocation.getOutcome().getExchangeRateProviderTimestamp(),
+                allocation.getOutcome().getCalculationVersion()
         );
     }
 
@@ -1584,7 +1470,11 @@ public class PaymentService {
                 sortedReceipts.stream().map(this::toLegacyInstallmentDTO).toList(),
                 references,
                 PaymentSubmissionSource.CUSTOMER_SUBMISSION,
-                null
+                null,
+                hasApproved ? (batch != null ? batch.getPaymentCurrency() : firstReceipt.getPaymentCurrency()) : null,
+                hasApproved ? (batch != null ? batch.getExchangeRate() : firstReceipt.getExchangeRate()) : null,
+                null, null, null, null, null, null,
+                hasRejected ? (batch != null ? batch.getPaymentCurrency() : firstReceipt.getPaymentCurrency()) : null
         );
     }
 
@@ -1600,13 +1490,15 @@ public class PaymentService {
                 getRemainingAmount(installment),
                 receipt.getReportedAmount(),
                 receipt.getAmountInTripCurrency(),
-                receipt.getStatus()
+                receipt.getStatus(),
+                receipt.getPaymentCurrency()
         );
     }
 
     private List<PaymentBatchInstallmentDTO> toInstallmentDTOs(
             List<PaymentAllocationPlanner.PlannedAllocation> allocations,
-            ReceiptStatus status
+            ReceiptStatus status,
+            Currency allocationCurrency
     ) {
         return allocations.stream()
                 .map(allocation -> new PaymentBatchInstallmentDTO(
@@ -1619,7 +1511,8 @@ public class PaymentService {
                         allocation.remainingAmount(),
                         allocation.reportedAmount(),
                         allocation.amountInTripCurrency(),
-                        status
+                        status,
+                        allocationCurrency
                 ))
                 .toList();
     }
@@ -1636,7 +1529,8 @@ public class PaymentService {
                 getRemainingAmount(installment),
                 allocation.getReportedAmount(),
                 allocation.getAmountInTripCurrency(),
-                status
+                status,
+                allocation.getOutcome().getCurrency()
         );
     }
 
@@ -1737,6 +1631,12 @@ public class PaymentService {
             return rate;
         }
         return rate.setScale(scale, RoundingMode.UNNECESSARY);
+    }
+
+    private BigDecimal outcomeExchangeRateForDto(PaymentOutcome outcome) {
+        BigDecimal rate = outcome.getExchangeRate();
+        Integer scale = outcome.getExchangeRateScale();
+        return rate == null || scale == null ? rate : rate.setScale(scale, RoundingMode.UNNECESSARY);
     }
 
     private BigDecimal getRemainingAmount(Installment installment) {

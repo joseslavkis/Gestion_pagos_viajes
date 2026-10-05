@@ -55,6 +55,11 @@ public class GlobalControllerExceptionHandler {
             )
     )
     public ResponseEntity<Map<String, List<String>>> handleMethodArgumentInvalid(MethodArgumentNotValidException ex) {
+        if (ex.getBindingResult().getTarget() instanceof com.agencia.pagos.payment.dto.ReviewPaymentDTO) {
+            List<String> messages = ex.getBindingResult().getFieldErrors().stream()
+                    .map(FieldError::getDefaultMessage).distinct().toList();
+            return ResponseEntity.badRequest().body(Map.of("errors", messages));
+        }
         List<String> errors = ex.getBindingResult().getFieldErrors().stream()
                 .map(FieldError::getField)
                 .collect(Collectors.toSet())

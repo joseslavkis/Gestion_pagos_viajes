@@ -66,7 +66,8 @@ POSTGRES_PORT="${POSTGRES_PORT##*:}"
 
 (
   cd "$ROOT_DIR/backend"
-  ./mvnw -q -Dmaven.test.skip=true package dependency:build-classpath \
+  # Remove stale generated classes before selecting the executable main class.
+  ./mvnw -q -Dmaven.test.skip=true clean package dependency:build-classpath \
     -DincludeScope=runtime -Dmdep.outputFile="$TMP_DIR/runtime-classpath"
 )
 RUNTIME_CP="$ROOT_DIR/backend/target/classes:$(<"$TMP_DIR/runtime-classpath")"
@@ -91,6 +92,7 @@ start_backend() {
     --app.frontend.url="$FRONTEND_URL" \
     --app.notifications.installments.enabled=false \
     --app.storage.receipts.cleanup.enabled=false \
+    --app.storage.receipts.provider=inline \
     --payment.fx-test.call-log="$FX_CALL_LOG" "$@" >"$TMP_DIR/backend.log" 2>&1 &
   BACKEND_PID=$!
 }
@@ -121,8 +123,21 @@ BACKEND_PID=""
 
 docker exec -i "$POSTGRES_CONTAINER" psql -v ON_ERROR_STOP=1 -U payment_e2e -d payment_e2e \
   < "$ROOT_DIR/backend/sql/20260917_payment_money_invariants.sql" >/dev/null
+# Hibernate's empty bootstrap table lacks the migration's cascade/check constraints.
+# Replace only this empty disposable table, with the app stopped, using the actual SQL.
+docker exec "$POSTGRES_CONTAINER" psql -v ON_ERROR_STOP=1 -U payment_e2e -d payment_e2e \
+  -c 'DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM payment_submission_attachments) THEN
+      RAISE EXCEPTION '\''Disposable attachment bootstrap must be empty'\'';
+    END IF;
+    DROP TABLE payment_submission_attachments;
+  END $$;' >/dev/null
+docker exec -i "$POSTGRES_CONTAINER" psql -v ON_ERROR_STOP=1 -U payment_e2e -d payment_e2e \
+  < "$ROOT_DIR/backend/sql/20260928_payment_submission_attachments.sql" >/dev/null
 docker exec -i "$POSTGRES_CONTAINER" psql -v ON_ERROR_STOP=1 -U payment_e2e -d payment_e2e \
   < "$ROOT_DIR/backend/sql/20261002_manual_imputation.sql" >/dev/null
+docker exec -i "$POSTGRES_CONTAINER" psql -v ON_ERROR_STOP=1 -U payment_e2e -d payment_e2e \
+  < "$ROOT_DIR/backend/sql/20261005_admin_review_currency.sql" >/dev/null
 READINESS="$(docker exec -i "$POSTGRES_CONTAINER" psql -At -v ON_ERROR_STOP=1 -U payment_e2e -d payment_e2e \
   < "$ROOT_DIR/backend/sql/payment_money_schema_readiness.sql")"
 if [[ "$READINESS" != READY ]]; then
@@ -137,6 +152,20 @@ if [[ "$MANUAL_READINESS" != READY ]]; then
 fi
 printf 'Disposable PostgreSQL PR1 migration: READY\n'
 printf 'Disposable PostgreSQL manual imputation migration: READY\n'
+ADMIN_REVIEW_READINESS="$(docker exec -i "$POSTGRES_CONTAINER" psql -At -v ON_ERROR_STOP=1 -U payment_e2e -d payment_e2e \
+  < "$ROOT_DIR/backend/sql/admin_review_currency_schema_readiness.sql")"
+if [[ "$ADMIN_REVIEW_READINESS" != READY ]]; then
+  printf 'Admin review currency schema readiness failed: %s\n' "$ADMIN_REVIEW_READINESS" >&2
+  exit 1
+fi
+printf 'Disposable PostgreSQL admin review currency migration: READY\n'
+ATTACHMENT_READINESS="$(docker exec -i "$POSTGRES_CONTAINER" psql -At -v ON_ERROR_STOP=1 -U payment_e2e -d payment_e2e \
+  < "$ROOT_DIR/backend/sql/payment_submission_attachments_readiness.sql")"
+if [[ "$ATTACHMENT_READINESS" != READY ]]; then
+  printf 'Submission attachment schema readiness failed: %s\n' "$ATTACHMENT_READINESS" >&2
+  exit 1
+fi
+printf 'Disposable PostgreSQL submission attachments: READY\n'
 
 mkdir -p "$TMP_DIR/src/com/agencia/pagos/payment" "$TMP_DIR/classes"
 cat >"$TMP_DIR/src/com/agencia/pagos/payment/PaymentE2eApplication.java" <<'JAVA'
@@ -182,6 +211,7 @@ public final class PaymentE2eApplication {
                     // 2026-01-16 divides ARS 240000.00 into USD 200.00 exactly,
                     // so the ARS -> USD direction is asserted without rounding.
                     case "2026-01-16" -> new BigDecimal("1200.00");
+                    case "2026-09-03" -> new BigDecimal("1530.00");
                     default -> new BigDecimal("1234.56");
                 };
                 return new ExchangeRateQuote(rate, requestedDate, requestedDate, "payment-fx-test",
@@ -196,10 +226,22 @@ javac -cp "$RUNTIME_CP" -d "$TMP_DIR/classes" \
 : > "$FX_CALL_LOG"
 start_backend com.agencia.pagos.payment.PaymentE2eApplication validate
 wait_backend
+printf 'Disposable backend started with ddl-auto=validate\n'
 
 (
   cd "$ROOT_DIR/frontend"
-  VITE_BASE_API_URL="$BACKEND_URL" npm run dev -- --host 127.0.0.1 --port "$FRONTEND_PORT" --strictPort
+  # Keep the existing React/paths config, but never load developer .env files.
+  # Replace the subshell so cleanup owns and waits for the actual Vite process.
+  VITE_BASE_API_URL="$BACKEND_URL" PAYMENT_E2E_VITE_PORT="$FRONTEND_PORT" \
+    exec node --input-type=module -e '
+      import { createServer } from "vite";
+      const server = await createServer({
+        envDir: false,
+        server: { host: "127.0.0.1", port: Number(process.env.PAYMENT_E2E_VITE_PORT), strictPort: true },
+      });
+      await server.listen();
+      server.printUrls();
+    '
 ) >"$TMP_DIR/frontend.log" 2>&1 &
 FRONTEND_PID=$!
 for _ in {1..60}; do
@@ -219,6 +261,7 @@ curl --silent --fail --max-time 3 "$FRONTEND_URL" >/dev/null
   PAYMENT_E2E_API_URL="$BACKEND_URL" \
   PAYMENT_E2E_FRONTEND_URL="$FRONTEND_URL" \
   PAYMENT_E2E_FX_CALL_LOG="$FX_CALL_LOG" \
+  PAYMENT_E2E_POSTGRES_CONTAINER="$POSTGRES_CONTAINER" \
   PAYMENT_E2E_ADMIN_EMAIL="$ADMIN_EMAIL" \
   PAYMENT_E2E_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
   PAYMENT_E2E_RESULTS_DIR="$TMP_DIR/playwright-results" \

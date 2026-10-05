@@ -23,9 +23,51 @@ const installment = {
   reportedAmount: "0.01",
   amountInTripCurrency: "10.16",
   status: null,
+  allocationCurrency: "USD",
+};
+
+const noApproval = {
+  approvedCurrency: null, approvedExchangeRate: null, approvedQuoteRequestedDate: null,
+  approvedQuoteEffectiveDate: null, approvedQuoteSource: null, approvedQuoteProvider: null,
+  approvedQuoteProviderTimestamp: null, approvedCalculationVersion: null, rejectedCurrency: null,
+};
+
+const submission = {
+  submissionId: 1, status: "PENDING", reportedAmount: "306000.00", paymentCurrency: "ARS",
+  exchangeRate: "1530.00000000", amountInTripCurrency: "200.00", approvedAmount: "0.00",
+  approvedAmountInTripCurrency: "0.00", rejectedAmount: "0.00", reportedPaymentDate: "2026-09-03",
+  paymentMethod: "CASH", fileKey: "", adminObservation: null, bankAccountId: null,
+  bankAccountDisplayName: null, bankAccountAlias: null, tripId: 1, tripName: "Trip", tripCurrency: "USD",
+  studentId: null, studentName: null, studentDni: null, installments: [], source: "CUSTOMER_SUBMISSION",
+  ...noApproval,
 };
 
 describe("payment decimal contracts", () => {
+  it("requires independent approved currency and never substitutes original FX for identity approval", () => {
+    const approved = PaymentSubmissionDTOSchema.parse({
+      ...submission, status: "PARTIALLY_APPROVED", approvedAmount: "150.00", approvedCurrency: "USD",
+      approvedAmountInTripCurrency: "150.00", approvedCalculationVersion: "2",
+      rejectedCurrency: "ARS", rejectedAmount: "76500.00",
+    });
+    expect(approved.exchangeRate).toBe("1530.00000000");
+    expect(approved.approvedExchangeRate).toBeNull();
+    expect(approved.approvedCurrency).toBe("USD");
+    expect(PaymentSubmissionDTOSchema.safeParse({ ...approved, approvedCurrency: undefined }).success).toBe(false);
+    expect(PaymentSubmissionDTOSchema.safeParse({ ...approved, approvedExchangeRate: 1530 }).success).toBe(false);
+  });
+
+  it("preserves a new administrative quote separately through void and authentic legacy null metadata", () => {
+    const administrative = {
+      ...submission, status: "VOIDED", paymentCurrency: "USD", reportedAmount: "200.00", exchangeRate: null,
+      approvedCurrency: "ARS", approvedExchangeRate: "1530.00000000", approvedQuoteRequestedDate: "2026-09-03",
+      approvedQuoteEffectiveDate: "2026-09-02", approvedQuoteSource: "historical", approvedQuoteProvider: "provider-b",
+      approvedQuoteProviderTimestamp: "2026-09-02T12:00:00Z", approvedCalculationVersion: "2",
+    };
+    expect(PaymentSubmissionDTOSchema.parse(administrative)).toMatchObject(administrative);
+    expect(PaymentSubmissionDTOSchema.parse({ ...submission, status: "APPROVED", approvedCurrency: "ARS" })
+      .approvedQuoteProvider).toBeNull();
+    expect(PaymentSubmissionDTOSchema.parse(submission).approvedCurrency).toBeNull();
+  });
   it("preserves canonical decimal strings and rate scale in preview responses", () => {
     const parsed = PaymentBatchPreviewDTOSchema.parse({
       anchorInstallmentId: 1,
@@ -72,6 +114,7 @@ describe("payment decimal contracts", () => {
 
   it("keeps provider identity distinct on submission history", () => {
     const result = PaymentSubmissionDTOSchema.safeParse({
+      ...noApproval,
       submissionId: 1,
       status: "PENDING",
       reportedAmount: "1.00",
@@ -150,6 +193,10 @@ describe("payment decimal contracts", () => {
       allocations: [installment],
     });
     const history = PaymentInstallmentHistoryDTOSchema.parse({
+      originalReportedAmount: "0.01", allocationCurrency: "USD", allocationExchangeRate: "1234.567",
+      allocationQuoteRequestedDate: "2026-09-18", allocationQuoteEffectiveDate: "2026-09-17",
+      allocationQuoteSource: "official", allocationQuoteProvider: "provider-a",
+      allocationQuoteProviderTimestamp: "2026-09-17T12:00:00Z", allocationCalculationVersion: "2",
       id: 1,
       submissionId: 1,
       installmentId: 1,
@@ -259,11 +306,21 @@ describe("payment decimal contracts", () => {
       paymentMethod: "BANK_TRANSFER",
       bankAccountId: 1,
     });
-    const review = ReviewPaymentDTOSchema.parse({ approvedAmount: "0.01" });
+    const review = ReviewPaymentDTOSchema.parse({ approvedAmount: "0.01", approvedCurrency: "USD" });
 
     expect(calculation.reportedAmount).toBe("99.29");
     expect(registration.reportedAmount).toBe("99.29");
     expect(review.approvedAmount).toBe("0.01");
+    expect(review.approvedCurrency).toBe("USD");
+  });
+
+  it("requires an explicit supported administrative currency and trims bounded observations", () => {
+    expect(ReviewPaymentDTOSchema.safeParse({ approvedAmount: "150.00" }).success).toBe(false);
+    expect(ReviewPaymentDTOSchema.safeParse({ approvedAmount: "150.00", approvedCurrency: "EUR" }).success).toBe(false);
+    expect(ReviewPaymentDTOSchema.parse({ approvedAmount: "150.00", approvedCurrency: "USD", adminObservation: " Confirmed credit " }))
+      .toEqual({ approvedAmount: "150.00", approvedCurrency: "USD", adminObservation: "Confirmed credit" });
+    expect(ReviewPaymentDTOSchema.parse({ approvedAmount: "0.00", approvedCurrency: "ARS" }).approvedAmount).toBe("0.00");
+    expect(ReviewPaymentDTOSchema.safeParse({ approvedAmount: "150.00", approvedCurrency: "USD", adminObservation: "x".repeat(501) }).success).toBe(false);
   });
 
   it("rejects numeric and exponent notation in financial command contracts", () => {

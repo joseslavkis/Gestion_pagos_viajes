@@ -45,6 +45,12 @@ class PaymentMoneySchemaMigrationTest {
     private static final Path ATTACHMENT_READINESS = Path.of("sql/payment_submission_attachments_readiness.sql");
     private static final Path MANUAL_MIGRATION = Path.of("sql/20261002_manual_imputation.sql");
     private static final Path MANUAL_READINESS = Path.of("sql/manual_imputation_schema_readiness.sql");
+    private static final Path ADMIN_REVIEW_MIGRATION = Path.of("sql/20261005_admin_review_currency.sql");
+    private static final Path ADMIN_REVIEW_READINESS = Path.of("sql/admin_review_currency_schema_readiness.sql");
+    private static final List<String> OUTCOME_SNAPSHOT_COLUMNS = List.of(
+            "currency", "exchange_rate", "exchange_rate_scale", "exchange_rate_requested_date",
+            "exchange_rate_effective_date", "exchange_rate_source", "exchange_rate_provider",
+            "exchange_rate_provider_timestamp", "calculation_version");
     private static final Path WORKFLOW = Path.of("../.github/workflows/ci-cd.yml");
 
     @TempDir
@@ -220,6 +226,7 @@ class PaymentMoneySchemaMigrationTest {
                 #!/bin/sh
                 query="$(cat)"
                 case "$query" in
+                  *ck_payment_outcomes_currency*) name=admin_review; state="$MOCK_ADMIN_REVIEW_STATE" ;;
                   *to_regclass*) name=attachments; state="$MOCK_ATTACHMENT_STATE" ;;
                   *manual_reason*) name=manual; state="$MOCK_MANUAL_STATE" ;;
                   *) name=money; state="$MOCK_MONEY_STATE" ;;
@@ -237,10 +244,14 @@ class PaymentMoneySchemaMigrationTest {
         assertThat(runPreflight("ERROR", "READY", "READY")).isEqualTo(1);
         assertThat(runPreflight("READY", "READY\nREADY", "READY")).isEqualTo(1);
         assertThat(runPreflight("READY", "READY", "READY")).isZero();
+        assertThat(runPreflight("READY", "READY", "READY", "NOT_READY")).isEqualTo(1);
+        assertThat(runPreflight("READY", "READY", "READY", "ERROR")).isEqualTo(1);
+        assertThat(runPreflight("READY", "READY", "READY", "READY\nREADY")).isEqualTo(1);
         String script = Files.readString(PREFLIGHT);
         assertThat(script).contains("payment_money_schema_readiness.sql")
                 .contains("payment_submission_attachments_readiness.sql")
                 .contains("manual_imputation_schema_readiness.sql")
+                .contains("admin_review_currency_schema_readiness.sql")
                 .contains("psql -v ON_ERROR_STOP=1")
                 .doesNotContain("20260917_payment_money_invariants.sql");
 
@@ -374,9 +385,12 @@ class PaymentMoneySchemaMigrationTest {
     }
 
     @Test
-    void migratedSchemaValidatesWithProductionBackendMappings() throws Exception {        try (Connection connection = dataSource.getConnection(); Statement sql = connection.createStatement()) {
+    void migratedSchemaValidatesWithProductionBackendMappings() throws Exception {
+        try (Connection connection = dataSource.getConnection(); Statement sql = connection.createStatement()) {
             sql.execute("SET search_path TO public");
             sql.execute(Files.readString(MIGRATION));
+            sql.execute(Files.readString(ADMIN_REVIEW_MIGRATION));
+            assertThat(adminReviewReadiness(sql)).isEqualTo("READY");
         }
         HikariDataSource hikari = dataSource.unwrap(HikariDataSource.class);
         try (ConfigurableApplicationContext context = new SpringApplicationBuilder(PagosApplication.class)
@@ -394,6 +408,221 @@ class PaymentMoneySchemaMigrationTest {
             assertThat(context.getEnvironment().getProperty("spring.jpa.hibernate.ddl-auto"))
                     .isEqualTo("validate");
         }
+    }
+
+    @Test
+    void outcomeBackfillPreservesAllHistoryAndIndependentSnapshotsOnRerun() throws Exception {
+        try (Connection connection = dataSource.getConnection(); Statement sql = connection.createStatement()) {
+            createOutcomeHistory(sql, "outcome_backfill_test");
+            String history = outcomeHistory(sql);
+            sql.execute(Files.readString(ADMIN_REVIEW_MIGRATION));
+            assertThat(outcomeHistory(sql)).isEqualTo(history);
+            assertThat(adminReviewReadiness(sql)).isEqualTo("READY");
+            try (ResultSet rows = sql.executeQuery("""
+                    SELECT count(*) FROM payment_outcomes o JOIN payment_submissions s ON s.id = o.submission_id
+                    WHERE o.currency = s.payment_currency
+                      AND o.exchange_rate IS NOT DISTINCT FROM s.exchange_rate
+                      AND o.exchange_rate_scale IS NOT DISTINCT FROM s.exchange_rate_scale
+                      AND o.exchange_rate_requested_date IS NOT DISTINCT FROM s.exchange_rate_requested_date
+                      AND o.exchange_rate_effective_date IS NOT DISTINCT FROM s.exchange_rate_effective_date
+                      AND o.exchange_rate_source IS NOT DISTINCT FROM s.exchange_rate_source
+                      AND o.exchange_rate_provider IS NOT DISTINCT FROM s.exchange_rate_provider
+                      AND o.exchange_rate_provider_timestamp IS NOT DISTINCT FROM s.exchange_rate_provider_timestamp
+                      AND o.calculation_version IS NOT DISTINCT FROM s.calculation_version
+                    """)) {
+                assertThat(rows.next()).isTrue();
+                assertThat(rows.getInt(1)).isEqualTo(4);
+            }
+            sql.execute(Files.readString(ADMIN_REVIEW_MIGRATION));
+            assertThat(outcomeHistory(sql)).isEqualTo(history);
+            sql.execute("""
+                    INSERT INTO payment_outcomes (id, submission_id, status, reported_amount,
+                        amount_in_trip_currency, currency, exchange_rate, exchange_rate_scale,
+                        exchange_rate_requested_date, exchange_rate_effective_date, exchange_rate_source,
+                        exchange_rate_provider, exchange_rate_provider_timestamp, calculation_version)
+                    VALUES (5, 1, 'APPROVED', 20.00, 20.00, 'USD', 999.12345678, 8,
+                        DATE '2026-08-20', DATE '2026-08-19', 'admin-quote', 'admin-provider', 'admin-time', '2'),
+                        (6, 1, 'REJECTED', 0.01, 0.01, 'USD', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+                    """);
+            String independent = queryText(sql, "SELECT jsonb_agg(to_jsonb(o) ORDER BY id)::text FROM payment_outcomes o");
+            sql.execute(Files.readString(ADMIN_REVIEW_MIGRATION));
+            assertThat(queryText(sql, "SELECT jsonb_agg(to_jsonb(o) ORDER BY id)::text FROM payment_outcomes o"))
+                    .isEqualTo(independent);
+            assertThat(adminReviewReadiness(sql)).isEqualTo("READY");
+        }
+    }
+
+    @Test
+    void outcomeReadinessRejectsEveryMissingColumnAndIncorrectStorageContract() throws Exception {
+        try (Connection connection = dataSource.getConnection(); Statement sql = connection.createStatement()) {
+            createOutcomeHistory(sql, "outcome_columns_test");
+            sql.execute(Files.readString(ADMIN_REVIEW_MIGRATION));
+            List<String> mutations = new ArrayList<>();
+            for (String column : OUTCOME_SNAPSHOT_COLUMNS) {
+                mutations.add("ALTER TABLE payment_outcomes DROP COLUMN " + column + " CASCADE");
+            }
+            mutations.addAll(List.of(
+                    "ALTER TABLE payment_outcomes ALTER COLUMN currency DROP NOT NULL",
+                    "ALTER TABLE payment_outcomes ALTER COLUMN currency TYPE VARCHAR(4)",
+                    "ALTER TABLE payment_outcomes ALTER COLUMN currency SET DEFAULT 'ARS'",
+                    "ALTER TABLE payment_outcomes ALTER COLUMN exchange_rate TYPE NUMERIC(19,8)",
+                    "ALTER TABLE payment_outcomes ALTER COLUMN exchange_rate TYPE NUMERIC(18,7)",
+                    "ALTER TABLE payment_outcomes ALTER COLUMN exchange_rate_scale TYPE BIGINT",
+                    "ALTER TABLE payment_outcomes ALTER COLUMN exchange_rate_requested_date TYPE TIMESTAMP",
+                    "ALTER TABLE payment_outcomes ALTER COLUMN exchange_rate_effective_date TYPE TIMESTAMP",
+                    "ALTER TABLE payment_outcomes ALTER COLUMN exchange_rate_source TYPE VARCHAR(65)",
+                    "ALTER TABLE payment_outcomes ALTER COLUMN exchange_rate_provider TYPE VARCHAR(65)",
+                    "ALTER TABLE payment_outcomes ALTER COLUMN exchange_rate_provider_timestamp TYPE VARCHAR(129)",
+                    "ALTER TABLE payment_outcomes ALTER COLUMN calculation_version TYPE VARCHAR(17)",
+                    "ALTER TABLE payment_outcomes ALTER COLUMN reported_amount TYPE NUMERIC(11,2)",
+                    "ALTER TABLE payment_outcomes ALTER COLUMN amount_in_trip_currency TYPE NUMERIC(10,3)"));
+            sql.execute("BEGIN");
+            for (String mutation : mutations) {
+                sql.execute("SAVEPOINT schema_mutation");
+                sql.execute(mutation);
+                assertThat(adminReviewReadiness(sql)).as(mutation).isEqualTo("NOT_READY");
+                sql.execute("ROLLBACK TO SAVEPOINT schema_mutation");
+                assertThat(adminReviewReadiness(sql)).isEqualTo("READY");
+            }
+            // Nullable metadata is part of the contract, not an optional catalog detail.
+            for (String column : OUTCOME_SNAPSHOT_COLUMNS.subList(1, OUTCOME_SNAPSHOT_COLUMNS.size())) {
+                sql.execute("SAVEPOINT schema_mutation");
+                sql.execute("DELETE FROM payment_allocations");
+                sql.execute("DELETE FROM payment_outcomes");
+                sql.execute("ALTER TABLE payment_outcomes ALTER COLUMN " + column + " SET NOT NULL");
+                assertThat(adminReviewReadiness(sql)).as(column).isEqualTo("NOT_READY");
+                sql.execute("ROLLBACK TO SAVEPOINT schema_mutation");
+            }
+            sql.execute("ALTER TABLE payment_outcomes ALTER COLUMN currency DROP NOT NULL");
+            sql.execute("UPDATE payment_outcomes SET currency = NULL WHERE id = 1");
+            assertThat(adminReviewReadiness(sql)).isEqualTo("NOT_READY");
+            sql.execute("ROLLBACK");
+        }
+    }
+
+    @Test
+    void outcomeConstraintsRejectInvalidWritesAndReadinessChecksActualValidatedRules() throws Exception {
+        try (Connection connection = dataSource.getConnection(); Statement sql = connection.createStatement()) {
+            createOutcomeHistory(sql, "outcome_constraints_test");
+            sql.execute(Files.readString(ADMIN_REVIEW_MIGRATION));
+            sql.execute("BEGIN");
+            assertOutcomeWriteRejected(sql, "UPDATE payment_outcomes SET currency = NULL WHERE id = 1", "23502");
+            assertOutcomeWriteRejected(sql, "UPDATE payment_outcomes SET currency = 'EUR' WHERE id = 1", "23514");
+            assertOutcomeWriteRejected(sql, "UPDATE payment_outcomes SET currency = 'USDX' WHERE id = 1", "22001");
+            assertOutcomeWriteRejected(sql, "UPDATE payment_outcomes SET exchange_rate = 10000000000 WHERE id = 1", "22003");
+            assertOutcomeWriteRejected(sql, "UPDATE payment_outcomes SET reported_amount = 100000000 WHERE id = 1", "22003");
+            assertOutcomeWriteRejected(sql, "UPDATE payment_outcomes SET amount_in_trip_currency = 100000000 WHERE id = 1", "22003");
+            assertOutcomeWriteRejected(sql, "UPDATE payment_outcomes SET exchange_rate_scale = -1 WHERE id = 1", "23514");
+            assertOutcomeWriteRejected(sql, "UPDATE payment_outcomes SET exchange_rate_scale = 9 WHERE id = 1", "23514");
+            assertOutcomeWriteRejected(sql, """
+                    INSERT INTO payment_outcomes (id, submission_id, status, reported_amount, amount_in_trip_currency)
+                    VALUES (5, 1, 'APPROVED', 1, 1)
+                    """, "23502"); // Old writers cannot satisfy the required snapshot.
+            for (String scale : List.of("0", "8", "NULL")) {
+                sql.execute("UPDATE payment_outcomes SET exchange_rate_scale = " + scale + " WHERE id = 1");
+            }
+            sql.execute("UPDATE payment_outcomes SET exchange_rate = 1234.123456789 WHERE id = 1");
+            assertThat(queryText(sql, "SELECT exchange_rate::text FROM payment_outcomes WHERE id = 1"))
+                    .isEqualTo("1234.12345679"); // PostgreSQL rounds at its declared scale; it does not reject extra digits.
+            for (String rule : List.of("currency", "exchange_rate_scale")) {
+                String constraint = "ck_payment_outcomes_" + rule;
+                String correct = rule.equals("currency") ? "currency IN ('ARS', 'USD')"
+                        : "exchange_rate_scale IS NULL OR exchange_rate_scale BETWEEN 0 AND 8";
+                String wrong = rule.equals("currency") ? "currency IN ('ARS', 'USD', 'EUR')"
+                        : "exchange_rate_scale IS NULL OR exchange_rate_scale <= 8";
+                sql.execute("SAVEPOINT constraint_mutation");
+                sql.execute("ALTER TABLE payment_outcomes DROP CONSTRAINT " + constraint);
+                assertThat(adminReviewReadiness(sql)).isEqualTo("NOT_READY");
+                sql.execute("ALTER TABLE payment_outcomes ADD CONSTRAINT " + constraint + " CHECK (" + wrong + ")");
+                assertThat(adminReviewReadiness(sql)).isEqualTo("NOT_READY");
+                sql.execute("ALTER TABLE payment_outcomes DROP CONSTRAINT " + constraint);
+                sql.execute("ALTER TABLE payment_outcomes ADD CONSTRAINT " + constraint + " CHECK (" + correct + ") NOT VALID");
+                assertThat(adminReviewReadiness(sql)).isEqualTo("NOT_READY");
+                sql.execute("ALTER TABLE payment_outcomes VALIDATE CONSTRAINT " + constraint);
+                assertThat(adminReviewReadiness(sql)).isEqualTo("READY");
+                sql.execute("ROLLBACK TO SAVEPOINT constraint_mutation");
+            }
+            // Literal case is significant. An empty table must not make a
+            // lowercase-only currency rule look compatible with ARS/USD writers.
+            sql.execute("DELETE FROM payment_allocations");
+            sql.execute("DELETE FROM payment_outcomes");
+            sql.execute("ALTER TABLE payment_outcomes DROP CONSTRAINT ck_payment_outcomes_currency");
+            sql.execute("ALTER TABLE payment_outcomes ADD CONSTRAINT ck_payment_outcomes_currency CHECK (currency IN ('ars', 'usd'))");
+            assertThat(adminReviewReadiness(sql)).isEqualTo("NOT_READY");
+            sql.execute("ROLLBACK");
+        }
+    }
+
+    @Test
+    void outcomeMigrationRollsBackInvalidHistoryAndRequiresOriginalSnapshotColumns() throws Exception {
+        try (Connection connection = dataSource.getConnection(); Statement sql = connection.createStatement()) {
+            createOutcomeHistory(sql, "outcome_rollback_test");
+            sql.execute("UPDATE payment_submissions SET payment_currency = 'EUR' WHERE id = 1");
+            String before = outcomeHistory(sql);
+            assertThatThrownBy(() -> sql.execute(Files.readString(ADMIN_REVIEW_MIGRATION)))
+                    .isInstanceOf(SQLException.class).hasMessageContaining("ck_payment_outcomes_currency");
+            sql.execute("ROLLBACK");
+            assertThat(outcomeHistory(sql)).isEqualTo(before);
+            assertThat(queryText(sql, """
+                    SELECT count(*)::text FROM information_schema.columns
+                    WHERE table_schema = current_schema() AND table_name = 'payment_outcomes' AND column_name = 'currency'
+                    """)).isEqualTo("0");
+            sql.execute("UPDATE payment_submissions SET payment_currency = 'ARS' WHERE id = 1");
+            sql.execute("ALTER TABLE payment_submissions DROP COLUMN exchange_rate_provider");
+            assertThatThrownBy(() -> sql.execute(Files.readString(ADMIN_REVIEW_MIGRATION)))
+                    .isInstanceOf(SQLException.class).hasMessageContaining("Missing submission snapshot prerequisites");
+            sql.execute("ROLLBACK");
+        }
+    }
+
+    private static void createOutcomeHistory(Statement sql, String schema) throws Exception {
+        sql.execute("CREATE SCHEMA " + schema);
+        sql.execute("SET search_path TO " + schema);
+        createLegacyTables(sql);
+        sql.execute(Files.readString(PREREQUISITE));
+        sql.execute(Files.readString(MIGRATION));
+        sql.execute("ALTER TABLE payment_submissions ADD COLUMN payment_method VARCHAR(20) NOT NULL DEFAULT 'CASH'");
+        sql.execute(Files.readString(MANUAL_MIGRATION));
+        sql.execute("""
+                INSERT INTO payment_submissions (id, trip_id, payment_currency, exchange_rate, reported_amount,
+                    amount_in_trip_currency, status, exchange_rate_scale, exchange_rate_requested_date,
+                    exchange_rate_effective_date, exchange_rate_source, exchange_rate_provider,
+                    exchange_rate_provider_timestamp, calculation_version, source, payment_method, manual_reason)
+                VALUES (1, 1, 'ARS', 1200.12345678, 12000, 10, 'VOIDED', 8, DATE '2026-09-01',
+                    DATE '2026-08-31', 'original-source', 'original-provider', 'original-time', '2', 'CUSTOMER_SUBMISSION', 'CASH', NULL),
+                    (2, 1, 'USD', NULL, 30, 30, 'RESOLVED', NULL, NULL, NULL, NULL, NULL, NULL, 'v1', 'CUSTOMER_SUBMISSION', 'CASH', NULL),
+                    (3, 2, 'ARS', NULL, 15, 15, 'RESOLVED', NULL, NULL, NULL, NULL, NULL, NULL, 'v1', 'ADMIN_MANUAL', NULL, 'Historical cash');
+                INSERT INTO payment_outcomes VALUES (1, 1, 'VOIDED', 6000, 5), (2, 1, 'REJECTED', 6000, 5),
+                    (3, 2, 'APPROVED', 25, 25), (4, 3, 'APPROVED', 15, 15);
+                INSERT INTO installments VALUES (1, 40);
+                INSERT INTO payment_allocations VALUES (1, 1, 6000, 5, 1), (2, 3, 25, 25, 1), (3, 4, 15, 15, 1);
+                """);
+    }
+
+    private static String outcomeHistory(Statement sql) throws SQLException {
+        String excluded = "ARRAY['" + String.join("','", OUTCOME_SNAPSHOT_COLUMNS) + "']";
+        return queryText(sql, "SELECT jsonb_agg(to_jsonb(o) - " + excluded + " ORDER BY id)::text FROM payment_outcomes o")
+                + queryText(sql, "SELECT jsonb_agg(to_jsonb(s) ORDER BY id)::text FROM payment_submissions s")
+                + queryText(sql, "SELECT jsonb_agg(to_jsonb(a) ORDER BY id)::text FROM payment_allocations a")
+                + queryText(sql, "SELECT jsonb_agg(to_jsonb(i) ORDER BY id)::text FROM installments i");
+    }
+
+    private static String queryText(Statement sql, String query) throws SQLException {
+        try (ResultSet result = sql.executeQuery(query)) {
+            assertThat(result.next()).isTrue();
+            return result.getString(1);
+        }
+    }
+
+    private static String adminReviewReadiness(Statement sql) throws Exception {
+        return queryText(sql, Files.readString(ADMIN_REVIEW_READINESS));
+    }
+
+    private static void assertOutcomeWriteRejected(Statement sql, String mutation, String state) throws SQLException {
+        sql.execute("SAVEPOINT invalid_outcome");
+        assertThatThrownBy(() -> sql.execute(mutation)).isInstanceOf(SQLException.class)
+                .extracting(error -> ((SQLException) error).getSQLState()).isEqualTo(state);
+        sql.execute("ROLLBACK TO SAVEPOINT invalid_outcome");
     }
 
     private static void createLegacyTables(Statement sql) throws SQLException {
@@ -458,6 +687,10 @@ class PaymentMoneySchemaMigrationTest {
     }
 
     private int runPreflight(String money, String attachments, String manual) throws Exception {
+        return runPreflight(money, attachments, manual, "READY");
+    }
+
+    private int runPreflight(String money, String attachments, String manual, String adminReview) throws Exception {
         Path log = temporaryDirectory.resolve("queries.log");
         Files.deleteIfExists(log);
         ProcessBuilder process = new ProcessBuilder("bash", PREFLIGHT.toAbsolutePath().toString())
@@ -467,14 +700,17 @@ class PaymentMoneySchemaMigrationTest {
         process.environment().put("MOCK_MONEY_STATE", money);
         process.environment().put("MOCK_ATTACHMENT_STATE", attachments);
         process.environment().put("MOCK_MANUAL_STATE", manual);
+        process.environment().put("MOCK_ADMIN_REVIEW_STATE", adminReview);
         process.environment().put("MOCK_QUERY_LOG", log.toString());
         Process child = process.start();
         String output = new String(child.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         int exit = child.waitFor();
-        assertThat(output).contains(money.equals("READY") && attachments.equals("READY") && manual.equals("READY")
+        assertThat(output).contains(money.equals("READY") && attachments.equals("READY") && manual.equals("READY") && adminReview.equals("READY")
                 ? "Payment schema preflight passed" : "Payment schema is incompatible");
         List<String> expectedLog = money.equals("READY")
-                ? (attachments.equals("READY") ? List.of("money", "attachments", "manual") : List.of("money", "attachments"))
+                ? (attachments.equals("READY")
+                    ? (manual.equals("READY") ? List.of("money", "attachments", "manual", "admin_review") : List.of("money", "attachments", "manual"))
+                    : List.of("money", "attachments"))
                 : List.of("money");
         assertThat(Files.readAllLines(log)).containsExactlyElementsOf(expectedLog);
         return exit;
