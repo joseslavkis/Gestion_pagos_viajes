@@ -93,6 +93,26 @@ const allocation = (installmentId: number, number: number, amount: string, statu
   reportedAmount: amount, amountInTripCurrency: amount, status,
 });
 
+/** Capture browser File objects before MSW's Node serializer loses jsdom file names/content. */
+function capturePaymentFormData() {
+  const requests: FormData[] = [];
+  const fetch = globalThis.fetch;
+  vi.spyOn(globalThis, "fetch").mockImplementation((url, init) => {
+    if (String(url) === `${ROOT}/payments` && init?.body instanceof FormData) requests.push(init.body);
+    return fetch(url, init);
+  });
+  return requests;
+}
+
+function readReceipt(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file);
+  });
+}
+
 describe("receipt amount payment", () => {
   it("requires a receipt and an entered amount before confirmation or submission", async () => {
     setup();
@@ -108,11 +128,14 @@ describe("receipt amount payment", () => {
   });
 
   it("registers a single same-currency receipt with a distinct final token and global method/account", async () => {
+    const multipart = capturePaymentFormData();
+    const receipt = file("one.png", "image/png", "single-receipt-content");
     const requests: Record<string, unknown>[] = [];
     let payment: string | undefined;
-    setup({ onCalculation: (body) => requests.push(body), onPayment: (data) => { payment = data; } });
+    let posts = 0;
+    setup({ onCalculation: (body) => requests.push(body), onPayment: (data) => { payment = data; posts++; } });
     await screen.findByText("Adjuntar comprobantes (hasta 5)");
-    upload(file("one.png"));
+    upload(receipt);
     amount("one.png", "12.34");
     expect(screen.getByText("Total en ARS: 12.34")).toBeInTheDocument();
     expect(requests).toHaveLength(0);
@@ -127,14 +150,25 @@ describe("receipt amount payment", () => {
     expect(payment).toContain("DEPOSIT");
     expect(payment).toContain('name="bankAccountId"');
     expect(payment).toContain('name="files"');
+    expect(payment?.match(/name="files"/g)).toHaveLength(1);
+    expect(payment).not.toContain('name="file"');
     expect(payment).not.toContain('name="amounts"');
+    expect(multipart).toHaveLength(1);
+    expect(multipart[0].getAll("files")).toHaveLength(1);
+    expect(multipart[0].get("files")).toBe(receipt);
+    expect(await readReceipt(multipart[0].get("files") as File)).toBe("single-receipt-content");
+    expect(await screen.findByRole("heading", { name: "¡Pago reportado!" })).toBeInTheDocument();
+    expect(posts).toBe(1);
   });
 
   it("sums two same-currency receipts and uploads both with one POST", async () => {
+    const multipart = capturePaymentFormData();
+    const receipts = [file("a.png", "image/png", "first-receipt-content"), file("b.png", "image/png", "second-receipt-content")];
     let payment: string | undefined;
-    setup({ onPayment: (data) => { payment = data; } });
+    let posts = 0;
+    setup({ onPayment: (data) => { payment = data; posts++; } });
     await screen.findByText("Adjuntar comprobantes (hasta 5)");
-    upload(file("a.png"), file("b.png"));
+    upload(...receipts);
     amount("a.png", "0.10"); amount("b.png", "0.20");
     expect(screen.getByText("Total en ARS: 0.30")).toBeInTheDocument();
     fireEvent.click(confirm());
@@ -142,7 +176,15 @@ describe("receipt amount payment", () => {
     fireEvent.submit(submit().closest("form")!);
     await waitFor(() => expect(payment).toBeDefined());
     expect(payment?.match(/name="files"/g)).toHaveLength(2);
+    expect(payment).not.toContain('name="file"');
     expect(payment).toContain("0.30");
+    expect(multipart).toHaveLength(1);
+    const sentFiles = multipart[0].getAll("files") as File[];
+    expect(sentFiles).toHaveLength(2);
+    receipts.forEach((receipt, index) => expect(sentFiles[index]).toBe(receipt));
+    expect(await Promise.all(sentFiles.map(readReceipt))).toEqual(["first-receipt-content", "second-receipt-content"]);
+    expect(await screen.findByRole("heading", { name: "¡Pago reportado!" })).toBeInTheDocument();
+    expect(posts).toBe(1);
   });
 
   it("rejects mixed-currency receipts without converting or registering", async () => {

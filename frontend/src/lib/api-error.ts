@@ -103,26 +103,43 @@ function translateBackendMessage(message: string): string {
   return message;
 }
 
+function getUploadErrorMessage(message: string): string {
+  const readableMessage = message.trim();
+  // Only expose prose, never proxy markup, structured bodies, or server diagnostics.
+  const unsafeBody = /[<>{}[\]]|&(?:lt|gt|#\d+|#x[\da-f]+);/i;
+  const serverDiagnostic = /exception|stack\s*trace|\b(?:SQL|Hibernate|Tomcat|Spring|nginx|java|SELECT|INSERT|UPDATE|DELETE)\b/i;
+  const internalIdentifier = /\b[A-Z]{2,}[-_]\d+|\b[a-z][a-z\d]*[A-Z]\w*|\b[A-Z][a-z]+(?:[A-Z][a-z\d]+)+\b/;
+  return readableMessage && !unsafeBody.test(readableMessage) &&
+    !serverDiagnostic.test(readableMessage) && !internalIdentifier.test(readableMessage)
+    ? translateBackendMessage(readableMessage)
+    : "Los archivos adjuntos superan el tamaño permitido.";
+}
+
 export async function handleApiResponse(response: Response): Promise<never> {
   const status = response.status;
   let rawMessage = "";
   let fieldErrors: string[] = [];
   let code: string | undefined;
+  let uploadMessage = "";
 
   try {
     const errorBody = await response.text();
     rawMessage = errorBody;
+    uploadMessage = errorBody;
 
     try {
       const json = JSON.parse(errorBody) as ApiErrorBody;
+      uploadMessage = "";
       if (json && typeof json === "object") {
         if ("errors" in json && Array.isArray(json.errors)) {
           fieldErrors = json.errors.filter((entry): entry is string => typeof entry === "string");
           if (fieldErrors.length > 0) {
             rawMessage = fieldErrors.join(", ");
+            uploadMessage = rawMessage;
           }
         } else if ("message" in json && typeof json.message === "string") {
           rawMessage = json.message;
+          uploadMessage = rawMessage;
           if (typeof json.code === "string" && json.code.length > 0) {
             code = json.code;
           }
@@ -161,6 +178,9 @@ export async function handleApiResponse(response: Response): Promise<never> {
       userFriendlyMessage = rawMessage && rawMessage.trim().length > 0
         ? translateBackendMessage(rawMessage)
         : "El recurso ya existe o hay un conflicto con el estado actual.";
+      break;
+    case 413:
+      userFriendlyMessage = getUploadErrorMessage(uploadMessage);
       break;
     case 500:
     case 502:

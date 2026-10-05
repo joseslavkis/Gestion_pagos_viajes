@@ -13,6 +13,60 @@ describe("api-error utility", () => {
   });
 
   describe("handleApiResponse", () => {
+    const uploadFallback = "Los archivos adjuntos superan el tamaño permitido.";
+    const uploadMessage = `${uploadFallback} Reduzca su tamaño e intente nuevamente.`;
+
+    it.each([
+      ["JSON", JSON.stringify({ message: uploadMessage }), "application/json"],
+      ["plain text", uploadMessage, "text/plain"],
+    ])("preserves a readable 413 %s message", async (_format, body, contentType) => {
+      const response = new Response(body, { status: 413, headers: { "Content-Type": contentType } });
+      await expect(handleApiResponse(response)).rejects.toMatchObject({
+        name: "ApiError", status: 413, message: uploadMessage, rawMessage: uploadMessage,
+      });
+    });
+
+    it.each(["plain text", "JSON"])("preserves actionable multiline 413 %s prose", async (format) => {
+      const message = `${uploadFallback}\nReduzca su tamaño e intente nuevamente.`;
+      const body = format === "JSON" ? JSON.stringify({ message }) : message;
+      await expect(handleApiResponse(new Response(body, { status: 413 }))).rejects.toMatchObject({
+        name: "ApiError", status: 413, message, rawMessage: message,
+      });
+    });
+
+    it.each([
+      ["empty", ""],
+      ["whitespace", "   "],
+      ["HTML", "<html><body>413 Request Entity Too Large</body></html>"],
+      ["JSON HTML", JSON.stringify({ message: "<h1>413 Request Entity Too Large</h1>" })],
+      ["encoded HTML", "&lt;h1&gt;413 Request Entity Too Large&lt;/h1&gt;"],
+      ["exception", JSON.stringify({ message: "MaxUploadSizeExceededException" })],
+      ["stack trace", "java.lang.IllegalStateException: upload failed\n at com.agencia.Upload.run(Upload.java:42)"],
+      ["SQL", JSON.stringify({ message: "Hibernate: SQL select * from payment_submission" })],
+      ["lowercase SQL", "select * from payment_submission"],
+      ["nginx plain text", "nginx: client intended to send too large body"],
+      ["nginx JSON", JSON.stringify({ message: "nginx: client intended to send too large body" })],
+      ["internal code", JSON.stringify({ message: "FIN-001: reportedAmount exceeds maxAllowedAmount" })],
+      ["internal identifier", "reportedAmount supera maxAllowedAmount"],
+      ["internal class", "PaymentAllocationPlanner"],
+      ["unsupported JSON", JSON.stringify({ status: 413, error: "Payload Too Large" })],
+      ["JSON null", "null"],
+      ["JSON number", "413"],
+      ["malformed JSON", '{"message":'],
+    ])("uses the exact 413 fallback for %s bodies", async (_kind, body) => {
+      await expect(handleApiResponse(new Response(body, { status: 413 }))).rejects.toMatchObject({
+        name: "ApiError", status: 413, message: uploadFallback,
+      });
+    });
+
+    it("uses the exact 413 fallback when the response body cannot be read", async () => {
+      const response = new Response(uploadMessage, { status: 413 });
+      await response.text();
+      await expect(handleApiResponse(response)).rejects.toMatchObject({
+        name: "ApiError", status: 413, message: uploadFallback, rawMessage: "",
+      });
+    });
+
     it("should extract JSON message if available", async () => {
       const response = new Response(JSON.stringify({ message: "Email in use" }), {
         status: 409,

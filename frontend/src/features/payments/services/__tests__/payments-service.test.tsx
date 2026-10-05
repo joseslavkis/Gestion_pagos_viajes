@@ -122,9 +122,11 @@ describe("payments-service", () => {
     await waitFor(() => expect(result.current.data?.reportedAmount).toBe("500.00"));
   });
 
-  it("sends repeated files in selection order without changing payment fields", async () => {
+  it.each([1, 2, 5])("sends %i files once in selection order without changing payment fields", async (count) => {
     let fields: FormData | undefined;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+    let request: RequestInit | undefined;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      request = init;
       fields = init?.body as FormData;
       return new Response(JSON.stringify({ ...pendingSubmission, fileKeys: ["first", "second"] }), {
         status: 201,
@@ -134,7 +136,8 @@ describe("payments-service", () => {
     const files = [
       new File(["a"], "first.png", { type: "image/png" }),
       new File(["b"], "second.pdf", { type: "application/pdf" }),
-    ];
+      ...Array.from({ length: 3 }, (_, index) => new File([String(index)], `extra-${index}.png`, { type: "image/png" })),
+    ].slice(0, count);
     const { result } = renderHook(useRegisterPayment, { wrapper: createWrapper() });
     await act(async () => {
       await result.current.mutateAsync({
@@ -144,12 +147,24 @@ describe("payments-service", () => {
         paymentCurrency: "ARS",
         paymentMethod: "BANK_TRANSFER",
         bankAccountId: 1,
+        previewToken: "current-preview-token",
         files,
       });
     });
-    expect(fields?.getAll("files")).toHaveLength(2);
-    expect((fields?.getAll("files")[1] as File).name).toBe("second.pdf");
-    expect((fields?.get("file") as File).name).toBe("first.png");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenCalledWith("http://localhost:30002/api/v1/payments", expect.anything());
+    expect(request?.method).toBe("POST");
+    expect(request?.headers).toEqual({ Authorization: "Bearer test-access-token" });
+    expect(fields).toBeInstanceOf(FormData);
+    expect(fields?.has("file")).toBe(false);
+    expect(fields?.getAll("file")).toEqual([]);
+    expect(fields?.getAll("files")).toHaveLength(count);
+    files.forEach((file, index) => expect(fields?.getAll("files")[index]).toBe(file));
+    expect(Array.from(fields!.entries()).filter(([, value]) => typeof value !== "string")).toHaveLength(count);
+    expect(Object.fromEntries(Array.from(fields!.entries()).filter(([, value]) => typeof value === "string"))).toEqual({
+      anchorInstallmentId: "1", reportedAmount: "500.00", reportedPaymentDate: "2026-09-18",
+      paymentCurrency: "ARS", paymentMethod: "BANK_TRANSFER", bankAccountId: "1", previewToken: "current-preview-token",
+    });
     await waitFor(() => expect(result.current.data?.fileKeys).toEqual(["first", "second"]));
   });
 
