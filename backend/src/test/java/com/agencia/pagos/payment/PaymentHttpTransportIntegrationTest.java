@@ -172,7 +172,7 @@ class PaymentHttpTransportIntegrationTest extends ControllerIntegrationTestSuppo
         long submissionId = objectMapper.readTree(initial.body()).path("submissionId").asLong();
         String adminToken = signUpAdmin(buildValidUser("http-transport-admin")).accessToken();
         HttpResponse<String> approval = sendJson("PATCH", "/api/v1/payments/" + submissionId + "/review",
-                Map.of("approvedAmount", "40.00"), adminToken);
+                Map.of("approvedAmount", "40.00", "approvedCurrency", "ARS"), adminToken);
         assertThat(approval.statusCode()).isEqualTo(200);
         assertThat(installmentRepository.findById(installmentId).orElseThrow().getPaidAmount())
                 .isEqualByComparingTo("40.00");

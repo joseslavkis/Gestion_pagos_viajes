@@ -58,6 +58,7 @@ export const PaymentBatchInstallmentDTOSchema = z.object({
   reportedAmount: DecimalStringSchema,
   amountInTripCurrency: DecimalStringSchema,
   status: ReceiptStatusSchema.nullable(),
+  allocationCurrency: CurrencySchema,
 });
 export type PaymentBatchInstallmentDTO = z.infer<typeof PaymentBatchInstallmentDTOSchema>;
 
@@ -129,6 +130,15 @@ export const PaymentSubmissionDTOSchema = z.object({
   // requerido para no esconder respuestas incompletas.
   source: PaymentSubmissionSourceSchema,
   manualReason: z.string().nullable().optional(),
+  approvedCurrency: CurrencySchema.nullable(),
+  approvedExchangeRate: DecimalStringSchema.nullable(),
+  approvedQuoteRequestedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  approvedQuoteEffectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  approvedQuoteSource: z.string().nullable(),
+  approvedQuoteProvider: z.string().nullable(),
+  approvedQuoteProviderTimestamp: z.string().nullable(),
+  approvedCalculationVersion: z.string().nullable(),
+  rejectedCurrency: CurrencySchema.nullable(),
 });
 export type PaymentSubmissionDTO = z.infer<typeof PaymentSubmissionDTOSchema>;
 
@@ -169,6 +179,15 @@ export const PaymentInstallmentHistoryDTOSchema = z.object({
   // El backend siempre envía source (con fallback a CUSTOMER_SUBMISSION).
   source: PaymentSubmissionSourceSchema,
   manualReason: z.string().nullable().optional(),
+  originalReportedAmount: DecimalStringSchema,
+  allocationCurrency: CurrencySchema,
+  allocationExchangeRate: DecimalStringSchema.nullable(),
+  allocationQuoteRequestedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  allocationQuoteEffectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  allocationQuoteSource: z.string().nullable(),
+  allocationQuoteProvider: z.string().nullable(),
+  allocationQuoteProviderTimestamp: z.string().nullable(),
+  allocationCalculationVersion: z.string().nullable(),
 });
 export type PaymentInstallmentHistoryDTO = z.infer<typeof PaymentInstallmentHistoryDTOSchema>;
 
@@ -230,7 +249,8 @@ export type PaymentPreviewRequestDTO = z.infer<typeof PaymentPreviewRequestDTOSc
 
 export const ReviewPaymentDTOSchema = z.object({
   approvedAmount: NonNegativeDecimalStringSchema,
-  adminObservation: z.string().optional(),
+  approvedCurrency: CurrencySchema,
+  adminObservation: z.string().trim().max(500).optional(),
 });
 export type ReviewPaymentDTO = z.infer<typeof ReviewPaymentDTOSchema>;
 

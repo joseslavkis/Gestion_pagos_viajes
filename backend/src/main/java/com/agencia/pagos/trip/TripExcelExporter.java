@@ -335,7 +335,10 @@ public class TripExcelExporter {
                 "Cambio",
                 "Monto convertido",
                 "Estado",
-                "Observación"
+                "Observación",
+                "Monto informado original", "Moneda original", "Cambio original",
+                "Fecha solicitada del cambio", "Fecha efectiva del cambio", "Fuente del cambio",
+                "Proveedor del cambio", "Marca temporal del proveedor", "Versión del cálculo"
         };
 
         var headerRow = sheet.createRow(0);
@@ -369,13 +372,22 @@ public class TripExcelExporter {
             writeNumberCell(row, 10, receipt.amountInTripCurrency(), amountStyle);
             writeTextCell(row, 11, receipt.status(), baseStyle);
             writeTextCell(row, 12, receipt.adminObservation(), baseStyle);
+            writeNumberCell(row, 13, receipt.originalReportedAmount(), amountStyle);
+            writeTextCell(row, 14, receipt.originalPaymentCurrency(), baseStyle);
+            writeNumberCell(row, 15, receipt.originalExchangeRate(), amountStyle);
+            writeTextCell(row, 16, receipt.quoteRequestedDate() == null ? "" : receipt.quoteRequestedDate().format(DATE_FORMATTER), baseStyle);
+            writeTextCell(row, 17, receipt.quoteEffectiveDate() == null ? "" : receipt.quoteEffectiveDate().format(DATE_FORMATTER), baseStyle);
+            writeTextCell(row, 18, receipt.quoteSource(), baseStyle);
+            writeTextCell(row, 19, receipt.quoteProvider(), baseStyle);
+            writeTextCell(row, 20, receipt.quoteProviderTimestamp(), baseStyle);
+            writeTextCell(row, 21, receipt.calculationVersion(), baseStyle);
         }
 
         int lastRow = Math.max(0, rowIndex - 1);
-        sheet.setAutoFilter(new CellRangeAddress(0, lastRow, 0, 12));
+        sheet.setAutoFilter(new CellRangeAddress(0, lastRow, 0, headers.length - 1));
         sheet.createFreezePane(0, 1);
 
-        for (int col = 0; col <= 12; col++) {
+        for (int col = 0; col < headers.length; col++) {
             sheet.autoSizeColumn(col);
             int minWidth = switch (col) {
                 case 11 -> 14 * 256;

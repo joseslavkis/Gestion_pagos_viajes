@@ -303,17 +303,23 @@ admin_token="$(jq -er '.accessToken' "$TMP_DIR/auth-ready.body")"
 # Local/update bootstraps only this disposable database. Apply the PR1 SQL +
 # manual imputation migration, verify readiness, then exercise HTTP flows
 # against production/validate.
+# The outcome currency migration requires the coordinated T2 writers for HTTP reviews.
 "${COMPOSE[@]}" stop backend >/dev/null
 "${COMPOSE[@]}" exec -T db psql -X -v ON_ERROR_STOP=1 -U "$DB_USERNAME" -d "$DB_NAME" \
   <"$ROOT_DIR/backend/sql/20260917_payment_money_invariants.sql" >/dev/null
 "${COMPOSE[@]}" exec -T db psql -X -v ON_ERROR_STOP=1 -U "$DB_USERNAME" -d "$DB_NAME" \
   <"$ROOT_DIR/backend/sql/20261002_manual_imputation.sql" >/dev/null
+"${COMPOSE[@]}" exec -T db psql -X -v ON_ERROR_STOP=1 -U "$DB_USERNAME" -d "$DB_NAME" \
+  <"$ROOT_DIR/backend/sql/20261005_admin_review_currency.sql" >/dev/null
 schema_state="$("${COMPOSE[@]}" exec -T db psql -X -tA -v ON_ERROR_STOP=1 \
   -U "$DB_USERNAME" -d "$DB_NAME" <"$ROOT_DIR/backend/sql/payment_money_schema_readiness.sql")"
 [[ "$schema_state" == READY ]] || { printf 'Migrated payment schema is not ready: %s\n' "$schema_state" >&2; exit 1; }
 manual_state="$("${COMPOSE[@]}" exec -T db psql -X -tA -v ON_ERROR_STOP=1 \
   -U "$DB_USERNAME" -d "$DB_NAME" <"$ROOT_DIR/backend/sql/manual_imputation_schema_readiness.sql")"
 [[ "$manual_state" == READY ]] || { printf 'Manual imputation schema is not ready: %s\n' "$manual_state" >&2; exit 1; }
+admin_review_state="$("${COMPOSE[@]}" exec -T db psql -X -tA -v ON_ERROR_STOP=1 \
+  -U "$DB_USERNAME" -d "$DB_NAME" <"$ROOT_DIR/backend/sql/admin_review_currency_schema_readiness.sql")"
+[[ "$admin_review_state" == READY ]] || { printf 'Admin review currency schema is not ready: %s\n' "$admin_review_state" >&2; exit 1; }
 ISOLATED_SPRING_PROFILE=production
 "${COMPOSE[@]}" up -d --no-build --force-recreate backend >/dev/null
 BACKEND_HOST_PORT="$(discover_port backend 8080)"
@@ -396,7 +402,7 @@ admin_config="$TMP_DIR/admin.curl"
 user_config="$TMP_DIR/user.curl"
 write_curl_config "$admin_config" PATCH "$BASE_URL/api/v1/payments/$submission_id/review" "$admin_token"
 write_curl_config "$user_config" GET "$BASE_URL/api/v1/payments/my/installments" "$user_token"
-review_body='{"approvedAmount":100}'
+review_body='{"approvedAmount":100,"approvedCurrency":"ARS"}'
 review_body_file="$TMP_DIR/review.json"
 printf '%s' "$review_body" >"$review_body_file"
 chmod 600 "$review_body_file"

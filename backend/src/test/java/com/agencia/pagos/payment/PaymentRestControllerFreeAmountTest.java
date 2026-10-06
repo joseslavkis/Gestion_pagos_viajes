@@ -1278,12 +1278,15 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                         .content("""
                                 {
                                   "approvedAmount": 66.67,
+                                  "approvedCurrency": "USD",
                                   "adminObservation": null
                                 }
                                 """))
                 .andExpect(status().isConflict())
                 .andExpect(content().string(containsString("66.66")))
-                .andExpect(content().string(containsString("0.01")));
+                .andExpect(content().string(containsString("0.01")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(containsString("FIN-001"))))
+                .andExpect(content().string(org.hamcrest.Matchers.not(containsString("maxAllowedAmount"))));
 
         PaymentSubmission reloaded = paymentSubmissionRepository.findById(registered.submissionId()).orElseThrow();
         assertEquals(PaymentSubmissionStatus.PENDING, reloaded.getStatus());
@@ -1447,7 +1450,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
         assertEquals("1000", registered.exchangeRate().toPlainString());
         PaymentSubmissionDTO reviewed = paymentService.reviewPayment(
                 registered.submissionId(),
-                new ReviewPaymentDTO(new BigDecimal("150000.00"), null),
+                new ReviewPaymentDTO(new BigDecimal("150000.00"), Currency.ARS, null),
                 "admin@test.com");
         assertEquals("1000", reviewed.exchangeRate().toPlainString());
         paymentService.voidPayment(registered.submissionId(), "admin@test.com");
@@ -1493,6 +1496,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                         .content("""
                                 {
                                   "approvedAmount": 180.00,
+                                  "approvedCurrency": "ARS",
                                   "adminObservation": "El banco solo acreditó una parte"
                                 }
                                 """))
@@ -1534,7 +1538,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
 
         PaymentSubmissionDTO reviewed = paymentService.reviewPayment(
                 registered.submissionId(),
-                new ReviewPaymentDTO(new BigDecimal("33.33"), "Se acreditó parcialmente"),
+                new ReviewPaymentDTO(new BigDecimal("33.33"), Currency.USD, "Se acreditó parcialmente"),
                 "admin@test.com");
         PaymentSubmission persisted = paymentSubmissionRepository.findByIdWithContext(registered.submissionId())
                 .orElseThrow();
@@ -1617,7 +1621,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
 
         PaymentSubmissionDTO reviewed = paymentService.reviewPayment(
                 registered.submissionId(),
-                new ReviewPaymentDTO(new BigDecimal("0.50"), "Partial cross-currency approval"),
+                new ReviewPaymentDTO(new BigDecimal("0.50"), Currency.USD, "Partial cross-currency approval"),
                 "admin@test.com");
         PaymentSubmission reloadedReviewed = paymentSubmissionRepository.findByIdWithContext(registered.submissionId())
                 .orElseThrow();
@@ -1691,6 +1695,7 @@ class PaymentRestControllerFreeAmountTest extends ControllerIntegrationTestSuppo
                         .content("""
                                 {
                                   "approvedAmount": 1.005,
+                                  "approvedCurrency": "ARS",
                                   "adminObservation": "Monto verificado"
                                 }
                                 """))

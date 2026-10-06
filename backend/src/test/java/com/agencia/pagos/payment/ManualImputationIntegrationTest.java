@@ -304,6 +304,9 @@ class ManualImputationIntegrationTest extends ControllerIntegrationTestSupport {
         PaymentSubmission reloaded = paymentSubmissionRepository.findByIdWithContext(dto.submissionId()).orElseThrow();
         assertThat(reloaded.getSource()).isEqualTo(PaymentSubmissionSource.ADMIN_MANUAL);
         assertThat(reloaded.getStatus()).isEqualTo(PaymentSubmissionStatus.RESOLVED);
+        assertThat(reloaded.getOutcomes()).singleElement().satisfies(outcome ->
+                assertThat(PaymentOutcomeSnapshot.fromOutcome(outcome))
+                        .isEqualTo(PaymentOutcomeSnapshot.fromSubmission(reloaded)));
         assertThat(installmentRepository.findById(f.i1().getId()).orElseThrow().getPaidAmount())
                 .isEqualByComparingTo("240.00");
         assertThat(installmentRepository.findById(f.i3().getId()).orElseThrow().getPaidAmount())
@@ -384,6 +387,16 @@ class ManualImputationIntegrationTest extends ControllerIntegrationTestSupport {
         assertThat(dto.amountInTripCurrency()).isEqualByComparingTo("150.00");
         assertThat(dto.exchangeRate()).isEqualByComparingTo("1500.00");
         assertThat(dto.paymentCurrency().name()).isEqualTo("ARS");
+        assertThat(dto.approvedCurrency()).isEqualTo(Currency.ARS);
+        assertThat(dto.approvedExchangeRate()).isEqualByComparingTo("1500.00");
+        assertThat(dto.approvedQuoteRequestedDate()).isEqualTo(HISTORICAL_DATE);
+        assertThat(dto.approvedQuoteProvider()).isEqualTo("deterministic");
+        assertThat(dto.rejectedCurrency()).isNull();
+        assertThat(dto.installments()).allSatisfy(allocation -> assertThat(allocation.allocationCurrency()).isEqualTo(Currency.ARS));
+        PaymentSubmission reloaded = paymentSubmissionRepository.findByIdWithContext(dto.submissionId()).orElseThrow();
+        assertThat(reloaded.getOutcomes()).singleElement().satisfies(outcome ->
+                assertThat(PaymentOutcomeSnapshot.fromOutcome(outcome))
+                        .isEqualTo(PaymentOutcomeSnapshot.fromSubmission(reloaded)));
     }
 
     @Test

@@ -160,7 +160,13 @@ export function AdminUserDetailPage({ userId }: AdminUserDetailPageProps) {
                             </div>
                             <div>
                               <span className={styles.identityLabel}>Aprobado</span>
-                              <strong>{formatMoney(payment.paymentCurrency, payment.approvedAmount)}</strong>
+                              <strong>{payment.approvedCurrency === null
+                                ? "Sin aprobación"
+                                : formatMoney(payment.approvedCurrency, payment.approvedAmount)}</strong>
+                            </div>
+                            <div>
+                              <span className={styles.identityLabel}>Imputado al viaje</span>
+                              <strong>{formatMoney(payment.tripCurrency, payment.approvedAmountInTripCurrency)}</strong>
                             </div>
                             <div>
                               <span className={styles.identityLabel}>Método</span>
@@ -185,6 +191,15 @@ export function AdminUserDetailPage({ userId }: AdminUserDetailPageProps) {
                           {payment.installments.length > 0 ? (
                             <p className={styles.observation}>Imputación: {formatInstallments(payment.installments)}</p>
                           ) : null}
+                          {payment.rejectedCurrency !== null ? (
+                            <p className={styles.observation}>Rechazado: {formatMoney(payment.rejectedCurrency, payment.rejectedAmount)}</p>
+                          ) : null}
+                          {payment.approvedExchangeRate !== null ? (
+                            <p className={styles.observation}>
+                              Cotización de la aprobación: {payment.approvedExchangeRate} ARS por USD
+                              {payment.approvedQuoteEffectiveDate ? ` · ${formatDate(payment.approvedQuoteEffectiveDate)}` : ""}
+                            </p>
+                          ) : null}
                           {payment.adminObservation && payment.source !== "ADMIN_MANUAL" ? (
                             <p className={styles.observation}>Observación: {payment.adminObservation}</p>
                           ) : null}
@@ -204,17 +219,18 @@ export function AdminUserDetailPage({ userId }: AdminUserDetailPageProps) {
 }
 
 function formatDate(date: string) {
-  const value = new Date(`${date}T00:00:00`);
+  // Calendar dates have no timezone; keep parsing and display in UTC.
+  const value = new Date(`${date}T00:00:00Z`);
   if (Number.isNaN(value.getTime())) {
     return date;
   }
 
-  return new Intl.DateTimeFormat("es-AR", {
+  return value.toLocaleDateString("es-AR", {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
-    timeZone: "America/Argentina/Buenos_Aires",
-  }).format(value);
+    timeZone: "UTC",
+  });
 }
 
 function formatMoney(currency: "ARS" | "USD", amount: number | string) {

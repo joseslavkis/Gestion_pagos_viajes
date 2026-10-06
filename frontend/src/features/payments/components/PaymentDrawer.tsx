@@ -42,7 +42,7 @@ const dateFormatter = new Intl.DateTimeFormat("es-AR", {
   day: "2-digit",
   month: "2-digit",
   year: "numeric",
-  timeZone: "America/Argentina/Buenos_Aires",
+  timeZone: "UTC",
 });
 
 function formatMoneyByCurrency(amount: number | string, currency: Currency): string {
@@ -53,7 +53,8 @@ function formatMoneyByCurrency(amount: number | string, currency: Currency): str
 }
 
 function formatDate(isoDate: string): string {
-  const d = new Date(`${isoDate}T00:00:00`);
+  // Calendar dates have no timezone; keep parsing and display in UTC.
+  const d = new Date(`${isoDate}T00:00:00Z`);
   return Number.isNaN(d.getTime()) ? isoDate : dateFormatter.format(d);
 }
 
@@ -231,12 +232,23 @@ export function PaymentDrawer({ installment, row, tripCurrency, onClose }: Payme
                 </div>
                 <div>
                   <span className={styles.strong}>Monto reportado:</span>{" "}
-                  {formatMoneyByCurrency(entry.reportedAmount, entry.paymentCurrency)}
+                  {formatMoneyByCurrency(entry.originalReportedAmount, entry.paymentCurrency)}
+                </div>
+                <div>
+                  <span className={styles.strong}>Monto acreditado asignado:</span>{" "}
+                  {formatMoneyByCurrency(entry.reportedAmount, entry.allocationCurrency)}
                 </div>
                 <div>
                   <span className={styles.strong}>Equivalente imputado al viaje:</span>{" "}
                   {formatTripMoney(Number.parseFloat(entry.amountInTripCurrency), tripCurrency)}
                 </div>
+                {entry.allocationExchangeRate !== null ? (
+                  <div>
+                    <span className={styles.strong}>Cotización de la acreditación:</span>{" "}
+                    {entry.allocationExchangeRate} ARS por USD
+                    {entry.allocationQuoteEffectiveDate ? ` · ${formatDate(entry.allocationQuoteEffectiveDate)}` : ""}
+                  </div>
+                ) : null}
                 <div>
                   <span className={styles.strong}>Fecha:</span> {formatDate(entry.reportedPaymentDate)}
                 </div>

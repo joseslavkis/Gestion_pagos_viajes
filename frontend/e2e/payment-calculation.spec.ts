@@ -1,5 +1,7 @@
 import { expect, request, test, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 import { readFile, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 const apiUrl = requiredEnvironment("PAYMENT_E2E_API_URL");
 const fxCallLog = requiredEnvironment("PAYMENT_E2E_FX_CALL_LOG");
@@ -15,6 +17,8 @@ const CASE_J_DATE = "2026-01-15";
 const CASE_MULTI_RECEIPT_DATE = "2026-01-16";
 const CASE_MULTI_RECEIPT_RATE = "1200.00";
 const CASE_MULTI_RECEIPT_EXPECTED_USD = "200.00";
+const ADMIN_REVIEW_DATE = "2026-09-03";
+const executeFile = promisify(execFile);
 
 type SeededContext = {
   accessToken: string;
@@ -31,12 +35,15 @@ type SeededContext = {
   multiReceiptArsTripName: string;
   multiReceiptUsdTripName: string;
   multiReceiptUsdTripId: number;
+  adminCurrencyTripName: string;
+  adminCurrencyTripId: number;
 };
 
 let api: APIRequestContext;
 let seeded: SeededContext;
 
 test.describe.configure({ mode: "serial" });
+test.use({ timezoneId: "America/Argentina/Buenos_Aires" });
 
 test.beforeAll(async () => {
   api = await request.newContext({ baseURL: apiUrl });
@@ -535,6 +542,225 @@ test("CASE J conserves a partial cross-currency lifecycle across installments an
   await adminPage.close();
 });
 
+for (const scenario of [
+  {
+    name: "admin currency A approves an ARS submission in USD and voids without new FX",
+    originalCurrency: "ARS", originalAmount: "306000.00", approvedCurrency: "USD",
+    approvedAmount: "100.00", rejectedAmount: "153000.00", allocationAmounts: ["60.00", "40.00"],
+    originalRate: "1530.00", adminRate: null,
+  },
+  {
+    name: "admin currency B approves a USD submission in ARS using historical FX and voids exactly",
+    originalCurrency: "USD", originalAmount: "200.00", approvedCurrency: "ARS",
+    approvedAmount: "153000.00", rejectedAmount: "100.00", allocationAmounts: ["91800.00", "61200.00"],
+    originalRate: null, adminRate: "1530.00",
+  },
+] as const) {
+  test(scenario.name, async ({ page, context }) => {
+    await selectTrip(page, seeded.adminCurrencyTripName);
+    await page.getByLabel("Fecha de pago").fill(ADMIN_REVIEW_DATE);
+    const receipt = `admin-currency-${scenario.originalCurrency}.png`;
+    await attachReceipt(page, receipt);
+    await receiptCurrency(page, receipt).selectOption(scenario.originalCurrency);
+    await receiptAmount(page, receipt).fill(scenario.originalAmount);
+    const submissionId = await submitAndCaptureForm(page, scenario.originalAmount, scenario.originalCurrency);
+    const pending = await reloadedPayment(seeded.accessToken, submissionId);
+    expect(pending).toMatchObject({
+      status: "PENDING", reportedAmount: scenario.originalAmount, paymentCurrency: scenario.originalCurrency,
+      amountInTripCurrency: "200.00", tripCurrency: "USD", exchangeRate: scenario.originalRate,
+      reportedPaymentDate: ADMIN_REVIEW_DATE,
+    });
+    const original = await persistedReviewEvidence(submissionId);
+    expect(original.outcomes).toEqual([]);
+    const callsBeforeReview = scenario.originalRate ? [ADMIN_REVIEW_DATE] : [];
+    expect(await readFxCalls()).toEqual(callsBeforeReview);
+    const before = await adminCurrencyInstallments();
+    expect(before.map((entry) => moneyToCents(entry.paidAmount))).toEqual([0n, 0n, 0n, 0n]);
+
+    const adminPage = await context.newPage();
+    await adminPage.addInitScript((accessToken) => {
+      window.localStorage.setItem("pagos-viajes-auth-tokens", JSON.stringify({ accessToken, refreshToken: null }));
+    }, seeded.adminAccessToken);
+    await adminPage.goto("/payments/pending-review");
+    const card = adminPage.locator("article").filter({ hasText: seeded.adminCurrencyTripName });
+    await expect(card).toHaveCount(1);
+    await openAmountReview(card);
+    await expect(card.getByLabel("Moneda a imputar")).toHaveValue(scenario.originalCurrency);
+    await card.getByLabel("Moneda a imputar").selectOption(scenario.approvedCurrency);
+    await expect(card.getByLabel("Monto a imputar")).toHaveValue("");
+    await expect(card.getByRole("slider")).toHaveCount(0);
+    await card.getByLabel("Monto a imputar").fill(scenario.approvedAmount);
+    await expect(card.getByRole("button", { name: "Guardar decisión" })).toBeDisabled();
+    expect(await readFxCalls()).toEqual(callsBeforeReview);
+    await card.getByLabel(/Observación/).fill("Independent currency E2E administrative decision");
+    const reviewResponse = adminPage.waitForResponse((response) =>
+      response.url().endsWith(`/api/v1/payments/${submissionId}/review`) && response.request().method() === "PATCH");
+    await card.getByRole("button", { name: "Guardar decisión" }).click();
+    const response = await reviewResponse;
+    expect(response.status(), await response.text()).toBe(200);
+    expect(response.request().postDataJSON()).toMatchObject({
+      approvedCurrency: scenario.approvedCurrency, approvedAmount: scenario.approvedAmount,
+    });
+    await expect(card).toHaveCount(0);
+    // A reuses original frozen evidence; B requests a quote only for the new administrative conversion.
+    expect(await readFxCalls()).toEqual([ADMIN_REVIEW_DATE]);
+
+    const approved = await reloadedPayment(seeded.accessToken, submissionId);
+    expect(approved).toMatchObject({
+      status: "PARTIALLY_APPROVED", reportedAmount: scenario.originalAmount,
+      paymentCurrency: scenario.originalCurrency, exchangeRate: scenario.originalRate,
+      amountInTripCurrency: "200.00", approvedCurrency: scenario.approvedCurrency,
+      approvedAmount: scenario.approvedAmount, approvedAmountInTripCurrency: "100.00",
+      rejectedCurrency: scenario.originalCurrency, rejectedAmount: scenario.rejectedAmount,
+      approvedExchangeRate: scenario.adminRate,
+      approvedQuoteRequestedDate: scenario.adminRate ? ADMIN_REVIEW_DATE : null,
+      approvedQuoteEffectiveDate: scenario.adminRate ? ADMIN_REVIEW_DATE : null,
+      approvedQuoteSource: scenario.adminRate ? "payment-fx-test" : null,
+      approvedQuoteProvider: scenario.adminRate ? "deterministic-local-provider" : null,
+      approvedQuoteProviderTimestamp: scenario.adminRate ? `${ADMIN_REVIEW_DATE}T12:00:00Z` : null,
+      approvedCalculationVersion: "2",
+    });
+    const evidence = await persistedReviewEvidence(submissionId);
+    expect(evidence.original).toEqual(original.original); // Every submission column except mutable status, plus attachments.
+    const credited = evidence.outcomes.find((entry) => entry.status === "APPROVED")!;
+    const rejected = evidence.outcomes.find((entry) => entry.status === "REJECTED")!;
+    expect(evidence.outcomes).toHaveLength(2);
+    expect(credited).toMatchObject({
+      currency: scenario.approvedCurrency, reported_amount: scenario.approvedAmount,
+      amount_in_trip_currency: "100.00", exchange_rate: scenario.adminRate ? "1530.00000000" : null,
+      exchange_rate_scale: scenario.adminRate ? 2 : null,
+      exchange_rate_requested_date: scenario.adminRate ? ADMIN_REVIEW_DATE : null,
+      exchange_rate_effective_date: scenario.adminRate ? ADMIN_REVIEW_DATE : null,
+      exchange_rate_source: scenario.adminRate ? "payment-fx-test" : null,
+      exchange_rate_provider: scenario.adminRate ? "deterministic-local-provider" : null,
+      exchange_rate_provider_timestamp: scenario.adminRate ? `${ADMIN_REVIEW_DATE}T12:00:00Z` : null,
+      calculation_version: "2", resolved_by_email: adminEmail,
+      admin_observation: "Independent currency E2E administrative decision",
+    });
+    expect(rejected).toMatchObject({
+      currency: scenario.originalCurrency, reported_amount: scenario.rejectedAmount,
+      amount_in_trip_currency: "100.00", exchange_rate: scenario.originalRate ? "1530.00000000" : null,
+    });
+    const originalSubmission = original.original.submission as Record<string, unknown>;
+    for (const field of ["exchange_rate", "exchange_rate_scale", "exchange_rate_requested_date",
+      "exchange_rate_effective_date", "exchange_rate_source", "exchange_rate_provider",
+      "exchange_rate_provider_timestamp", "calculation_version"]) {
+      expect(rejected[field], `Rejected snapshot ${field}`).toEqual(originalSubmission[field]);
+    }
+    expect(moneyToCents(rejected.reported_amount)).toBeLessThanOrEqual(moneyToCents(scenario.originalAmount));
+    expect(moneyToCents(credited.amount_in_trip_currency) + moneyToCents(rejected.amount_in_trip_currency)).toBe(20000n);
+    expect(evidence.allocations.map((entry) => entry.allocation_order)).toEqual([1, 2]);
+    expect(evidence.allocations.map((entry) => entry.reported_amount)).toEqual(scenario.allocationAmounts);
+    expect(evidence.allocations.map((entry) => entry.amount_in_trip_currency)).toEqual(["60.00", "40.00"]);
+    expect(sumCents(evidence.allocations, "reported_amount")).toBe(moneyToCents(scenario.approvedAmount));
+    expect(sumCents(evidence.allocations, "amount_in_trip_currency")).toBe(10000n);
+    expect(sumCents(approved.installments, "reportedAmount")).toBe(moneyToCents(scenario.approvedAmount));
+    expect(sumCents(approved.installments, "amountInTripCurrency")).toBe(10000n);
+    expect(approved.installments.map((entry) => entry.allocationCurrency)).toEqual([scenario.approvedCurrency, scenario.approvedCurrency]);
+    const installments = await adminCurrencyInstallments();
+    expect(installments.map((entry) => moneyToCents(entry.paidAmount))).toEqual([6000n, 4000n, 0n, 0n]);
+    const histories = [];
+    for (const [index, installment] of installments.slice(0, 2).entries()) {
+      const history = await getJson(api, `/api/v1/payments/installment/${String(installment.installmentId)}`,
+        seeded.adminAccessToken) as Array<Record<string, unknown>>;
+      const entry = history.find((item) => item.submissionId === submissionId)!;
+      expect(entry).toMatchObject({
+        status: "APPROVED", originalReportedAmount: scenario.originalAmount, paymentCurrency: scenario.originalCurrency,
+        reportedAmount: scenario.allocationAmounts[index], allocationCurrency: scenario.approvedCurrency,
+        amountInTripCurrency: ["60.00", "40.00"][index], allocationExchangeRate: scenario.adminRate,
+        allocationQuoteRequestedDate: scenario.adminRate ? ADMIN_REVIEW_DATE : null,
+        allocationQuoteEffectiveDate: scenario.adminRate ? ADMIN_REVIEW_DATE : null,
+        allocationQuoteSource: scenario.adminRate ? "payment-fx-test" : null,
+        allocationQuoteProvider: scenario.adminRate ? "deterministic-local-provider" : null,
+        allocationQuoteProviderTimestamp: scenario.adminRate ? `${ADMIN_REVIEW_DATE}T12:00:00Z` : null,
+        allocationCalculationVersion: "2",
+      });
+      histories.push(entry);
+    }
+    await adminPage.goto(`/trips/${seeded.adminCurrencyTripId}/spreadsheet`);
+    const row = adminPage.locator("tbody tr").filter({ hasText: seeded.userEmail });
+    await expect(row).toHaveCount(1);
+    await row.locator("td").nth(1).click();
+    const drawer = adminPage.getByRole("dialog");
+    // The drawer also retains earlier voided history; inspect the one currently reversible credit.
+    const activeHistory = drawer.getByRole("button", { name: "Anular", exact: true }).locator("..").locator("..");
+    await expect(activeHistory).toHaveCount(1);
+    await expect(activeHistory.getByText("Monto reportado:", { exact: true }).locator("..")).toHaveText(
+      `Monto reportado: ${displayMoney(scenario.originalAmount, scenario.originalCurrency)}`);
+    await expect(activeHistory.getByText("Monto acreditado asignado:", { exact: true }).locator("..")).toHaveText(
+      `Monto acreditado asignado: ${displayMoney(scenario.allocationAmounts[0], scenario.approvedCurrency)}`);
+    await expect(activeHistory.getByText("Equivalente imputado al viaje:", { exact: true }).locator("..")).toHaveText(
+      `Equivalente imputado al viaje: ${displayMoney("60.00", "USD")}`);
+    if (scenario.adminRate) {
+      await expect(activeHistory.getByText("Cotización de la acreditación:", { exact: true }).locator("..")).toHaveText(
+        "Cotización de la acreditación: 1530.00 ARS por USD · 03/09/2026");
+    } else {
+      await expect(activeHistory.getByText(/Cotización de la acreditación:/)).toHaveCount(0);
+    }
+    const voidResponse = adminPage.waitForResponse((candidate) =>
+      candidate.url().endsWith(`/api/v1/payments/${submissionId}/void`) && candidate.request().method() === "POST");
+    await drawer.getByRole("button", { name: "Anular", exact: true }).click();
+    expect((await voidResponse).status()).toBe(200);
+    await expect(drawer.getByRole("button", { name: "Anular", exact: true })).toHaveCount(0);
+    const voided = await reloadedPayment(seeded.accessToken, submissionId);
+    expect(voided).toMatchObject({ status: "VOIDED", approvedAmount: "0.00", approvedAmountInTripCurrency: "0.00",
+      approvedCurrency: scenario.approvedCurrency, approvedExchangeRate: scenario.adminRate });
+    expect((await adminCurrencyInstallments()).map((entry) => moneyToCents(entry.paidAmount))).toEqual([0n, 0n, 0n, 0n]);
+    const afterVoid = await persistedReviewEvidence(submissionId);
+    expect(afterVoid.original).toEqual(original.original);
+    expect(afterVoid.allocations).toEqual(evidence.allocations); // No replanning or replacement of historical allocations.
+    expect(afterVoid.outcomes.filter((entry) => entry.status !== "VOIDED")).toEqual(evidence.outcomes);
+    const reversal = afterVoid.outcomes.find((entry) => entry.status === "VOIDED")!;
+    const approvedSnapshot = Object.fromEntries(Object.entries(credited)
+      .filter(([key]) => !["id", "status", "admin_observation", "resolved_at"].includes(key)));
+    expect(reversal).toMatchObject(approvedSnapshot); // Includes both exact amounts and every frozen FX column.
+    for (const [index, installment] of installments.slice(0, 2).entries()) {
+      const history = await getJson(api, `/api/v1/payments/installment/${String(installment.installmentId)}`,
+        seeded.adminAccessToken) as Array<Record<string, unknown>>;
+      expect(history.find((item) => item.submissionId === submissionId)).toEqual({ ...histories[index], status: "VOIDED" });
+    }
+    expect(await readFxCalls()).toEqual([ADMIN_REVIEW_DATE]);
+    await adminPage.close();
+  });
+}
+
+function displayMoney(amount: string, currency: string) {
+  // Display-only formatting; monetary assertions above use integer cents.
+  return new Intl.NumberFormat("es-AR", { style: "currency", currency }).format(Number(amount));
+}
+
+async function adminCurrencyInstallments() {
+  return (await getJson(api, "/api/v1/payments/my/installments", seeded.accessToken) as Array<Record<string, unknown>>)
+    .filter((entry) => entry.tripId === seeded.adminCurrencyTripId)
+    .sort((left, right) => Number(left.installmentNumber) - Number(right.installmentNumber));
+}
+
+async function persistedReviewEvidence(submissionId: number) {
+  if (!Number.isSafeInteger(submissionId) || submissionId <= 0) throw new Error("Invalid submission id for read-only evidence");
+  const { stdout } = await executeFile("docker", ["exec", requiredEnvironment("PAYMENT_E2E_POSTGRES_CONTAINER"),
+    "psql", "-U", "payment_e2e", "-d", "payment_e2e", "-Atq", "-v", "ON_ERROR_STOP=1", "-c", `
+      BEGIN READ ONLY;
+      SELECT jsonb_build_object(
+        'original', jsonb_build_object('submission', (to_jsonb(s) - 'status') || jsonb_build_object(
+          'reported_amount', s.reported_amount::text, 'amount_in_trip_currency', s.amount_in_trip_currency::text,
+          'exchange_rate', s.exchange_rate::text), 'attachments',
+          (SELECT COALESCE(jsonb_agg(to_jsonb(a) ORDER BY a.id), '[]'::jsonb)
+           FROM payment_submission_attachments a WHERE a.submission_id = s.id)),
+        'outcomes', (SELECT COALESCE(jsonb_agg(to_jsonb(o) || jsonb_build_object(
+          'reported_amount', o.reported_amount::text, 'amount_in_trip_currency', o.amount_in_trip_currency::text,
+          'exchange_rate', o.exchange_rate::text) ORDER BY o.id), '[]'::jsonb)
+          FROM payment_outcomes o WHERE o.submission_id = s.id),
+        'allocations', (SELECT COALESCE(jsonb_agg(to_jsonb(a) || jsonb_build_object(
+          'reported_amount', a.reported_amount::text, 'amount_in_trip_currency', a.amount_in_trip_currency::text)
+          ORDER BY a.id), '[]'::jsonb) FROM payment_allocations a
+          JOIN payment_outcomes o ON o.id = a.outcome_id WHERE o.submission_id = s.id))
+      FROM payment_submissions s WHERE s.id = ${submissionId};
+      COMMIT;`]);
+  return JSON.parse(stdout.trim()) as {
+    original: Record<string, unknown>; outcomes: Array<Record<string, unknown>>; allocations: Array<Record<string, unknown>>;
+  };
+}
+
 function receiptAmount(page: Page, fileName: string) {
   return page.getByLabel(`Monto de ${fileName}`);
 }
@@ -748,6 +974,16 @@ async function seedPaymentContexts(context: APIRequestContext): Promise<SeededCo
     studentDnis: [studentDni],
   }, adminToken);
 
+  const adminCurrencyTripName = `Admin currency USD ${stamp}`;
+  const adminCurrencyTrip = await postJson(context, "/api/v1/trips", {
+    name: adminCurrencyTripName, totalAmount: "240.00", firstInstallmentAmount: "60.00", installmentsCount: 4,
+    dueDay: 10, yellowWarningDays: 5, retroactiveActive: false, currency: "USD",
+    firstDueDate: "2026-12-10", fixedFineAmount: "0.00",
+  }, adminToken);
+  await postJson(context, `/api/v1/trips/${String(adminCurrencyTrip.id)}/users/bulk`, {
+    studentDnis: [studentDni],
+  }, adminToken);
+
   const signup = await postJson(context, "/api/v1/auth/signup", {
     email: userEmail,
     password: userPassword,
@@ -787,6 +1023,8 @@ async function seedPaymentContexts(context: APIRequestContext): Promise<SeededCo
     multiReceiptArsTripName,
     multiReceiptUsdTripName: `Multi receipt USD ${stamp}`,
     multiReceiptUsdTripId: Number(multiReceiptUsdTrip.id),
+    adminCurrencyTripName,
+    adminCurrencyTripId: Number(adminCurrencyTrip.id),
   };
 }
 

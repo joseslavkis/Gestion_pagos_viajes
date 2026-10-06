@@ -133,6 +133,7 @@ describe("Admin trips and payments routes integration", () => {
           {
             receiptId: null,
             status: "PENDING",
+            allocationCurrency: "ARS",
             reportedAmount: "200.00",
             amountInTripCurrency: "200.00",
             installmentId: 12,
@@ -156,6 +157,9 @@ describe("Admin trips and payments routes integration", () => {
           status: "APPROVED",
           reportedAmount: "200.00",
           approvedAmount: "200.00",
+          approvedCurrency: "ARS", approvedExchangeRate: null, approvedQuoteRequestedDate: null,
+          approvedQuoteEffectiveDate: null, approvedQuoteSource: null, approvedQuoteProvider: null,
+          approvedQuoteProviderTimestamp: null, approvedCalculationVersion: null, rejectedCurrency: null,
           rejectedAmount: "0.00",
           paymentCurrency: "ARS",
           exchangeRate: null,

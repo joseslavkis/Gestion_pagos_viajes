@@ -32,6 +32,8 @@ import com.agencia.pagos.trip.TripService;
 import org.apache.poi.ss.usermodel.DataFormatter;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -88,8 +90,9 @@ class TripServiceApprovedOutcomeAmountTest {
 
     private final DataFormatter dataFormatter = new DataFormatter();
 
-    @Test
-    void exportSpreadsheetAsExcel_approvedOutcomeUsesOutcomeAmountsNotSubmissionAmounts() throws IOException {
+    @ParameterizedTest
+    @ValueSource(strings = {"same-currency", "cross-currency", "voided", "new-quote"})
+    void exportSpreadsheetAsExcel_approvedOutcomeUsesOutcomeAmountsNotSubmissionAmounts(String scenario) throws IOException {
         // ── Arrange ──────────────────────────────────────────────────────────
         Trip trip = new Trip();
         setField(trip, "id", 10L);
@@ -138,6 +141,7 @@ class TripServiceApprovedOutcomeAmountTest {
         PaymentOutcome approvedOutcome = new PaymentOutcome();
         setField(approvedOutcome, "id", 300L);
         approvedOutcome.setSubmission(submission);
+        approvedOutcome.applySnapshot(com.agencia.pagos.payment.PaymentOutcomeSnapshot.fromSubmission(submission));
         approvedOutcome.setStatus(PaymentOutcomeStatus.APPROVED);
         approvedOutcome.setReportedAmount(new BigDecimal("1500.00"));
         approvedOutcome.setAmountInTripCurrency(new BigDecimal("1500.00"));
@@ -146,6 +150,50 @@ class TripServiceApprovedOutcomeAmountTest {
 
         Set<PaymentOutcome> outcomes = new LinkedHashSet<>();
         outcomes.add(approvedOutcome);
+        boolean crossCurrency = !scenario.equals("same-currency");
+        if (crossCurrency) {
+            trip.setCurrency(Currency.USD);
+            submission.setReportedAmount(new BigDecimal("306000.00"));
+            submission.setAmountInTripCurrency(new BigDecimal("200.00"));
+            submission.setExchangeRate(new BigDecimal("1530.00000000"));
+            submission.setExchangeRateScale(8);
+            submission.setExchangeRateRequestedDate(submission.getReportedPaymentDate());
+            submission.setExchangeRateEffectiveDate(submission.getReportedPaymentDate());
+            submission.setExchangeRateSource("original-source");
+            submission.setExchangeRateProvider("original-provider");
+            approvedOutcome.setReportedAmount(new BigDecimal("150.00"));
+            approvedOutcome.setAmountInTripCurrency(new BigDecimal("150.00"));
+            approvedOutcome.applySnapshot(com.agencia.pagos.payment.PaymentOutcomeSnapshot.administrative(Currency.USD, null));
+            PaymentOutcome rejected = new PaymentOutcome();
+            rejected.setSubmission(submission);
+            rejected.setStatus(PaymentOutcomeStatus.REJECTED);
+            rejected.setReportedAmount(new BigDecimal("76500.00"));
+            rejected.setAmountInTripCurrency(new BigDecimal("50.00"));
+            rejected.applySnapshot(com.agencia.pagos.payment.PaymentOutcomeSnapshot.fromSubmission(submission));
+            outcomes.add(rejected);
+            if (scenario.equals("new-quote")) {
+                submission.setReportedAmount(new BigDecimal("200.00"));
+                submission.setPaymentCurrency(Currency.USD);
+                submission.setExchangeRate(null);
+                submission.setExchangeRateScale(null);
+                submission.setExchangeRateRequestedDate(null);
+                submission.setExchangeRateEffectiveDate(null);
+                submission.setExchangeRateSource(null);
+                submission.setExchangeRateProvider(null);
+                approvedOutcome.setReportedAmount(new BigDecimal("153000.00"));
+                approvedOutcome.setAmountInTripCurrency(new BigDecimal("100.00"));
+                approvedOutcome.applySnapshot(com.agencia.pagos.payment.PaymentOutcomeSnapshot.administrative(Currency.ARS,
+                        new com.agencia.pagos.payment.ExchangeRateQuote(new BigDecimal("1530.00000000"),
+                                submission.getReportedPaymentDate(), submission.getReportedPaymentDate().minusDays(1),
+                                "admin-source", "admin-provider", "admin-time")));
+                rejected.setReportedAmount(new BigDecimal("100.00"));
+                rejected.setAmountInTripCurrency(new BigDecimal("100.00"));
+                rejected.applySnapshot(com.agencia.pagos.payment.PaymentOutcomeSnapshot.fromSubmission(submission));
+            }
+            if (scenario.equals("voided")) {
+                submission.setStatus(PaymentSubmissionStatus.VOIDED);
+            }
+        }
         submission.setOutcomes(outcomes);
 
         // ── Mock wiring ──────────────────────────────────────────────────────
@@ -184,18 +232,18 @@ class TripServiceApprovedOutcomeAmountTest {
         try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(excelBytes))) {
             var receiptsSheet = workbook.getSheet("Comprobantes");
             // Header row (0) + one data row
-            assertEquals(1, receiptsSheet.getLastRowNum());
+            assertEquals(crossCurrency ? 2 : 1, receiptsSheet.getLastRowNum());
 
             var dataRow = receiptsSheet.getRow(1);
 
             // The amounts must come from the APPROVED outcome, NOT the submission
-            assertEquals(1500.00, dataRow.getCell(7).getNumericCellValue(),
+            assertEquals(approvedOutcome.getReportedAmount().doubleValue(), dataRow.getCell(7).getNumericCellValue(),
                     "Monto (col 7) must be approved outcome amount (1500), not submission amount (1000)");
-            assertEquals(1500.00, dataRow.getCell(10).getNumericCellValue(),
+            assertEquals(approvedOutcome.getAmountInTripCurrency().doubleValue(), dataRow.getCell(10).getNumericCellValue(),
                     "Monto convertido (col 10) must be approved outcome amount (1500), not submission amount (1000)");
 
             // Other fields should still reflect correct data
-            assertEquals("Aprobado", dataFormatter.formatCellValue(dataRow.getCell(11)),
+            assertEquals(scenario.equals("voided") ? "Anulado" : "Aprobado", dataFormatter.formatCellValue(dataRow.getCell(11)),
                     "Estado should be 'Aprobado'");
             assertEquals("Monto corregido por admin", dataFormatter.formatCellValue(dataRow.getCell(12)),
                     "Observación should come from the approved outcome");
@@ -203,6 +251,26 @@ class TripServiceApprovedOutcomeAmountTest {
                     "DNI alumno should still be correct");
             assertEquals("Gomez", dataFormatter.formatCellValue(dataRow.getCell(2)),
                     "Apellido alumno should still be correct");
+            assertEquals(approvedOutcome.getCurrency().name(), dataFormatter.formatCellValue(dataRow.getCell(8)));
+            assertEquals(submission.getReportedAmount().doubleValue(), dataRow.getCell(13).getNumericCellValue());
+            assertEquals(submission.getPaymentCurrency().name(), dataFormatter.formatCellValue(dataRow.getCell(14)));
+            if (scenario.equals("new-quote")) {
+                assertEquals(1530.00, dataRow.getCell(9).getNumericCellValue());
+                assertEquals("", dataFormatter.formatCellValue(dataRow.getCell(15)));
+                assertEquals("admin-provider", dataFormatter.formatCellValue(dataRow.getCell(19)));
+                assertEquals("admin-time", dataFormatter.formatCellValue(dataRow.getCell(20)));
+                assertEquals("2", dataFormatter.formatCellValue(dataRow.getCell(21)));
+                assertEquals("USD", dataFormatter.formatCellValue(receiptsSheet.getRow(2).getCell(8)));
+                assertEquals(100.00, receiptsSheet.getRow(2).getCell(7).getNumericCellValue());
+            } else if (crossCurrency) {
+                assertEquals("", dataFormatter.formatCellValue(dataRow.getCell(9)), "Identity admin approval must not borrow original FX");
+                var rejectedRow = receiptsSheet.getRow(2);
+                assertEquals(76500.00, rejectedRow.getCell(7).getNumericCellValue());
+                assertEquals("ARS", dataFormatter.formatCellValue(rejectedRow.getCell(8)));
+                assertEquals(1530.00, rejectedRow.getCell(9).getNumericCellValue());
+                assertEquals("Rechazado", dataFormatter.formatCellValue(rejectedRow.getCell(11)));
+                assertEquals("original-provider", dataFormatter.formatCellValue(rejectedRow.getCell(19)));
+            }
         }
     }
 

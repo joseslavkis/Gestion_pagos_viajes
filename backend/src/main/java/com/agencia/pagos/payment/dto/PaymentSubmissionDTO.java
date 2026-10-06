@@ -42,6 +42,15 @@ public record PaymentSubmissionDTO(
         List<PaymentBatchInstallmentDTO> installments,
         List<String> fileKeys,
         PaymentSubmissionSource source,
-        String manualReason
+        String manualReason,
+        Currency approvedCurrency,
+        @JsonSerialize(using = CanonicalDecimalSerializer.class) BigDecimal approvedExchangeRate,
+        LocalDate approvedQuoteRequestedDate,
+        LocalDate approvedQuoteEffectiveDate,
+        String approvedQuoteSource,
+        String approvedQuoteProvider,
+        String approvedQuoteProviderTimestamp,
+        String approvedCalculationVersion,
+        Currency rejectedCurrency
 ) {
 }

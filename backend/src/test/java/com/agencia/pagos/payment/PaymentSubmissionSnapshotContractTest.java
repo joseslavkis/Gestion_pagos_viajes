@@ -41,6 +41,19 @@ class PaymentSubmissionSnapshotContractTest {
     }
 
     @Test
+    void decisionAndAllocationContractsKeepOriginalAndAdministrativeSnapshotsDistinct() {
+        List<String> submissionFields = Arrays.stream(PaymentSubmissionDTO.class.getRecordComponents())
+                .map(RecordComponent::getName).toList();
+        assertTrue(submissionFields.containsAll(List.of("paymentCurrency", "exchangeRate", "approvedCurrency",
+                "approvedExchangeRate", "approvedQuoteRequestedDate", "approvedQuoteEffectiveDate", "approvedQuoteSource",
+                "approvedQuoteProvider", "approvedQuoteProviderTimestamp", "approvedCalculationVersion", "rejectedCurrency")));
+        List<String> historyFields = Arrays.stream(PaymentInstallmentHistoryDTO.class.getRecordComponents())
+                .map(RecordComponent::getName).toList();
+        assertTrue(historyFields.containsAll(List.of("paymentCurrency", "originalReportedAmount", "allocationCurrency",
+                "allocationExchangeRate", "allocationQuoteProvider", "allocationCalculationVersion")));
+    }
+
+    @Test
     void quoteIdentityIsExposedAcrossPreviewReviewAndHistoryDtos() {
         for (Class<?> dto : List.of(
                 PaymentBatchPreviewDTO.class,
@@ -68,7 +81,8 @@ class PaymentSubmissionSnapshotContractTest {
                 new BigDecimal("1015.50"),
                 new BigDecimal("1234.567"),
                 new BigDecimal("10.16"),
-                null
+                null,
+                com.agencia.pagos.shared.money.Currency.ARS
         );
 
         String json = new ObjectMapper().findAndRegisterModules().writeValueAsString(dto);

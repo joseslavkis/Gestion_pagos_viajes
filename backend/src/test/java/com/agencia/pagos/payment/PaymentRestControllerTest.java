@@ -110,6 +110,121 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
     private PaymentService paymentService;
 
     @Test
+    void reviewHttpPreservesOriginalAndIndependentAdministrativeSnapshotsThroughHistoryAndVoid() throws Exception {
+        TokenDTO admin = signUpAdmin(buildValidUser("admin-independent-snapshots"));
+        PaymentFixture fixture = createPaymentFixture("independent-snapshots", Currency.USD);
+        Installment anchor = createInstallment(fixture.trip(), fixture.user(), fixture.student(),
+                1, "200.00", InstallmentStatus.YELLOW);
+        PaymentSubmission submission = buildPendingSubmission(anchor, createBankAccount(Currency.ARS),
+                "306000.00", "200.00", "snapshot-receipt");
+        submission.setExchangeRate(new BigDecimal("1530.00000000"));
+        submission.setExchangeRateScale(8);
+        submission.setExchangeRateRequestedDate(submission.getReportedPaymentDate());
+        submission.setExchangeRateEffectiveDate(submission.getReportedPaymentDate().minusDays(1));
+        submission.setExchangeRateSource("original-source");
+        submission.setExchangeRateProvider("original-provider");
+        submission.setExchangeRateProviderTimestamp("original-time");
+        submission.setCalculationVersion("2");
+        Long id = paymentSubmissionRepository.saveAndFlush(submission).getId();
+        mockMvc.perform(patch("/api/v1/payments/{id}/review", id)
+                        .header("Authorization", "Bearer " + admin.accessToken()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"approvedAmount\":150,\"approvedCurrency\":\"USD\",\"adminObservation\":\"Confirmed USD credit\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reportedAmount").value("306000.00"))
+                .andExpect(jsonPath("$.paymentCurrency").value("ARS"))
+                .andExpect(jsonPath("$.exchangeRate").value("1530.00000000"))
+                .andExpect(jsonPath("$.quoteProvider").value("original-provider"))
+                .andExpect(jsonPath("$.approvedAmount").value("150.00"))
+                .andExpect(jsonPath("$.approvedCurrency").value("USD"))
+                .andExpect(jsonPath("$.approvedExchangeRate").isEmpty())
+                .andExpect(jsonPath("$.approvedQuoteProvider").isEmpty())
+                .andExpect(jsonPath("$.rejectedCurrency").value("ARS"))
+                .andExpect(jsonPath("$.rejectedAmount").value("76500.00"))
+                .andExpect(jsonPath("$.installments[0].allocationCurrency").value("USD"));
+        mockMvc.perform(post("/api/v1/payments/{id}/void", id).header("Authorization", "Bearer " + admin.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("VOIDED"))
+                .andExpect(jsonPath("$.approvedCurrency").value("USD"))
+                .andExpect(jsonPath("$.approvedExchangeRate").isEmpty());
+        mockMvc.perform(get("/api/v1/payments/installment/{id}", anchor.getId()).header("Authorization", "Bearer " + admin.accessToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].status").value("VOIDED"))
+                .andExpect(jsonPath("$[0].reportedAmount").value("150.00"))
+                .andExpect(jsonPath("$[0].originalReportedAmount").value("306000.00"))
+                .andExpect(jsonPath("$[0].paymentCurrency").value("ARS"))
+                .andExpect(jsonPath("$[0].allocationCurrency").value("USD"))
+                .andExpect(jsonPath("$[0].allocationExchangeRate").isEmpty());
+        org.mockito.Mockito.verifyNoInteractions(exchangeRateService);
+    }
+
+    @Test
+    void reviewHttpExposesNewHistoricalAdministrativeQuoteWithoutChangingOriginalQuoteFields() throws Exception {
+        TokenDTO admin = signUpAdmin(buildValidUser("admin-new-snapshot"));
+        PaymentFixture fixture = createPaymentFixture("new-snapshot", Currency.USD);
+        Installment anchor = createInstallment(fixture.trip(), fixture.user(), fixture.student(), 1, "200.00", InstallmentStatus.YELLOW);
+        PaymentSubmission submission = buildPendingSubmission(anchor, createBankAccount(Currency.USD), "200.00", "200.00", "snapshot-receipt");
+        submission.setExchangeRate(null);
+        submission.setCalculationVersion("2");
+        Long id = paymentSubmissionRepository.saveAndFlush(submission).getId();
+        LocalDate date = submission.getReportedPaymentDate();
+        given(exchangeRateService.getOfficialQuoteForDate(date)).willReturn(new ExchangeRateQuote(new BigDecimal("1530.00000000"),
+                date, date.minusDays(1), "admin-source", "admin-provider", "admin-time"));
+        mockMvc.perform(patch("/api/v1/payments/{id}/review", id)
+                        .header("Authorization", "Bearer " + admin.accessToken()).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"approvedAmount\":153000,\"approvedCurrency\":\"ARS\",\"adminObservation\":\"Confirmed ARS credit\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paymentCurrency").value("USD"))
+                .andExpect(jsonPath("$.exchangeRate").isEmpty())
+                .andExpect(jsonPath("$.quoteProvider").isEmpty())
+                .andExpect(jsonPath("$.approvedCurrency").value("ARS"))
+                .andExpect(jsonPath("$.approvedExchangeRate").value("1530.00000000"))
+                .andExpect(jsonPath("$.approvedQuoteRequestedDate").value(date.toString()))
+                .andExpect(jsonPath("$.approvedQuoteEffectiveDate").value(date.minusDays(1).toString()))
+                .andExpect(jsonPath("$.approvedQuoteSource").value("admin-source"))
+                .andExpect(jsonPath("$.approvedQuoteProvider").value("admin-provider"))
+                .andExpect(jsonPath("$.approvedQuoteProviderTimestamp").value("admin-time"))
+                .andExpect(jsonPath("$.approvedCalculationVersion").value("2"));
+    }
+
+    @Test
+    void reviewRequiresExplicitCurrencyAndDoesNotExposeInternalValidationFields() throws Exception {
+        TokenDTO admin = signUpAdmin(buildValidUser("admin-missing-review-currency"));
+        mockMvc.perform(patch("/api/v1/payments/{id}/review", 1)
+                        .header("Authorization", "Bearer " + admin.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"approvedAmount\":100}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0]").value("Debe seleccionar la moneda aprobada."));
+        assertThat(paymentOutcomeRepository.count()).isZero();
+    }
+
+    @Test
+    void reviewHttpRevalidatesDateEvenWhenOpenEntityManagerAlreadyLoadedSubmission() throws Exception {
+        TokenDTO admin = signUpAdmin(buildValidUser("admin-http-stale-quote"));
+        PaymentFixture fixture = createPaymentFixture("http-stale-quote", Currency.ARS);
+        Installment anchor = createInstallment(fixture.trip(), fixture.user(), fixture.student(),
+                1, "100.00", InstallmentStatus.YELLOW);
+        PaymentSubmission submission = buildPendingSubmission(anchor, createBankAccount(Currency.ARS),
+                "100.00", "100.00", "http-stale-receipt");
+        submission.setCalculationVersion("2");
+        Long id = paymentSubmissionRepository.saveAndFlush(submission).getId();
+        given(exchangeRateService.getOfficialQuoteForDate(submission.getReportedPaymentDate())).willAnswer(invocation -> {
+            jdbcTemplate.update("UPDATE payment_submissions SET reported_payment_date = ? WHERE id = ?",
+                    submission.getReportedPaymentDate().minusDays(1), id);
+            return new ExchangeRateQuote(new BigDecimal("100"), submission.getReportedPaymentDate(),
+                    submission.getReportedPaymentDate(), "test-history", "test-provider", "test-time");
+        });
+        mockMvc.perform(patch("/api/v1/payments/{id}/review", id)
+                        .header("Authorization", "Bearer " + admin.accessToken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"approvedAmount\":1,\"approvedCurrency\":\"USD\",\"adminObservation\":\"Confirmed credit\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(content().string("El pago cambió durante la revisión. Actualice la información e intente nuevamente."));
+        assertThat(paymentOutcomeRepository.count()).isZero();
+        assertThat(paymentAllocationRepository.count()).isZero();
+        assertThat(installmentRepository.findById(anchor.getId()).orElseThrow().getPaidAmount()).isEqualByComparingTo("0.00");
+    }
+
+    @Test
     void getPendingReview_siendoAdmin_devuelvePagosPendientesAgrupadosPorSubmission() throws Exception {
         TokenDTO adminTokens = signUpAdmin(buildValidUser("admin-pending-grouped"));
         PaymentFixture fixture = createPaymentFixture("payment-pending-grouped", Currency.ARS);
@@ -255,7 +370,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 "quote-full-review", "100.00", "123456.70", quote);
         paymentService.reviewPayment(
                 full.submissionId(),
-                new ReviewPaymentDTO(new BigDecimal("123456.70"), null),
+                new ReviewPaymentDTO(new BigDecimal("123456.70"), Currency.ARS, null),
                 "admin@test.com");
         assertPersistedSnapshot(full.submissionId(), quote, PaymentSubmissionStatus.RESOLVED);
         paymentService.voidPayment(full.submissionId(), "admin@test.com");
@@ -265,7 +380,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 "quote-partial-review", "100.00", "123456.70", quote);
         paymentService.reviewPayment(
                 partial.submissionId(),
-                new ReviewPaymentDTO(new BigDecimal("61728.35"), "Partial approval contract"),
+                new ReviewPaymentDTO(new BigDecimal("61728.35"), Currency.ARS, "Partial approval contract"),
                 "admin@test.com");
         assertPersistedSnapshot(partial.submissionId(), quote, PaymentSubmissionStatus.RESOLVED);
         paymentService.voidPayment(partial.submissionId(), "admin@test.com");
@@ -300,7 +415,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
 
         paymentService.reviewPayment(
                 registered.submissionId(),
-                new ReviewPaymentDTO(new BigDecimal("10.16"), null),
+                new ReviewPaymentDTO(new BigDecimal("10.16"), Currency.ARS, null),
                 "admin@test.com");
         var approvedHistory = paymentService.getReceiptsForInstallment(registered.installmentId());
         assertThat(approvedHistory).hasSize(1);
@@ -326,7 +441,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
 
         paymentService.reviewPayment(
                 legacy.submissionId(),
-                new ReviewPaymentDTO(new BigDecimal("10.16"), null),
+                new ReviewPaymentDTO(new BigDecimal("10.16"), Currency.ARS, null),
                 "admin@test.com");
         paymentSubmissionRepository.flush();
         entityManager.clear();
@@ -372,7 +487,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
 
         org.mockito.Mockito.clearInvocations(exchangeRateService);
         PaymentSubmissionDTO reviewed = paymentService.reviewPayment(registered.submissionId(),
-                new ReviewPaymentDTO(new BigDecimal("100.00"), null), "admin@test.com");
+                new ReviewPaymentDTO(new BigDecimal("100.00"), Currency.ARS, null), "admin@test.com");
         assertThat(reviewed.exchangeRate()).isEqualByComparingTo(quote.sellRate());
         var history = paymentService.getReceiptsForInstallment(registered.installmentId());
         assertThat(history).singleElement().satisfies(item ->
@@ -397,7 +512,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
 
         paymentService.reviewPayment(
                 legacy.submissionId(),
-                new ReviewPaymentDTO(new BigDecimal("0.00"), "Rechazo explícito de pago histórico v1"),
+                new ReviewPaymentDTO(new BigDecimal("0.00"), Currency.ARS, "Rechazo explícito de pago histórico v1"),
                 "admin@test.com");
         paymentSubmissionRepository.flush();
         entityManager.clear();
@@ -425,7 +540,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
         org.mockito.Mockito.clearInvocations(exchangeRateService);
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> paymentService.reviewPayment(
-                legacy.submissionId(), new ReviewPaymentDTO(new BigDecimal("1000.00"), null), "admin@test.com"))
+                legacy.submissionId(), new ReviewPaymentDTO(new BigDecimal("1000.00"), Currency.USD, null), "admin@test.com"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("histórico");
         assertDivergentLegacyUnchanged(legacy);
@@ -437,7 +552,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
         org.mockito.Mockito.clearInvocations(exchangeRateService);
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> paymentService.reviewPayment(
-                legacy.submissionId(), new ReviewPaymentDTO(new BigDecimal("500.00"), "Review"), "admin@test.com"))
+                legacy.submissionId(), new ReviewPaymentDTO(new BigDecimal("500.00"), Currency.USD, "Review"), "admin@test.com"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("histórico");
         assertDivergentLegacyUnchanged(legacy);
@@ -449,7 +564,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
         org.mockito.Mockito.clearInvocations(exchangeRateService);
 
         paymentService.reviewPayment(legacy.submissionId(),
-                new ReviewPaymentDTO(new BigDecimal("0.00"), "Rejected historical payment"), "admin@test.com");
+                new ReviewPaymentDTO(new BigDecimal("0.00"), Currency.USD, "Rejected historical payment"), "admin@test.com");
         entityManager.clear();
         PaymentSubmission submission = paymentSubmissionRepository.findByIdWithContext(legacy.submissionId()).orElseThrow();
         assertThat(submission.getStatus()).isEqualTo(PaymentSubmissionStatus.RESOLVED);
@@ -523,7 +638,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 fixture.user().getEmail());
         paymentService.reviewPayment(
                 registered.submissionId(),
-                new ReviewPaymentDTO(new BigDecimal("66.67"), null),
+                new ReviewPaymentDTO(new BigDecimal("66.67"), Currency.USD, null),
                 "admin@test.com");
         paymentSubmissionRepository.flush();
         entityManager.clear();
@@ -620,14 +735,14 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
         mockMvc.perform(patch("/api/v1/payments/{id}/review", submission.getId())
                         .header("Authorization", "Bearer " + adminTokens.accessToken())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"approvedAmount\":100.00}"))
+                        .content("{\"approvedAmount\":100.00,\"approvedCurrency\":\"ARS\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("APPROVED"));
 
         mockMvc.perform(patch("/api/v1/payments/{id}/review", submission.getId())
                         .header("Authorization", "Bearer " + adminTokens.accessToken())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"approvedAmount\":100.00}"))
+                        .content("{\"approvedAmount\":100.00,\"approvedCurrency\":\"ARS\"}"))
                 .andExpect(status().isConflict())
                 .andExpect(content().string("Este pago ya fue revisado"));
     }
@@ -640,7 +755,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
         mockMvc.perform(patch("/api/v1/payments/{id}/review", submission.getId())
                         .header("Authorization", "Bearer " + adminTokens.accessToken())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"approvedAmount\":100.00}"))
+                        .content("{\"approvedAmount\":100.00,\"approvedCurrency\":\"ARS\"}"))
                 .andExpect(status().isOk());
 
         mockMvc.perform(post("/api/v1/payments/{id}/void", submission.getId())
@@ -695,7 +810,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
         return mockMvc.perform(patch("/api/v1/payments/{id}/review", submissionId)
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"approvedAmount\":100.00}"))
+                        .content("{\"approvedAmount\":100.00,\"approvedCurrency\":\"ARS\"}"))
                 .andReturn()
                 .getResponse()
                 .getStatus();
@@ -710,7 +825,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
         mockMvc.perform(patch("/api/v1/payments/{id}/review", submission.getId())
                         .header("Authorization", "Bearer " + adminTokens.accessToken())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"approvedAmount\":100.00}"))
+                        .content("{\"approvedAmount\":100.00,\"approvedCurrency\":\"ARS\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("APPROVED"));
 

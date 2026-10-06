@@ -35,6 +35,15 @@ public record PaymentInstallmentHistoryDTO(
         String bankAccountAlias,
         List<String> fileKeys,
         PaymentSubmissionSource source,
-        String manualReason
+        String manualReason,
+        @JsonSerialize(using = CanonicalDecimalSerializer.class) BigDecimal originalReportedAmount,
+        Currency allocationCurrency,
+        @JsonSerialize(using = CanonicalDecimalSerializer.class) BigDecimal allocationExchangeRate,
+        LocalDate allocationQuoteRequestedDate,
+        LocalDate allocationQuoteEffectiveDate,
+        String allocationQuoteSource,
+        String allocationQuoteProvider,
+        String allocationQuoteProviderTimestamp,
+        String allocationCalculationVersion
 ) {
 }

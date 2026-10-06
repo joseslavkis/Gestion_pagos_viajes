@@ -16,6 +16,7 @@ import com.agencia.pagos.trip.Installment;
 import com.agencia.pagos.trip.InstallmentStatus;
 import com.agencia.pagos.trip.PendingTripStudent;
 import com.agencia.pagos.payment.PaymentOutcome;
+import com.agencia.pagos.payment.PaymentOutcomeSnapshot;
 import com.agencia.pagos.payment.PaymentOutcomeStatus;
 import com.agencia.pagos.payment.PaymentReceipt;
 import com.agencia.pagos.payment.PaymentSubmission;
@@ -309,9 +310,18 @@ public class TripService {
                     submission.getAnchorInstallment(),
                     approvedOutcome.getReportedAmount(),
                     approvedOutcome.getAmountInTripCurrency(),
-                    "Aprobado",
-                    approvedOutcome.getAdminObservation()
+                    submission.getStatus() == PaymentSubmissionStatus.VOIDED ? "Anulado" : "Aprobado",
+                    approvedOutcome.getAdminObservation(),
+                    PaymentOutcomeSnapshot.fromOutcome(approvedOutcome)
             ));
+        }
+
+        if (rejectedOutcome != null) {
+            rows.add(toSubmissionRow(submission, submission.getAnchorInstallment(),
+                    rejectedOutcome.getReportedAmount(), rejectedOutcome.getAmountInTripCurrency(),
+                    "Rechazado", rejectedOutcome.getAdminObservation(), PaymentOutcomeSnapshot.fromOutcome(rejectedOutcome)));
+        }
+        if (approvedOutcome != null || rejectedOutcome != null) {
             return;
         }
 
@@ -371,6 +381,13 @@ public class TripService {
             String status,
             String adminObservation
     ) {
+        return toSubmissionRow(submission, installment, reportedAmount, amountInTripCurrency,
+                status, adminObservation, PaymentOutcomeSnapshot.fromSubmission(submission));
+    }
+
+    private SpreadsheetReceiptRowDTO toSubmissionRow(PaymentSubmission submission, Installment installment,
+            BigDecimal reportedAmount, BigDecimal amountInTripCurrency, String status,
+            String adminObservation, PaymentOutcomeSnapshot snapshot) {
         Student student = submission.getStudent() != null
                 ? submission.getStudent()
                 : installment == null ? null : installment.getStudent();
@@ -384,11 +401,14 @@ public class TripService {
                 submission.getReportedPaymentDate(),
                 submission.getPaymentMethod() == null ? null : submission.getPaymentMethod().name(),
                 reportedAmount,
-                submission.getPaymentCurrency() == null ? null : submission.getPaymentCurrency().name(),
-                submission.getExchangeRate(),
+                snapshot.currency().name(),
+                snapshot.exchangeRate(),
                 amountInTripCurrency,
                 status,
-                adminObservation
+                adminObservation,
+                submission.getReportedAmount(), submission.getPaymentCurrency().name(), submission.getExchangeRate(),
+                snapshot.requestedDate(), snapshot.effectiveDate(), snapshot.source(), snapshot.provider(),
+                snapshot.providerTimestamp(), snapshot.calculationVersion()
         );
     }
 

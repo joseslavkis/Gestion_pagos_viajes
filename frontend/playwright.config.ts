@@ -9,6 +9,7 @@ export default defineConfig({
   retries: 0,
   reporter: "line",
   outputDir: process.env.PAYMENT_E2E_RESULTS_DIR ?? "test-results",
+  projects: [{ name: "chromium" }],
   use: {
     ...devices["Desktop Chrome"],
     baseURL: frontendUrl,

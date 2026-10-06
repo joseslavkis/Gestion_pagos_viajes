@@ -11,6 +11,7 @@ import {
 } from "@/features/payments/types/decimal-strings";
 import { exceedsMaxMoney } from "@/features/payments/types/receipt-amounts";
 import type {
+  Currency,
   DecimalString,
   PaymentBatchInstallmentDTO,
   PendingPaymentReviewDTO,
@@ -41,7 +42,7 @@ function formatMoneyByCurrency(amount: DecimalString, currency: "ARS" | "USD"): 
 }
 
 function formatDate(isoDate: string): string {
-  const date = new Date(`${isoDate}T00:00:00`);
+  const date = new Date(`${isoDate}T12:00:00Z`);
   return Number.isNaN(date.getTime()) ? isoDate : dateFormatter.format(date);
 }
 
@@ -94,6 +95,7 @@ export function PendingReviewPage() {
   const [search, setSearch] = useState("");
   const [expandedSubmissionIds, setExpandedSubmissionIds] = useState<number[]>([]);
   const [approvedAmounts, setApprovedAmounts] = useState<Record<number, string>>({});
+  const [approvedCurrencies, setApprovedCurrencies] = useState<Record<number, Currency>>({});
   const [sliderUpperOverrides, setSliderUpperOverrides] = useState<Record<number, string>>({});
   const [observations, setObservations] = useState<Record<number, string>>({});
   const [actionError, setActionError] = useState<string | null>(null);
@@ -131,6 +133,7 @@ export function PendingReviewPage() {
   };
 
   const resetApprovedAmount = (item: PendingPaymentReviewDTO) => {
+    setApprovedCurrencies((current) => ({ ...current, [item.submissionId]: item.paymentCurrency }));
     setApprovedAmounts((current) => ({
       ...current,
       [item.submissionId]: item.reportedAmount,
@@ -145,13 +148,31 @@ export function PendingReviewPage() {
     });
   };
 
-  const submitDecision = async (item: PendingPaymentReviewDTO, approvedAmount: DecimalString) => {
+  const changeApprovedCurrency = (item: PendingPaymentReviewDTO, currency: Currency) => {
+    if (currency === (approvedCurrencies[item.submissionId] ?? item.paymentCurrency)) {
+      return;
+    }
+    setApprovedCurrencies((current) => ({ ...current, [item.submissionId]: currency }));
+    setApprovedAmounts((current) => ({ ...current, [item.submissionId]: "" }));
+    setSliderUpperOverrides((current) => {
+      const next = { ...current };
+      delete next[item.submissionId];
+      return next;
+    });
+  };
+
+  const submitDecision = async (item: PendingPaymentReviewDTO, approvedAmount: DecimalString, approvedCurrency: Currency) => {
+    if (reviewPayment.isPending) {
+      return;
+    }
     setActionError(null);
 
     const observation = observations[item.submissionId]?.trim() ?? "";
 
-    if (compareNonNegativeDecimalStrings(approvedAmount, item.reportedAmount) !== 0 && observation.length === 0) {
-      setActionError("La observación es obligatoria cuando se corrige el monto informado.");
+    const corrected = approvedCurrency !== item.paymentCurrency
+      || compareNonNegativeDecimalStrings(approvedAmount, item.reportedAmount) !== 0;
+    if (corrected && observation.length === 0) {
+      setActionError("Se requiere una observación al corregir el monto o la moneda informada.");
       return;
     }
 
@@ -160,6 +181,7 @@ export function PendingReviewPage() {
         id: item.submissionId,
         data: {
           approvedAmount,
+          approvedCurrency,
           adminObservation: observation.length > 0 ? observation : undefined,
         },
       });
@@ -198,15 +220,17 @@ export function PendingReviewPage() {
               {items.map((item) => {
                 const isExpanded = expandedSubmissionIds.includes(item.submissionId);
                 const approvedAmountInput = approvedAmounts[item.submissionId] ?? item.reportedAmount;
+                const approvedCurrency = approvedCurrencies[item.submissionId] ?? item.paymentCurrency;
+                const sameOriginalCurrency = approvedCurrency === item.paymentCurrency;
                 const approvalValidation = validateApprovalAmount(approvedAmountInput);
                 const observation = observations[item.submissionId] ?? "";
                 const correction: CorrectionDirection =
-                  approvalValidation.amount == null
+                  !sameOriginalCurrency || approvalValidation.amount == null
                     ? "none"
                     : correctionDirection(approvalValidation.amount, item.reportedAmount);
                 const requiresObservation =
-                  approvalValidation.amount != null &&
-                  compareNonNegativeDecimalStrings(approvalValidation.amount, item.reportedAmount) !== 0;
+                  !sameOriginalCurrency || (approvalValidation.amount != null &&
+                  compareNonNegativeDecimalStrings(approvalValidation.amount, item.reportedAmount) !== 0);
                 // Same-currency payments need no conversion note; only real
                 // cross-currency conversions earn a compact equivalence line.
                 const showExchangeInfo = item.paymentCurrency !== item.tripCurrency;
@@ -278,7 +302,7 @@ export function PendingReviewPage() {
                           className={styles.primaryButton}
                           aria-label="Aprobar monto informado"
                           disabled={reviewPayment.isPending}
-                          onClick={() => submitDecision(item, item.reportedAmount)}
+                           onClick={() => submitDecision(item, item.reportedAmount, item.paymentCurrency)}
                         >
                           Aprobar
                         </button>
@@ -314,15 +338,34 @@ export function PendingReviewPage() {
                         </ul>
 
                         <div className={styles.decisionPanel}>
+                          <label className={styles.searchBox}>
+                            <span>Moneda a imputar</span>
+                            <select
+                              value={approvedCurrency}
+                              disabled={reviewPayment.isPending}
+                              onChange={(event) => changeApprovedCurrency(item, event.target.value as Currency)}
+                            >
+                              <option value="ARS">ARS</option>
+                              <option value="USD">USD</option>
+                            </select>
+                          </label>
+                          <p className={styles.helpText}>
+                            {approvedCurrency === item.tripCurrency
+                              ? `Este monto se imputará directamente en ${item.tripCurrency}.`
+                              : `Este monto se convertirá a ${item.tripCurrency} usando la cotización correspondiente a la fecha de pago: ${formatDate(item.reportedPaymentDate)}.`}
+                          </p>
                           <ApprovedAmountControl
+                            key={`${item.submissionId}-${approvedCurrency}`}
                             inputId={`approved-amount-${item.submissionId}`}
                             reportedAmount={item.reportedAmount}
-                            paymentCurrency={item.paymentCurrency}
+                            paymentCurrency={approvedCurrency}
+                            originalCurrency={item.paymentCurrency}
+                            disabled={reviewPayment.isPending}
                             value={approvedAmountInput}
                             validationError={approvalValidation.error}
                             validAmount={approvalValidation.amount}
                             correction={correction}
-                            correctionLabel={correctionLabels[correction]}
+                            correctionLabel={sameOriginalCurrency ? correctionLabels[correction] : "Corrección en otra moneda"}
                             upperOverrideCents={
                               sliderUpperOverrides[item.submissionId] != null
                                 ? BigInt(sliderUpperOverrides[item.submissionId])
@@ -357,7 +400,8 @@ export function PendingReviewPage() {
                           <label className={styles.searchBox}>
                             <span>Observación{requiresObservation ? " · requerida" : ""}</span>
                             <input
-                              value={observation}
+                               value={observation}
+                               disabled={reviewPayment.isPending}
                               maxLength={500}
                               onChange={(event) =>
                                 setObservations((current) => ({
@@ -375,7 +419,7 @@ export function PendingReviewPage() {
                               className={styles.dangerButton}
                               aria-label="Rechazar total"
                               disabled={reviewPayment.isPending}
-                              onClick={() => submitDecision(item, "0")}
+                              onClick={() => submitDecision(item, "0", item.paymentCurrency)}
                             >
                               Rechazar
                             </button>
@@ -389,7 +433,7 @@ export function PendingReviewPage() {
                               }
                               onClick={() => {
                                 if (approvalValidation.amount != null) {
-                                  void submitDecision(item, approvalValidation.amount);
+                                  void submitDecision(item, approvalValidation.amount, approvedCurrency);
                                 }
                               }}
                             >

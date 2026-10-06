@@ -13,9 +13,12 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
+import com.agencia.pagos.shared.money.Currency;
+import lombok.Getter;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.time.LocalDate;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
@@ -27,6 +30,7 @@ import java.util.Set;
                 @Index(name = "idx_payment_outcomes_status", columnList = "status")
         }
 )
+@Getter
 public class PaymentOutcome {
 
     @Id
@@ -46,6 +50,46 @@ public class PaymentOutcome {
 
     @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal amountInTripCurrency;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 3)
+    private Currency currency;
+
+    @Column(precision = 18, scale = 8)
+    private BigDecimal exchangeRate;
+
+    @Column(name = "exchange_rate_scale")
+    private Integer exchangeRateScale;
+
+    @Column(name = "exchange_rate_requested_date")
+    private LocalDate exchangeRateRequestedDate;
+
+    @Column(name = "exchange_rate_effective_date")
+    private LocalDate exchangeRateEffectiveDate;
+
+    @Column(name = "exchange_rate_source", length = 64)
+    private String exchangeRateSource;
+
+    @Column(name = "exchange_rate_provider", length = 64)
+    private String exchangeRateProvider;
+
+    @Column(name = "exchange_rate_provider_timestamp", length = 128)
+    private String exchangeRateProviderTimestamp;
+
+    @Column(name = "calculation_version", length = 16)
+    private String calculationVersion;
+
+    public void applySnapshot(PaymentOutcomeSnapshot snapshot) {
+        currency = snapshot.currency();
+        exchangeRate = snapshot.exchangeRate();
+        exchangeRateScale = snapshot.exchangeRateScale();
+        exchangeRateRequestedDate = snapshot.requestedDate();
+        exchangeRateEffectiveDate = snapshot.effectiveDate();
+        exchangeRateSource = snapshot.source();
+        exchangeRateProvider = snapshot.provider();
+        exchangeRateProviderTimestamp = snapshot.providerTimestamp();
+        calculationVersion = snapshot.calculationVersion();
+    }
 
     @Column(length = 500)
     private String adminObservation;

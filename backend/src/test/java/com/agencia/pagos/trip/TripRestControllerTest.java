@@ -1886,6 +1886,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
 
         PaymentOutcome outcome = new PaymentOutcome();
         outcome.setSubmission(submission);
+        outcome.applySnapshot(com.agencia.pagos.payment.PaymentOutcomeSnapshot.fromSubmission(submission));
         outcome.setStatus(PaymentOutcomeStatus.APPROVED);
         outcome.setReportedAmount(new BigDecimal("2000.00"));
         outcome.setAmountInTripCurrency(new BigDecimal("2000.00"));
@@ -1953,6 +1954,7 @@ class TripRestControllerTest extends ControllerIntegrationTestSupport {
 
         PaymentOutcome outcome = new PaymentOutcome();
         outcome.setSubmission(submission);
+        outcome.applySnapshot(com.agencia.pagos.payment.PaymentOutcomeSnapshot.fromSubmission(submission));
         outcome.setStatus(PaymentOutcomeStatus.APPROVED);
         outcome.setReportedAmount(new BigDecimal("9000.00"));
         outcome.setAmountInTripCurrency(new BigDecimal("9000.00"));

@@ -41,6 +41,7 @@ function makePendingSubmission(reportedAmount = "400.00", overrides: Record<stri
         reportedAmount: "200.00",
         amountInTripCurrency: "200.00",
         status: "PENDING",
+        allocationCurrency: overrides.paymentCurrency ?? "ARS",
       },
       {
         receiptId: null,
@@ -53,6 +54,7 @@ function makePendingSubmission(reportedAmount = "400.00", overrides: Record<stri
         reportedAmount: "200.00",
         amountInTripCurrency: "200.00",
         status: "PENDING",
+        allocationCurrency: overrides.paymentCurrency ?? "ARS",
       },
     ],
     ...overrides,
@@ -61,6 +63,9 @@ function makePendingSubmission(reportedAmount = "400.00", overrides: Record<stri
 
 function approvedSubmissionResponse(overrides: Record<string, unknown>) {
   return {
+    approvedCurrency: "ARS", approvedExchangeRate: null, approvedQuoteRequestedDate: null,
+    approvedQuoteEffectiveDate: null, approvedQuoteSource: null, approvedQuoteProvider: null,
+    approvedQuoteProviderTimestamp: null, approvedCalculationVersion: "2", rejectedCurrency: null,
     submissionId: 91,
     status: "APPROVED",
     reportedAmount: "400.00",
@@ -162,6 +167,7 @@ describe("PendingReviewPage", () => {
     await waitFor(() => {
       expect(decisionBody).toEqual({
         approvedAmount: "500",
+        approvedCurrency: "ARS",
         adminObservation: "El banco acreditó más de lo informado.",
       });
     });
@@ -265,7 +271,7 @@ describe("PendingReviewPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Aprobar monto informado" }));
 
     await waitFor(() => {
-      expect(decisionBody).toEqual({ approvedAmount: "400.00" });
+      expect(decisionBody).toEqual({ approvedAmount: "400.00", approvedCurrency: "ARS" });
     });
     expect(await screen.findByText("No hay comprobantes pendientes de revisión.")).toBeInTheDocument();
   });
@@ -284,6 +290,9 @@ describe("PendingReviewPage", () => {
           status: "PARTIALLY_APPROVED",
           reportedAmount: "400.00",
           approvedAmount: "250.00",
+          approvedCurrency: "ARS", approvedExchangeRate: null, approvedQuoteRequestedDate: null,
+          approvedQuoteEffectiveDate: null, approvedQuoteSource: null, approvedQuoteProvider: null,
+          approvedQuoteProviderTimestamp: null, approvedCalculationVersion: "2", rejectedCurrency: "ARS",
           rejectedAmount: "150.00",
           paymentCurrency: "ARS",
           exchangeRate: null,
@@ -329,6 +338,7 @@ describe("PendingReviewPage", () => {
     await waitFor(() => {
       expect(decisionBody).toEqual({
         approvedAmount: "250",
+        approvedCurrency: "ARS",
         adminObservation: "Se aprobó el monto verificado.",
       });
     });
@@ -349,6 +359,9 @@ describe("PendingReviewPage", () => {
           status: "REJECTED",
           reportedAmount: "400.00",
           approvedAmount: "0.00",
+          approvedCurrency: null, approvedExchangeRate: null, approvedQuoteRequestedDate: null,
+          approvedQuoteEffectiveDate: null, approvedQuoteSource: null, approvedQuoteProvider: null,
+          approvedQuoteProviderTimestamp: null, approvedCalculationVersion: null, rejectedCurrency: "ARS",
           rejectedAmount: "400.00",
           paymentCurrency: "ARS",
           exchangeRate: null,
@@ -386,6 +399,7 @@ describe("PendingReviewPage", () => {
     await waitFor(() => {
       expect(decisionBody).toEqual({
         approvedAmount: "0",
+        approvedCurrency: "ARS",
         adminObservation: "Comprobante borroso",
       });
     });
@@ -642,6 +656,7 @@ describe("PendingReviewPage amount slider", () => {
     await waitFor(() => {
       expect(decisionBody).toEqual({
         approvedAmount: "300.00",
+        approvedCurrency: "ARS",
         adminObservation: "El banco acreditó más de lo informado.",
       });
     });
@@ -661,5 +676,161 @@ describe("PendingReviewPage amount slider", () => {
     expect(await screen.findByText("Sin corrección")).toBeInTheDocument();
     expect(screen.getByLabelText("Observación")).toHaveValue("Borrador que debe conservarse.");
     expect(saveButton).not.toBeDisabled();
+  });
+});
+
+describe("PendingReviewPage independent administrative currency", () => {
+  async function openReview(originalCurrency: "ARS" | "USD" = "ARS", tripCurrency = originalCurrency) {
+    server.use(http.get("http://localhost:30002/api/v1/payments/pending-review", () => HttpResponse.json([
+      makePendingSubmission("240.00", { paymentCurrency: originalCurrency, tripCurrency, reportedPaymentDate: "2026-09-03" }),
+    ])));
+    renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
+    await screen.findByText("Slavkis, Jose");
+    fireEvent.click(screen.getByRole("button", { name: "Revisar monto" }));
+    return {
+      currency: screen.getByRole("combobox", { name: "Moneda a imputar" }),
+      get amount() { return screen.getByLabelText("Monto a imputar"); },
+      save: screen.getByRole("button", { name: "Guardar decisión" }),
+    };
+  }
+
+  it.each([ ["ARS", "USD"], ["USD", "ARS"] ] as const)(
+    "clears the amount from %s to %s and on returning, without unlike-currency controls",
+    async (original, administrative) => {
+      const controls = await openReview(original, administrative);
+      expect(controls.currency).toHaveValue(original);
+      expect(controls.amount).toHaveValue("240.00");
+      expect(screen.getByRole("slider")).toHaveValue("500");
+      fireEvent.change(controls.amount, { target: { value: "700" } });
+      fireEvent.change(controls.currency, { target: { value: administrative } });
+      expect(controls.amount).toHaveValue("");
+      expect(controls.save).toBeDisabled();
+      expect(screen.queryByRole("slider")).not.toBeInTheDocument();
+      expect(screen.getByText("Corrección en otra moneda")).toBeInTheDocument();
+      expect(screen.queryByText(/respecto de lo informado/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Corrección al alza|Corrección a la baja/)).not.toBeInTheDocument();
+      expect(screen.getByText(`Este monto se imputará directamente en ${administrative}.`)).toBeInTheDocument();
+      fireEvent.change(controls.amount, { target: { value: "150" } });
+      fireEvent.change(controls.currency, { target: { value: administrative } });
+      expect(controls.amount).toHaveValue("150"); // Selecting the current currency is not a currency change.
+      fireEvent.change(controls.currency, { target: { value: original } });
+      expect(controls.amount).toHaveValue("");
+      expect(controls.save).toBeDisabled();
+      expect(screen.getByRole("slider")).toHaveValue("500");
+      fireEvent.change(controls.amount, { target: { value: "300" } });
+      expect(screen.getByRole("slider")).toHaveValue("625"); // Prior 700 extension was discarded.
+    },
+  );
+
+  it("requires an observation for equal digits in another currency and sends the explicit trimmed decision", async () => {
+    let body: unknown;
+    let calculations = 0;
+    server.use(
+      http.post("http://localhost:30002/api/v1/payments/calculation", () => { calculations += 1; return HttpResponse.json({}); }),
+      http.patch("http://localhost:30002/api/v1/payments/91/review", async ({ request }) => {
+        body = await request.json();
+        return HttpResponse.json(approvedSubmissionResponse({ approvedCurrency: "USD", approvedAmount: "240.00" }));
+      }),
+    );
+    const { currency, save } = await openReview("ARS", "USD");
+    fireEvent.change(currency, { target: { value: "USD" } });
+    fireEvent.change(screen.getByLabelText("Monto a imputar"), { target: { value: "240.00" } });
+    expect(screen.getByLabelText("Observación · requerida")).toBeInTheDocument();
+    expect(save).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/Observación/), { target: { value: "   " } });
+    expect(save).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/Observación/), { target: { value: "  Confirmed USD credit  " } });
+    fireEvent.click(save);
+    await waitFor(() => expect(body).toEqual({ approvedAmount: "240.00", approvedCurrency: "USD", adminObservation: "Confirmed USD credit" }));
+    expect(calculations).toBe(0);
+  });
+
+  it("describes conversion using the historical payment date, without estimating or looking up FX", async () => {
+    const { currency } = await openReview("USD", "USD");
+    fireEvent.change(currency, { target: { value: "ARS" } });
+    expect(screen.getByText("Este monto se convertirá a USD usando la cotización correspondiente a la fecha de pago: 03/09/2026.")).toBeInTheDocument();
+    expect(screen.queryByRole("slider")).not.toBeInTheDocument();
+  });
+
+  it("quick approval after hiding a changed draft still sends the original USD amount and currency", async () => {
+    let body: unknown;
+    server.use(http.patch("http://localhost:30002/api/v1/payments/91/review", async ({ request }) => {
+      body = await request.json();
+      return HttpResponse.json(approvedSubmissionResponse({ paymentCurrency: "USD", approvedCurrency: "USD", tripCurrency: "USD" }));
+    }));
+    const { currency } = await openReview("USD", "USD");
+    currency.focus();
+    expect(currency).toHaveFocus();
+    fireEvent.change(currency, { target: { value: "ARS" } });
+    fireEvent.click(screen.getByRole("button", { name: "Ocultar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Aprobar monto informado" }));
+    await waitFor(() => expect(body).toEqual({ approvedAmount: "240.00", approvedCurrency: "USD" }));
+  });
+
+  it("reset restores original currency, money and slider without erasing the observation", async () => {
+    const { currency, amount, save } = await openReview();
+    fireEvent.change(amount, { target: { value: "700" } });
+    fireEvent.change(currency, { target: { value: "USD" } });
+    fireEvent.change(screen.getByLabelText(/Observación/), { target: { value: "Keep this draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Restablecer al monto informado" }));
+    expect(currency).toHaveValue("ARS");
+    expect(screen.getByLabelText("Monto a imputar")).toHaveValue("240.00");
+    expect(screen.getByRole("slider")).toHaveValue("500");
+    expect(screen.getByText("Sin corrección")).toBeInTheDocument();
+    expect(screen.getByLabelText("Observación")).toHaveValue("Keep this draft");
+    expect(save).not.toBeDisabled();
+    fireEvent.change(currency, { target: { value: "USD" } });
+    fireEvent.change(currency, { target: { value: "ARS" } });
+    expect(screen.getByLabelText("Monto a imputar")).toHaveValue("");
+    fireEvent.click(screen.getByRole("button", { name: "Restablecer al monto informado" }));
+    expect(screen.getByLabelText("Monto a imputar")).toHaveValue("240.00");
+    expect(screen.getByRole("slider")).toHaveValue("500");
+  });
+
+  it("rejects with zero in the original currency, requiring an observation even after currency change", async () => {
+    let body: unknown;
+    server.use(http.patch("http://localhost:30002/api/v1/payments/91/review", async ({ request }) => {
+      body = await request.json();
+      return HttpResponse.json(approvedSubmissionResponse({ status: "REJECTED", approvedAmount: "0.00", approvedCurrency: null, rejectedCurrency: "ARS" }));
+    }));
+    const { currency } = await openReview();
+    fireEvent.change(currency, { target: { value: "USD" } });
+    fireEvent.click(screen.getByRole("button", { name: "Rechazar total" }));
+    expect(screen.getByText("Se requiere una observación al corregir el monto o la moneda informada.")).toBeInTheDocument();
+    expect(body).toBeUndefined();
+    fireEvent.change(screen.getByLabelText(/Observación/), { target: { value: "Receipt rejected" } });
+    fireEvent.click(screen.getByRole("button", { name: "Rechazar total" }));
+    await waitFor(() => expect(body).toEqual({ approvedAmount: "0", approvedCurrency: "ARS", adminObservation: "Receipt rejected" }));
+  });
+
+  it("prevents duplicate decisions while pending and preserves the draft after a safe failure", async () => {
+    let requests = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    server.use(http.patch("http://localhost:30002/api/v1/payments/91/review", async () => {
+      requests += 1;
+      await gate;
+      return HttpResponse.text("El monto aprobado supera el saldo pendiente disponible.", { status: 409 });
+    }));
+    const { currency, save } = await openReview("ARS", "USD");
+    fireEvent.change(currency, { target: { value: "USD" } });
+    fireEvent.change(screen.getByLabelText("Monto a imputar"), { target: { value: "150.00" } });
+    fireEvent.change(screen.getByLabelText(/Observación/), { target: { value: "Confirmed USD credit" } });
+    try {
+      fireEvent.click(save);
+      await waitFor(() => expect(requests).toBe(1));
+      expect(save).toBeDisabled();
+      expect(currency).toBeDisabled();
+      expect(screen.getByLabelText("Monto a imputar")).toBeDisabled();
+      fireEvent.click(save);
+      fireEvent.click(screen.getByRole("button", { name: "Rechazar total" }));
+      expect(requests).toBe(1);
+    } finally {
+      release();
+    }
+    expect(await screen.findByText("El monto aprobado supera el saldo pendiente disponible.")).toBeInTheDocument();
+    expect(currency).toHaveValue("USD");
+    expect(screen.getByLabelText("Monto a imputar")).toHaveValue("150.00");
+    expect(save).not.toBeDisabled();
   });
 });

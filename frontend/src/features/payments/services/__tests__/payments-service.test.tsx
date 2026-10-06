@@ -63,6 +63,9 @@ const readyCalculation = {
 } as const;
 
 const pendingSubmission = {
+  approvedCurrency: null, approvedExchangeRate: null, approvedQuoteRequestedDate: null,
+  approvedQuoteEffectiveDate: null, approvedQuoteSource: null, approvedQuoteProvider: null,
+  approvedQuoteProviderTimestamp: null, approvedCalculationVersion: null, rejectedCurrency: null,
   submissionId: 7,
   status: "PENDING",
   reportedAmount: "500.00",
@@ -173,7 +176,10 @@ describe("payments-service", () => {
     server.use(
       http.patch("http://localhost:30002/api/v1/payments/7/review", async ({ request }) => {
         capturedBody = await request.json();
-        return HttpResponse.json({ ...pendingSubmission, status: "PARTIALLY_APPROVED", approvedAmount: "99.29" });
+        return HttpResponse.json({ ...pendingSubmission, status: "PARTIALLY_APPROVED", approvedAmount: "150.00",
+          approvedCurrency: "USD", approvedExchangeRate: "1.00", approvedQuoteRequestedDate: "2026-09-18",
+          approvedQuoteEffectiveDate: "2026-09-18", approvedQuoteSource: "test", approvedQuoteProvider: "test-provider",
+          approvedCalculationVersion: "2", approvedAmountInTripCurrency: "150.00", rejectedAmount: "350.00", rejectedCurrency: "ARS" });
       }),
     );
 
@@ -181,12 +187,14 @@ describe("payments-service", () => {
     await act(async () => {
       await result.current.mutateAsync({
         id: 7,
-        data: { approvedAmount: "99.29", adminObservation: "Partial approval" },
+        data: { approvedAmount: "150.00", approvedCurrency: "USD", adminObservation: "Confirmed USD credit" },
       });
     });
 
-    expect(capturedBody).toEqual({ approvedAmount: "99.29", adminObservation: "Partial approval" });
-    await waitFor(() => expect(result.current.data?.approvedAmount).toBe("99.29"));
+    expect(capturedBody).toEqual({ approvedAmount: "150.00", approvedCurrency: "USD", adminObservation: "Confirmed USD credit" });
+    await waitFor(() => expect(result.current.data?.approvedAmount).toBe("150.00"));
+    expect(result.current.data?.paymentCurrency).toBe("ARS");
+    expect(result.current.data?.approvedCurrency).toBe("USD");
   });
 
   it("posts remaining intent and preserves authoritative decimal strings", async () => {

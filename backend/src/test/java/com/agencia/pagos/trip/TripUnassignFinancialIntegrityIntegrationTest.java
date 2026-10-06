@@ -528,6 +528,7 @@ class TripUnassignFinancialIntegrityIntegrationTest extends ControllerIntegratio
     private PaymentOutcome persistOutcome(PaymentSubmission submission, PaymentOutcomeStatus status, BigDecimal amount) {
         PaymentOutcome outcome = new PaymentOutcome();
         outcome.setSubmission(submission);
+        outcome.applySnapshot(com.agencia.pagos.payment.PaymentOutcomeSnapshot.fromSubmission(submission));
         outcome.setStatus(status);
         outcome.setReportedAmount(amount);
         outcome.setAmountInTripCurrency(amount);
