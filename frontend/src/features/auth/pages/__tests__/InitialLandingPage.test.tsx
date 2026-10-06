@@ -55,22 +55,28 @@ describe("InitialLandingPage", () => {
       </QueryClientProvider>,
     );
 
-  it("renders logo video with optimized playback attributes", () => {
+  it("renders the inline animated logo as a labelled SVG and no longer depends on a video", () => {
     const { container } = renderPage();
-    const video = container.querySelector("video");
 
-    expect(video).not.toBeNull();
-    expect(video?.getAttribute("preload")).toBe("metadata");
-    expect(video?.hasAttribute("loop")).toBe(false);
-    expect(video?.muted).toBe(true);
-    expect(video?.hasAttribute("playsinline")).toBe(true);
+    const logo = screen.getByRole("img", { name: /Proyecto VA/i });
+    expect(logo).not.toBeNull();
+    expect(logo.tagName.toLowerCase()).toBe("svg");
+    expect(logo.getAttribute("viewBox")).toBeTruthy();
 
-    const sources = container.querySelectorAll("video source");
-    expect(sources).toHaveLength(2);
-    expect(sources[0]?.getAttribute("src")).toContain("logo-animado");
-    expect(sources[0]?.getAttribute("type")).toBe("video/quicktime");
-    expect(sources[1]?.getAttribute("src")).toContain("logo-animado");
-    expect(sources[1]?.getAttribute("type")).toBe("video/mp4");
+    // The four animatable parts the GSAP timeline targets must all be present.
+    for (const part of ["25", "proyecto", "va", "tagline"]) {
+      expect(container.querySelector(`[data-logo-part="${part}"]`)).not.toBeNull();
+    }
+
+    // The "25" is a real stroke path (draw-on needs stroke geometry, not a raster).
+    const strokes = container.querySelectorAll('[data-logo-part="25"] path');
+    expect(strokes.length).toBeGreaterThan(0);
+    expect(strokes[0]?.getAttribute("d")).toBeTruthy();
+    expect(container.querySelector('[data-logo-part="25"]')?.getAttribute("fill")).toBe("none");
+
+    // No video dependency remains.
+    expect(container.querySelector("video")).toBeNull();
+    expect(container.querySelector("video source")).toBeNull();
   });
 
   it("uses scrollIntoView smooth behavior when clicking Contacto", () => {
