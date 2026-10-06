@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
 
@@ -133,6 +133,8 @@ describe("AdminUserDetailPage", () => {
     expect(screen.getByText("Benitez, Tomas")).toBeInTheDocument();
     expect(screen.getAllByText("Tomas Benitez")).toHaveLength(1);
     expect(screen.getByText("Viaje a Mendoza")).toBeInTheDocument();
+    expect(screen.getByText("Cuota 1 · vence 10/04/2026")).toBeInTheDocument();
+    expect(screen.getByText("02/04/2026 · #1")).toBeInTheDocument();
     expect(screen.getAllByText(/Pago verificado/)).toHaveLength(2);
     expect(screen.getByText("Pago #501")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Ver comprobante adjunto 1" })).toBeInTheDocument();
@@ -198,6 +200,33 @@ describe("AdminUserDetailPage", () => {
     // Sin fila de cuenta para manuales.
     expect(screen.queryByText("Cuenta acreditada")).not.toBeInTheDocument();
     expect(screen.queryByText("Observación:")).not.toBeInTheDocument();
+  });
+
+  it("preserves the approved quote calendar date independently of the original quote and payment dates", async () => {
+    server.use(http.get("http://localhost:30002/api/v1/users/admin/12/detail", () => HttpResponse.json({
+      id: 12, email: "clara@test.com", name: "Clara", lastname: "Benitez", dni: "33444555",
+      phone: "1133344455", role: "USER", students: [], installments: [], payments: [{
+        submissionId: 504, status: "APPROVED", reportedAmount: "153000.00", approvedAmount: "154000.00",
+        rejectedAmount: "0.00", paymentCurrency: "ARS", exchangeRate: "1530.00000000",
+        amountInTripCurrency: "100.00", approvedAmountInTripCurrency: "100.00", reportedPaymentDate: "2026-09-03",
+        quoteRequestedDate: "2026-09-03", quoteEffectiveDate: "2026-09-01",
+        approvedCurrency: "ARS", approvedExchangeRate: "1540.00000000", approvedQuoteRequestedDate: "2026-09-03",
+        approvedQuoteEffectiveDate: "2026-09-02", approvedQuoteSource: null, approvedQuoteProvider: null,
+        approvedQuoteProviderTimestamp: "2026-09-02T15:00:00Z", approvedCalculationVersion: "2", rejectedCurrency: null,
+        paymentMethod: "CASH", fileKey: "", adminObservation: null, bankAccountId: null,
+        bankAccountDisplayName: null, bankAccountAlias: null, tripId: 9, tripName: "Trip", tripCurrency: "USD",
+        studentId: null, studentName: null, studentDni: null, installments: [], source: "CUSTOMER_SUBMISSION",
+      }],
+    })));
+
+    renderWithProviders(<AdminUserDetailPage userId={12} />, "ROLE_ADMIN");
+    const paymentHeading = await screen.findByText("Pago #504");
+    const paymentCard = within(paymentHeading.closest("article")!);
+
+    expect(paymentCard.getByText(/Cotización de la aprobación:/)).toHaveTextContent(
+      "Cotización de la aprobación: 1540.00000000 ARS por USD · 02/09/2026",
+    );
+    expect(paymentCard.getByText("03/09/2026 · Sin imputación visible")).toBeInTheDocument();
   });
 
   it("labels original ARS and administrative USD amounts independently", async () => {

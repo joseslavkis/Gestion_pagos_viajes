@@ -219,17 +219,18 @@ export function AdminUserDetailPage({ userId }: AdminUserDetailPageProps) {
 }
 
 function formatDate(date: string) {
-  const value = new Date(`${date}T00:00:00`);
+  // Calendar dates have no timezone; keep parsing and display in UTC.
+  const value = new Date(`${date}T00:00:00Z`);
   if (Number.isNaN(value.getTime())) {
     return date;
   }
 
-  return new Intl.DateTimeFormat("es-AR", {
+  return value.toLocaleDateString("es-AR", {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
-    timeZone: "America/Argentina/Buenos_Aires",
-  }).format(value);
+    timeZone: "UTC",
+  });
 }
 
 function formatMoney(currency: "ARS" | "USD", amount: number | string) {
