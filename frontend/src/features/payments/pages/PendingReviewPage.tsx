@@ -98,7 +98,7 @@ export function PendingReviewPage() {
   const [approvedCurrencies, setApprovedCurrencies] = useState<Record<number, Currency>>({});
   const [sliderUpperOverrides, setSliderUpperOverrides] = useState<Record<number, string>>({});
   const [observations, setObservations] = useState<Record<number, string>>({});
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionErrors, setActionErrors] = useState<Record<number, string>>({});
 
   const items = useMemo(() => {
     const baseItems = data ?? [];
@@ -132,7 +132,19 @@ export function PendingReviewPage() {
     );
   };
 
+  const clearActionError = (submissionId: number) => {
+    setActionErrors((current) => {
+      if (!(submissionId in current)) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[submissionId];
+      return next;
+    });
+  };
+
   const resetApprovedAmount = (item: PendingPaymentReviewDTO) => {
+    clearActionError(item.submissionId);
     setApprovedCurrencies((current) => ({ ...current, [item.submissionId]: item.paymentCurrency }));
     setApprovedAmounts((current) => ({
       ...current,
@@ -152,6 +164,7 @@ export function PendingReviewPage() {
     if (currency === (approvedCurrencies[item.submissionId] ?? item.paymentCurrency)) {
       return;
     }
+    clearActionError(item.submissionId);
     setApprovedCurrencies((current) => ({ ...current, [item.submissionId]: currency }));
     setApprovedAmounts((current) => ({ ...current, [item.submissionId]: "" }));
     setSliderUpperOverrides((current) => {
@@ -165,16 +178,9 @@ export function PendingReviewPage() {
     if (reviewPayment.isPending) {
       return;
     }
-    setActionError(null);
+    clearActionError(item.submissionId);
 
     const observation = observations[item.submissionId]?.trim() ?? "";
-
-    const corrected = approvedCurrency !== item.paymentCurrency
-      || compareNonNegativeDecimalStrings(approvedAmount, item.reportedAmount) !== 0;
-    if (corrected && observation.length === 0) {
-      setActionError("Se requiere una observación al corregir el monto o la moneda informada.");
-      return;
-    }
 
     try {
       await reviewPayment.mutateAsync({
@@ -186,7 +192,13 @@ export function PendingReviewPage() {
         },
       });
     } catch (reviewError) {
-      setActionError(reviewError instanceof Error ? reviewError.message : "No se pudo guardar la decisión.");
+      setActionErrors((current) => ({
+        ...current,
+        [item.submissionId]: reviewError instanceof Error ? reviewError.message : "No se pudo guardar la decisión.",
+      }));
+      setExpandedSubmissionIds((current) =>
+        current.includes(item.submissionId) ? current : [...current, item.submissionId],
+      );
     }
   };
 
@@ -228,9 +240,6 @@ export function PendingReviewPage() {
                   !sameOriginalCurrency || approvalValidation.amount == null
                     ? "none"
                     : correctionDirection(approvalValidation.amount, item.reportedAmount);
-                const requiresObservation =
-                  !sameOriginalCurrency || (approvalValidation.amount != null &&
-                  compareNonNegativeDecimalStrings(approvalValidation.amount, item.reportedAmount) !== 0);
                 // Same-currency payments need no conversion note; only real
                 // cross-currency conversions earn a compact equivalence line.
                 const showExchangeInfo = item.paymentCurrency !== item.tripCurrency;
@@ -371,12 +380,13 @@ export function PendingReviewPage() {
                                 ? BigInt(sliderUpperOverrides[item.submissionId])
                                 : null
                             }
-                            onValueChange={(next) =>
+                            onValueChange={(next) => {
+                              clearActionError(item.submissionId);
                               setApprovedAmounts((current) => ({
                                 ...current,
                                 [item.submissionId]: next,
-                              }))
-                            }
+                              }));
+                            }}
                             onUpperOverrideChange={(cents) =>
                               setSliderUpperOverrides((current) => {
                                 if (cents == null) {
@@ -398,18 +408,19 @@ export function PendingReviewPage() {
                           ) : null}
 
                           <label className={styles.searchBox}>
-                            <span>Observación{requiresObservation ? " · requerida" : ""}</span>
+                            <span>Observación · opcional</span>
                             <input
                                value={observation}
                                disabled={reviewPayment.isPending}
                               maxLength={500}
-                              onChange={(event) =>
+                              onChange={(event) => {
+                                clearActionError(item.submissionId);
                                 setObservations((current) => ({
                                   ...current,
                                   [item.submissionId]: event.target.value,
-                                }))
-                              }
-                              placeholder={requiresObservation ? "Motivo de la corrección" : "Opcional"}
+                                }));
+                              }}
+                              placeholder="Opcional"
                             />
                           </label>
 
@@ -428,8 +439,7 @@ export function PendingReviewPage() {
                               className={styles.primaryButton}
                               disabled={
                                 reviewPayment.isPending ||
-                                approvalValidation.amount == null ||
-                                (requiresObservation && observation.trim().length === 0)
+                                approvalValidation.amount == null
                               }
                               onClick={() => {
                                 if (approvalValidation.amount != null) {
@@ -440,6 +450,11 @@ export function PendingReviewPage() {
                               Guardar decisión
                             </button>
                           </div>
+                          {actionErrors[item.submissionId] ? (
+                            <p className={styles.errorText} role="alert">
+                              {actionErrors[item.submissionId]}
+                            </p>
+                          ) : null}
                         </div>
                       </div>
                     ) : null}
@@ -447,7 +462,6 @@ export function PendingReviewPage() {
                 );
               })}
             </div>
-            {actionError ? <p className={styles.errorText}>{actionError}</p> : null}
           </RequestState>
         </div>
       </section>

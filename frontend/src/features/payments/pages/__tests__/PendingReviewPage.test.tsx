@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
 
@@ -155,8 +155,7 @@ describe("PendingReviewPage", () => {
     expect(amountInput).toHaveValue("500");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(await screen.findByText("Corrección al alza")).toBeInTheDocument();
-    // Correcting the amount requires an observation before saving.
-    expect(screen.getByRole("button", { name: "Guardar decisión" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Guardar decisión" })).toBeEnabled();
     expect(reviewRequests).toBe(0);
 
     fireEvent.change(screen.getByLabelText(/Observación/), {
@@ -216,7 +215,7 @@ describe("PendingReviewPage", () => {
     expect(amountInput).toHaveValue("99999999.99");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(await screen.findByText("Corrección al alza")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Guardar decisión" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Guardar decisión" })).toBeEnabled();
   });
 
   it("caps the admin observation at 500 characters", async () => {
@@ -247,7 +246,7 @@ describe("PendingReviewPage", () => {
     const amountInput = screen.getByLabelText("Monto a imputar");
     fireEvent.change(amountInput, { target: { value: "250" } });
     expect(await screen.findByText("Corrección a la baja")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Guardar decisión" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Guardar decisión" })).toBeEnabled();
 
     fireEvent.change(amountInput, { target: { value: "400.00" } });
     expect(await screen.findByText("Sin corrección")).toBeInTheDocument();
@@ -529,12 +528,12 @@ describe("PendingReviewPage amount slider", () => {
     expect(screen.getByText("Informado")).toBeInTheDocument();
     expect(slider.getAttribute("aria-valuetext")).toContain("Sin corrección");
     // Observation stays optional while the amount matches the reported one.
-    expect(screen.getByLabelText("Observación")).toBeInTheDocument();
+    expect(screen.getByLabelText("Observación · opcional")).toBeInTheDocument();
     expect(saveButton).not.toBeDisabled();
     expect(screen.queryByRole("button", { name: "Restablecer al monto informado" })).not.toBeInTheDocument();
   });
 
-  it("moving the slider up syncs the input and requires an observation", async () => {
+  it("moving the slider up syncs the input with an optional observation", async () => {
     let reviewRequests = 0;
     server.use(
       http.patch("http://localhost:30002/api/v1/payments/91/review", () => {
@@ -550,9 +549,9 @@ describe("PendingReviewPage amount slider", () => {
     expect(await screen.findByText("Corrección al alza")).toBeInTheDocument();
     expect(screen.getByText(/\+.*respecto de lo informado/)).toBeInTheDocument();
     expect(slider.getAttribute("aria-valuetext")).toContain("Corrección al alza");
-    expect(screen.getByLabelText(/Observación · requerida/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Observación · opcional")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Restablecer al monto informado" })).toBeInTheDocument();
-    expect(saveButton).toBeDisabled();
+    expect(saveButton).toBeEnabled();
     expect(reviewRequests).toBe(0);
   });
 
@@ -564,8 +563,8 @@ describe("PendingReviewPage amount slider", () => {
     expect(amountInput).toHaveValue("180.00");
     expect(await screen.findByText("Corrección a la baja")).toBeInTheDocument();
     expect(screen.getByText(/-.*respecto de lo informado/)).toBeInTheDocument();
-    expect(screen.getByLabelText(/Observación · requerida/)).toBeInTheDocument();
-    expect(saveButton).toBeDisabled();
+    expect(screen.getByLabelText("Observación · opcional")).toBeInTheDocument();
+    expect(saveButton).toBeEnabled();
   });
 
   it("returning the slider to the center restores the reported amount exactly", async () => {
@@ -578,7 +577,7 @@ describe("PendingReviewPage amount slider", () => {
 
     expect(amountInput).toHaveValue("240.00");
     expect(await screen.findByText("Sin corrección")).toBeInTheDocument();
-    expect(screen.getByLabelText("Observación")).toBeInTheDocument();
+    expect(screen.getByLabelText("Observación · opcional")).toBeInTheDocument();
     expect(saveButton).not.toBeDisabled();
     expect(screen.queryByRole("button", { name: "Restablecer al monto informado" })).not.toBeInTheDocument();
   });
@@ -674,9 +673,128 @@ describe("PendingReviewPage amount slider", () => {
     expect(amountInput).toHaveValue("240.00");
     expect(slider).toHaveValue("500");
     expect(await screen.findByText("Sin corrección")).toBeInTheDocument();
-    expect(screen.getByLabelText("Observación")).toHaveValue("Borrador que debe conservarse.");
+    expect(screen.getByLabelText("Observación · opcional")).toHaveValue("Borrador que debe conservarse.");
     expect(saveButton).not.toBeDisabled();
   });
+});
+
+describe("PendingReviewPage optional observations and local errors", () => {
+  it.each([
+    ["ARS", "ARS", "250", ""],
+    ["ARS", "ARS", "500", "   "],
+    ["ARS", "USD", "150", ""],
+    ["USD", "ARS", "150", ""],
+    ["ARS", "USD", "400.00", ""],
+    ["USD", "ARS", "400.00", ""],
+    ["ARS", "ARS", "250", "  Confirmed credit  "],
+    ["ARS", "ARS", "250", "x".repeat(500)],
+  ] as const)("saves %s to %s amount %s with optional note %j", async (original, currency, amount, note) => {
+    let body: unknown;
+    server.use(
+      http.get("http://localhost:30002/api/v1/payments/pending-review", () =>
+        HttpResponse.json([makePendingSubmission("400.00", { paymentCurrency: original, tripCurrency: original })])),
+      http.patch("http://localhost:30002/api/v1/payments/91/review", async ({ request }) => {
+        body = await request.json();
+        return HttpResponse.json(approvedSubmissionResponse({ approvedAmount: amount, approvedCurrency: currency }));
+      }),
+    );
+    renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
+    await screen.findByText("Slavkis, Jose");
+    fireEvent.click(screen.getByRole("button", { name: "Revisar monto" }));
+    if (original !== currency) {
+      fireEvent.change(screen.getByLabelText("Moneda a imputar"), { target: { value: currency } });
+      expect(screen.getByLabelText("Monto a imputar")).toHaveValue("");
+    }
+    fireEvent.change(screen.getByLabelText("Monto a imputar"), { target: { value: amount } });
+    const observation = screen.getByLabelText("Observación · opcional");
+    expect(observation).toHaveAttribute("placeholder", "Opcional");
+    fireEvent.change(observation, { target: { value: note } });
+    const save = screen.getByRole("button", { name: "Guardar decisión" });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    await waitFor(() => expect(body).toEqual({
+      approvedAmount: amount, approvedCurrency: currency,
+      ...(note.trim() ? { adminObservation: note.trim() } : {}),
+    }));
+  });
+
+  it.each([400, 409, 500])("places HTTP %s failure in its own panel and reveals only a failed quick approval", async (status) => {
+    server.use(
+      http.get("http://localhost:30002/api/v1/payments/pending-review", () => HttpResponse.json([
+        makePendingSubmission(), makePendingSubmission("240.00", { submissionId: 92, userName: "Ana" }),
+      ])),
+      http.patch("http://localhost:30002/api/v1/payments/91/review", () =>
+        HttpResponse.text(status === 400 ? "El monto aprobado no puede ser negativo" : status === 409
+          ? "Este pago ya fue revisado" : "FIN-001: IllegalStateException reportedAmount SQL Hibernate", { status })),
+    );
+    renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
+    const first = (await screen.findByText("Slavkis, Jose")).closest("article")!;
+    const second = screen.getByText("Slavkis, Ana").closest("article")!;
+    if (status === 400) {
+      fireEvent.click(within(first).getByRole("button", { name: "Revisar monto" }));
+      fireEvent.change(within(first).getByLabelText("Monto a imputar"), { target: { value: "250" } });
+      fireEvent.change(within(first).getByLabelText(/Observación/), { target: { value: "Keep draft" } });
+      fireEvent.click(within(first).getByRole("button", { name: "Guardar decisión" }));
+    } else {
+      fireEvent.click(within(first).getByRole("button", { name: "Aprobar monto informado" }));
+    }
+    const alert = await within(first).findByRole("alert");
+    const panel = within(first).getByRole("button", { name: "Guardar decisión" }).parentElement!.parentElement!;
+    expect(panel).toContainElement(alert);
+    expect(alert).toHaveTextContent(status === 400 ? "El monto aprobado no puede ser negativo" : status === 409
+      ? "Este pago ya fue revisado" : "Error interno del servidor. Intente nuevamente más tarde.");
+    expect(alert).not.toHaveTextContent(/FIN-001|IllegalStateException|reportedAmount|SQL|Hibernate/);
+    expect(within(second).queryByLabelText("Monto a imputar")).not.toBeInTheDocument();
+    expect(within(second).queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(first).getByLabelText("Monto a imputar")).toHaveValue(status === 400 ? "250" : "400.00");
+    if (status === 400) expect(within(first).getByLabelText(/Observación/)).toHaveValue("Keep draft");
+  });
+
+  it.each(["amount", "slider", "currency", "reset", "observation", "submission"])(
+    "clears only the edited card error on %s and retains the other card draft/error", async (edit) => {
+      let release!: () => void;
+      let retryStarted = false;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      server.use(
+        http.get("http://localhost:30002/api/v1/payments/pending-review", () => HttpResponse.json([
+          makePendingSubmission(), makePendingSubmission("240.00", { submissionId: 92, userName: "Ana" }),
+        ])),
+        http.patch("http://localhost:30002/api/v1/payments/:id/review", async () => {
+          if (retryStarted) await gate;
+          return HttpResponse.text("El monto aprobado supera el saldo pendiente disponible.", { status: 409 });
+        }),
+      );
+      renderWithProviders(<PendingReviewPage />, "ROLE_ADMIN");
+      const first = (await screen.findByText("Slavkis, Jose")).closest("article")!;
+      const second = screen.getByText("Slavkis, Ana").closest("article")!;
+      for (const card of [first, second]) {
+        fireEvent.click(within(card).getByRole("button", { name: "Revisar monto" }));
+        fireEvent.change(within(card).getByLabelText("Monto a imputar"), { target: { value: "250" } });
+        fireEvent.change(within(card).getByLabelText(/Observación/), { target: { value: "Keep draft" } });
+        fireEvent.click(within(card).getByRole("button", { name: "Guardar decisión" }));
+        await within(card).findByRole("alert");
+        await waitFor(() => expect(within(card).getByRole("button", { name: "Guardar decisión" })).toBeEnabled());
+      }
+      try {
+        if (edit === "amount") fireEvent.change(within(first).getByLabelText("Monto a imputar"), { target: { value: "300" } });
+        if (edit === "slider") fireEvent.change(within(first).getByRole("slider"), { target: { value: "625" } });
+        if (edit === "currency") fireEvent.change(within(first).getByLabelText("Moneda a imputar"), { target: { value: "USD" } });
+        if (edit === "reset") fireEvent.click(within(first).getByRole("button", { name: "Restablecer al monto informado" }));
+        if (edit === "observation") fireEvent.change(within(first).getByLabelText(/Observación/), { target: { value: "New draft" } });
+        if (edit === "submission") {
+          retryStarted = true;
+          fireEvent.click(within(first).getByRole("button", { name: "Guardar decisión" }));
+        }
+        expect(within(first).queryByText("El monto aprobado supera el saldo pendiente disponible.")).not.toBeInTheDocument();
+        expect(within(second).getByRole("alert")).toHaveTextContent("El monto aprobado supera el saldo pendiente disponible.");
+        expect(within(second).getByLabelText("Monto a imputar")).toHaveValue("250");
+        expect(within(second).getByLabelText(/Observación/)).toHaveValue("Keep draft");
+      } finally {
+        release();
+      }
+      if (retryStarted) await within(first).findByRole("alert");
+    },
+  );
 });
 
 describe("PendingReviewPage independent administrative currency", () => {
@@ -722,7 +840,7 @@ describe("PendingReviewPage independent administrative currency", () => {
     },
   );
 
-  it("requires an observation for equal digits in another currency and sends the explicit trimmed decision", async () => {
+  it("allows equal digits in another currency and sends the explicit trimmed decision", async () => {
     let body: unknown;
     let calculations = 0;
     server.use(
@@ -735,10 +853,10 @@ describe("PendingReviewPage independent administrative currency", () => {
     const { currency, save } = await openReview("ARS", "USD");
     fireEvent.change(currency, { target: { value: "USD" } });
     fireEvent.change(screen.getByLabelText("Monto a imputar"), { target: { value: "240.00" } });
-    expect(screen.getByLabelText("Observación · requerida")).toBeInTheDocument();
-    expect(save).toBeDisabled();
+    expect(screen.getByLabelText("Observación · opcional")).toBeInTheDocument();
+    expect(save).toBeEnabled();
     fireEvent.change(screen.getByLabelText(/Observación/), { target: { value: "   " } });
-    expect(save).toBeDisabled();
+    expect(save).toBeEnabled();
     fireEvent.change(screen.getByLabelText(/Observación/), { target: { value: "  Confirmed USD credit  " } });
     fireEvent.click(save);
     await waitFor(() => expect(body).toEqual({ approvedAmount: "240.00", approvedCurrency: "USD", adminObservation: "Confirmed USD credit" }));
@@ -777,7 +895,7 @@ describe("PendingReviewPage independent administrative currency", () => {
     expect(screen.getByLabelText("Monto a imputar")).toHaveValue("240.00");
     expect(screen.getByRole("slider")).toHaveValue("500");
     expect(screen.getByText("Sin corrección")).toBeInTheDocument();
-    expect(screen.getByLabelText("Observación")).toHaveValue("Keep this draft");
+    expect(screen.getByLabelText("Observación · opcional")).toHaveValue("Keep this draft");
     expect(save).not.toBeDisabled();
     fireEvent.change(currency, { target: { value: "USD" } });
     fireEvent.change(currency, { target: { value: "ARS" } });
@@ -787,7 +905,7 @@ describe("PendingReviewPage independent administrative currency", () => {
     expect(screen.getByRole("slider")).toHaveValue("500");
   });
 
-  it("rejects with zero in the original currency, requiring an observation even after currency change", async () => {
+  it.each(["", "  Receipt rejected  "])("rejects immediately in the original currency after currency change with note %j", async (note) => {
     let body: unknown;
     server.use(http.patch("http://localhost:30002/api/v1/payments/91/review", async ({ request }) => {
       body = await request.json();
@@ -795,12 +913,9 @@ describe("PendingReviewPage independent administrative currency", () => {
     }));
     const { currency } = await openReview();
     fireEvent.change(currency, { target: { value: "USD" } });
+    fireEvent.change(screen.getByLabelText(/Observación/), { target: { value: note } });
     fireEvent.click(screen.getByRole("button", { name: "Rechazar total" }));
-    expect(screen.getByText("Se requiere una observación al corregir el monto o la moneda informada.")).toBeInTheDocument();
-    expect(body).toBeUndefined();
-    fireEvent.change(screen.getByLabelText(/Observación/), { target: { value: "Receipt rejected" } });
-    fireEvent.click(screen.getByRole("button", { name: "Rechazar total" }));
-    await waitFor(() => expect(body).toEqual({ approvedAmount: "0", approvedCurrency: "ARS", adminObservation: "Receipt rejected" }));
+    await waitFor(() => expect(body).toEqual({ approvedAmount: "0", approvedCurrency: "ARS", ...(note.trim() ? { adminObservation: note.trim() } : {}) }));
   });
 
   it("prevents duplicate decisions while pending and preserves the draft after a safe failure", async () => {

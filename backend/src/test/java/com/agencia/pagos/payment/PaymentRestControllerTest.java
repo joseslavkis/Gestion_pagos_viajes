@@ -128,7 +128,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
         Long id = paymentSubmissionRepository.saveAndFlush(submission).getId();
         mockMvc.perform(patch("/api/v1/payments/{id}/review", id)
                         .header("Authorization", "Bearer " + admin.accessToken()).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"approvedAmount\":150,\"approvedCurrency\":\"USD\",\"adminObservation\":\"Confirmed USD credit\"}"))
+                        .content("{\"approvedAmount\":150,\"approvedCurrency\":\"USD\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.reportedAmount").value("306000.00"))
                 .andExpect(jsonPath("$.paymentCurrency").value("ARS"))
@@ -171,7 +171,7 @@ class PaymentRestControllerTest extends ControllerIntegrationTestSupport {
                 date, date.minusDays(1), "admin-source", "admin-provider", "admin-time"));
         mockMvc.perform(patch("/api/v1/payments/{id}/review", id)
                         .header("Authorization", "Bearer " + admin.accessToken()).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"approvedAmount\":153000,\"approvedCurrency\":\"ARS\",\"adminObservation\":\"Confirmed ARS credit\"}"))
+                        .content("{\"approvedAmount\":153000,\"approvedCurrency\":\"ARS\",\"adminObservation\":null}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paymentCurrency").value("USD"))
                 .andExpect(jsonPath("$.exchangeRate").isEmpty())

@@ -58,11 +58,6 @@ public class AdministrativeReviewQuoteResolver {
         if (amount.signum() < 0) {
             throw new IllegalArgumentException("El monto aprobado no puede ser negativo");
         }
-        boolean corrected = dto.approvedCurrency() != submission.getPaymentCurrency()
-                || amount.compareTo(submission.getReportedAmount()) != 0;
-        if (corrected && (dto.adminObservation() == null || dto.adminObservation().isBlank())) {
-            throw new IllegalStateException("Se requiere una observación al corregir el monto o la moneda informada.");
-        }
         if (dto.adminObservation() != null && dto.adminObservation().trim().length() > 500) {
             throw new IllegalArgumentException("La observación administrativa no puede superar los 500 caracteres");
         }
