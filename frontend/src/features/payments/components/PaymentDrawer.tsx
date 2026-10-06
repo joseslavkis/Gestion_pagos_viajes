@@ -42,7 +42,7 @@ const dateFormatter = new Intl.DateTimeFormat("es-AR", {
   day: "2-digit",
   month: "2-digit",
   year: "numeric",
-  timeZone: "America/Argentina/Buenos_Aires",
+  timeZone: "UTC",
 });
 
 function formatMoneyByCurrency(amount: number | string, currency: Currency): string {
@@ -53,7 +53,8 @@ function formatMoneyByCurrency(amount: number | string, currency: Currency): str
 }
 
 function formatDate(isoDate: string): string {
-  const d = new Date(`${isoDate}T00:00:00`);
+  // Calendar dates have no timezone; keep parsing and display in UTC.
+  const d = new Date(`${isoDate}T00:00:00Z`);
   return Number.isNaN(d.getTime()) ? isoDate : dateFormatter.format(d);
 }
 

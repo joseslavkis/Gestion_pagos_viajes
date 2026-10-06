@@ -144,6 +144,25 @@ describe("PaymentDrawer", () => {
     expect(historyRow(/Cotización de la acreditación:/)).toHaveTextContent("02/09/2026");
     expect(screen.getByText("Anulado")).toBeInTheDocument();
   });
+
+  it.each([
+    ["2026-09-02", "02/09/2026"],
+    ["2026-01-01", "01/01/2026"],
+    ["2024-02-29", "29/02/2024"],
+  ])("preserves the reported and historical quote calendar date %s", async (isoDate, displayedDate) => {
+    await renderDrawer("USD", 200, historyEntry({
+      reportedPaymentDate: isoDate,
+      allocationExchangeRate: "1530.00000000",
+      allocationQuoteEffectiveDate: isoDate,
+    }));
+
+    expect(historyRow(/^Fecha:$/)).toHaveTextContent(`Fecha: ${displayedDate}`);
+    expect(historyRow(/Cotización de la acreditación:/)).toHaveTextContent(
+      `Cotización de la acreditación: 1530.00000000 ARS por USD · ${displayedDate}`,
+    );
+    expect(screen.getByText(/Vencimiento:/)).toHaveTextContent("Vencimiento: 10/05/2026");
+  });
+
   it("muestra alumno primero y usa color neutral para Al día", async () => {
     await renderDrawer("ARS", 1000, historyEntry());
 
