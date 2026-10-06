@@ -320,6 +320,7 @@ describe("payment decimal contracts", () => {
     expect(ReviewPaymentDTOSchema.parse({ approvedAmount: "150.00", approvedCurrency: "USD", adminObservation: " Confirmed credit " }))
       .toEqual({ approvedAmount: "150.00", approvedCurrency: "USD", adminObservation: "Confirmed credit" });
     expect(ReviewPaymentDTOSchema.parse({ approvedAmount: "0.00", approvedCurrency: "ARS" }).approvedAmount).toBe("0.00");
+    expect(ReviewPaymentDTOSchema.parse({ approvedAmount: "150.00", approvedCurrency: "USD", adminObservation: "x".repeat(500) }).adminObservation).toHaveLength(500);
     expect(ReviewPaymentDTOSchema.safeParse({ approvedAmount: "150.00", approvedCurrency: "USD", adminObservation: "x".repeat(501) }).success).toBe(false);
   });
 

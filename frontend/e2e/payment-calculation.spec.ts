@@ -351,8 +351,8 @@ test("approves an upward administrative correction from 240 reported to 300 cred
   await expect(reviewCard.getByText("Sin corrección")).toBeVisible();
   await reviewCard.getByLabel("Monto a imputar").fill("300");
   await expect(reviewCard.getByText("Corrección al alza")).toBeVisible();
-  // The correction requires an observation before the decision can be saved.
-  await expect(reviewCard.getByRole("button", { name: "Guardar decisión" })).toBeDisabled();
+  // The correction can be saved without an observation; a note can still be provided.
+  await expect(reviewCard.getByRole("button", { name: "Guardar decisión" })).toBeEnabled();
   await reviewCard.getByLabel(/Observación/).fill("El banco acreditó 300 en lugar de 240.");
   await reviewCard.getByRole("button", { name: "Guardar decisión" }).click();
   await expect(reviewCard).toHaveCount(0);
@@ -590,7 +590,7 @@ for (const scenario of [
     await expect(card.getByLabel("Monto a imputar")).toHaveValue("");
     await expect(card.getByRole("slider")).toHaveCount(0);
     await card.getByLabel("Monto a imputar").fill(scenario.approvedAmount);
-    await expect(card.getByRole("button", { name: "Guardar decisión" })).toBeDisabled();
+    await expect(card.getByRole("button", { name: "Guardar decisión" })).toBeEnabled();
     expect(await readFxCalls()).toEqual(callsBeforeReview);
     await card.getByLabel(/Observación/).fill("Independent currency E2E administrative decision");
     const reviewResponse = adminPage.waitForResponse((response) =>

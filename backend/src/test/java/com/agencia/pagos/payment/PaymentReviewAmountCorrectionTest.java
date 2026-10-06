@@ -17,6 +17,10 @@ import com.agencia.pagos.user.User;
 import com.agencia.pagos.user.dto.TokenDTO;
 import com.agencia.pagos.user.dto.UserCreateDTO;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -120,7 +124,7 @@ class PaymentReviewAmountCorrectionTest extends ControllerIntegrationTestSupport
                     "historical-source", "historical-provider", "2026-09-02T12:00:00Z");
         });
         paymentService.reviewPayment(submission.getId(),
-                new ReviewPaymentDTO(new BigDecimal("153000.00"), Currency.ARS, "Confirmed bank credit"), REVIEWER);
+                new ReviewPaymentDTO(new BigDecimal("153000.00"), Currency.ARS, null), REVIEWER);
         PaymentSubmission reviewed = paymentSubmissionRepository.findByIdWithContext(submission.getId()).orElseThrow();
         PaymentOutcome approved = singleOutcome(reviewed, PaymentOutcomeStatus.APPROVED);
         PaymentOutcome rejected = singleOutcome(reviewed, PaymentOutcomeStatus.REJECTED);
@@ -156,7 +160,7 @@ class PaymentReviewAmountCorrectionTest extends ControllerIntegrationTestSupport
                 "306000.00", "200.00", "1530.00000000");
         String original = immutableSubmission(submission.getId());
         paymentService.reviewPayment(submission.getId(),
-                new ReviewPaymentDTO(new BigDecimal("150.00"), Currency.USD, "Credit confirmed in USD"), REVIEWER);
+                new ReviewPaymentDTO(new BigDecimal("150.00"), Currency.USD, null), REVIEWER);
         PaymentSubmission reviewed = paymentSubmissionRepository.findByIdWithContext(submission.getId()).orElseThrow();
         PaymentOutcome approved = singleOutcome(reviewed, PaymentOutcomeStatus.APPROVED);
         PaymentOutcome rejected = singleOutcome(reviewed, PaymentOutcomeStatus.REJECTED);
@@ -190,16 +194,36 @@ class PaymentReviewAmountCorrectionTest extends ControllerIntegrationTestSupport
         verify(exchangeRateService).getOfficialQuoteForDate(BUSINESS_TODAY);
     }
 
-    @Test
-    void equalNumericAmountWithDifferentCurrencyRequiresObservationBeforeLookup() {
-        PaymentFixture fixture = createPaymentFixture("admin-currency-no-observation", Currency.USD);
+    @ParameterizedTest
+    @EnumSource(Currency.class)
+    void equalNumericAmountWithDifferentCurrencyAcceptsNoObservation(Currency originalCurrency) {
+        PaymentFixture fixture = createPaymentFixture("admin-currency-no-observation", originalCurrency);
         List<Installment> installments = createThreeHundredPending(fixture);
-        PaymentSubmission submission = originalSubmission(installments.getFirst(), Currency.USD, "100.00", "100.00", null);
-        IllegalStateException error = assertThrows(IllegalStateException.class, () -> paymentService.reviewPayment(
-                submission.getId(), new ReviewPaymentDTO(new BigDecimal("100.00"), Currency.ARS, "  "), REVIEWER));
-        assertEquals("Se requiere una observación al corregir el monto o la moneda informada.", error.getMessage());
-        assertPendingWithoutOutcomes(submission.getId(), installments);
-        org.mockito.Mockito.verifyNoInteractions(exchangeRateService);
+        PaymentSubmission submission = originalSubmission(installments.getFirst(), originalCurrency, "100.00", "100.00", null);
+        String original = immutableSubmission(submission.getId());
+        Currency administrative = originalCurrency == Currency.ARS ? Currency.USD : Currency.ARS;
+        given(exchangeRateService.getOfficialQuoteForDate(BUSINESS_TODAY)).willReturn(new ExchangeRateQuote(
+                new BigDecimal("2.00"), BUSINESS_TODAY, BUSINESS_TODAY, "test-quote", "test-provider", "test-time"));
+        paymentService.reviewPayment(submission.getId(), new ReviewPaymentDTO(new BigDecimal("100.00"), administrative, null), REVIEWER);
+        PaymentSubmission reviewed = paymentSubmissionRepository.findByIdWithContext(submission.getId()).orElseThrow();
+        PaymentOutcome approved = singleOutcome(reviewed, PaymentOutcomeStatus.APPROVED);
+        BigDecimal expectedTrip = new BigDecimal(originalCurrency == Currency.ARS ? "200.00" : "50.00");
+        assertEquals(administrative, approved.getCurrency());
+        assertEquals(new BigDecimal("100.00"), approved.getReportedAmount());
+        assertEquals(expectedTrip, approved.getAmountInTripCurrency());
+        assertEquals(expectedTrip, allocationTripTotal(approved));
+        assertEquals(expectedTrip, totalPaid(installments));
+        assertEquals(null, approved.getAdminObservation());
+        if (originalCurrency == Currency.USD) {
+            PaymentOutcome rejected = singleOutcome(reviewed, PaymentOutcomeStatus.REJECTED);
+            assertEquals(originalCurrency, rejected.getCurrency());
+            assertEquals(new BigDecimal("50.00"), rejected.getAmountInTripCurrency());
+            assertEquals(new BigDecimal("100.00"), expectedTrip.add(rejected.getAmountInTripCurrency()));
+        } else {
+            assertEquals(1, reviewed.getOutcomes().size());
+        }
+        assertEquals(original, immutableSubmission(submission.getId()));
+        verify(exchangeRateService).getOfficialQuoteForDate(BUSINESS_TODAY);
     }
 
     @Test
@@ -207,7 +231,7 @@ class PaymentReviewAmountCorrectionTest extends ControllerIntegrationTestSupport
         PaymentFixture fixture = createPaymentFixture("admin-zero-no-quote", Currency.USD);
         List<Installment> installments = createThreeHundredPending(fixture);
         PaymentSubmission submission = originalSubmission(installments.getFirst(), Currency.USD, "100.00", "100.00", null);
-        paymentService.reviewPayment(submission.getId(), new ReviewPaymentDTO(BigDecimal.ZERO, Currency.ARS, "Rejected receipt"), REVIEWER);
+        paymentService.reviewPayment(submission.getId(), new ReviewPaymentDTO(BigDecimal.ZERO, Currency.ARS, null), REVIEWER);
         PaymentOutcome rejected = singleOutcome(paymentSubmissionRepository.findByIdWithContext(submission.getId()).orElseThrow(), PaymentOutcomeStatus.REJECTED);
         assertEquals(Currency.USD, rejected.getCurrency());
         assertEquals(new BigDecimal("100.00"), rejected.getReportedAmount());
@@ -404,7 +428,7 @@ class PaymentReviewAmountCorrectionTest extends ControllerIntegrationTestSupport
 
         PaymentSubmissionDTO reviewed = paymentService.reviewPayment(
                 registered.submissionId(),
-                new ReviewPaymentDTO(new BigDecimal("300.00"), Currency.ARS, "El depósito bancario acreditado fue de $300.00"),
+                new ReviewPaymentDTO(new BigDecimal("300.00"), Currency.ARS, "  El depósito bancario acreditado fue de $300.00  "),
                 REVIEWER);
 
         assertEquals("APPROVED", reviewed.status().name());
@@ -427,8 +451,10 @@ class PaymentReviewAmountCorrectionTest extends ControllerIntegrationTestSupport
         assertEquals(0, totalPaid(installments).compareTo(new BigDecimal("300.00")));
     }
 
-    @Test
-    void reviewPayment_upwardCorrectionWithoutObservation_rejectsWithoutSideEffects() {
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = { " \t " })
+    void reviewPayment_upwardCorrectionWithoutObservation_approves(String observation) {
         PaymentFixture fixture = createPaymentFixture("correction-up-noobs", Currency.ARS);
         List<Installment> installments = createThreeHundredPending(fixture);
         BankAccount bankAccount = createBankAccount(Currency.ARS);
@@ -436,14 +462,24 @@ class PaymentReviewAmountCorrectionTest extends ControllerIntegrationTestSupport
         PaymentSubmissionDTO registered = registerArsPayment(
                 installments.get(0), "240.00", bankAccount, fixture.user().getEmail());
 
-        assertThrows(IllegalStateException.class, () -> paymentService.reviewPayment(
-                registered.submissionId(), new ReviewPaymentDTO(new BigDecimal("300.00"), Currency.ARS, "  "), REVIEWER));
-
-        assertPendingWithoutOutcomes(registered.submissionId(), installments);
+        String original = immutableSubmission(registered.submissionId());
+        PaymentSubmissionDTO reviewed = paymentService.reviewPayment(
+                registered.submissionId(), new ReviewPaymentDTO(new BigDecimal("300.00"), Currency.ARS, observation), REVIEWER);
+        assertEquals("APPROVED", reviewed.status().name());
+        PaymentSubmission persisted = paymentSubmissionRepository.findByIdWithContext(registered.submissionId()).orElseThrow();
+        PaymentOutcome approved = singleOutcome(persisted, PaymentOutcomeStatus.APPROVED);
+        assertEquals(null, approved.getAdminObservation());
+        assertEquals(new BigDecimal("300.00"), approved.getReportedAmount());
+        assertEquals(new BigDecimal("300.00"), allocationTripTotal(approved));
+        assertEquals(new BigDecimal("300.00"), totalPaid(installments));
+        assertEquals(1, persisted.getOutcomes().size());
+        assertEquals(original, immutableSubmission(registered.submissionId()));
     }
 
-    @Test
-    void reviewPayment_downwardCorrectionWithoutObservation_rejectsWithoutSideEffects() {
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = { " \t " })
+    void reviewPayment_downwardCorrectionWithoutObservation_partiallyApproves(String observation) {
         PaymentFixture fixture = createPaymentFixture("correction-down-noobs", Currency.ARS);
         List<Installment> installments = createThreeHundredPending(fixture);
         BankAccount bankAccount = createBankAccount(Currency.ARS);
@@ -451,10 +487,21 @@ class PaymentReviewAmountCorrectionTest extends ControllerIntegrationTestSupport
         PaymentSubmissionDTO registered = registerArsPayment(
                 installments.get(0), "300.00", bankAccount, fixture.user().getEmail());
 
-        assertThrows(IllegalStateException.class, () -> paymentService.reviewPayment(
-                registered.submissionId(), new ReviewPaymentDTO(new BigDecimal("240.00"), Currency.ARS, null), REVIEWER));
-
-        assertPendingWithoutOutcomes(registered.submissionId(), installments);
+        String original = immutableSubmission(registered.submissionId());
+        PaymentSubmissionDTO reviewed = paymentService.reviewPayment(
+                registered.submissionId(), new ReviewPaymentDTO(new BigDecimal("240.00"), Currency.ARS, observation), REVIEWER);
+        assertEquals("PARTIALLY_APPROVED", reviewed.status().name());
+        PaymentSubmission persisted = paymentSubmissionRepository.findByIdWithContext(registered.submissionId()).orElseThrow();
+        PaymentOutcome approved = singleOutcome(persisted, PaymentOutcomeStatus.APPROVED);
+        PaymentOutcome rejected = singleOutcome(persisted, PaymentOutcomeStatus.REJECTED);
+        assertEquals(null, approved.getAdminObservation());
+        assertEquals(null, rejected.getAdminObservation());
+        assertEquals(new BigDecimal("240.00"), approved.getReportedAmount());
+        assertEquals(new BigDecimal("60.00"), rejected.getReportedAmount());
+        assertEquals(new BigDecimal("300.00"), approved.getAmountInTripCurrency().add(rejected.getAmountInTripCurrency()));
+        assertEquals(new BigDecimal("240.00"), allocationTripTotal(approved));
+        assertEquals(new BigDecimal("240.00"), totalPaid(installments));
+        assertEquals(original, immutableSubmission(registered.submissionId()));
     }
 
     @Test
